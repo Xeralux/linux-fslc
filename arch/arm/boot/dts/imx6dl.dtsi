@@ -205,4 +205,27 @@
 			>;
 		};
 	};
+
+	i2c4 {
+		pinctrl_i2c4_1: i2c4grp-1 {
+			fsl,pins = <
+				MX6QDL_PAD_ENET_TX_EN__I2C4_SCL	0x4001b8b1
+				MX6QDL_PAD_ENET_TXD1__I2C4_SDA	0x4001b8b1
+			>;
+		};
+
+		pinctrl_i2c4_2: i2c4grp-2 {
+			fsl,pins = <
+				MX6QDL_PAD_GPIO_7__I2C4_SCL	0x4001b8b1
+				MX6QDL_PAD_GPIO_8__I2C4_SDA	0x4001b8b1
+			>;
+		};
+
+		pinctrl_i2c4_3: i2c4grp-3 {
+			fsl,pins = <
+				MX6QDL_PAD_NANDF_WP_B__I2C4_SCL	0x4001b8b1
+				MX6QDL_PAD_NANDF_CS3__I2C4_SDA	0x4001b8b1
+			>;
+		};
+	};
 };
