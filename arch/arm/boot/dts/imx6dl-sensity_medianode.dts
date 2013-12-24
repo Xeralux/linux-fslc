@@ -7,7 +7,6 @@
 /dts-v1/;
 
 #include "imx6dl.dtsi"
-#include "imx6qdl-sabresd.dtsi"
 
 / {
 	model = "Sensity Systems Medianode";
@@ -117,12 +116,15 @@
 &usdhc3 {
 	/*  FIXME: Reconfigure for 100MHz operation.  */
 	pinctrl-0 = <&pinctrl_usdhc3_2>;
+	cd-gpios = <&gpio6 11 0>;
+	no-1-8-v;
 	status = "okay";
 };
 
 &usdhc4 {
 	/*  FIXME: Reconfigure for 100MHz operation.  */
 	pinctrl-0 = <&pinctrl_usdhc4_1>;
+	no-1-8-v;
 	status = "okay";
 };
 
@@ -161,7 +163,7 @@
 &iomuxc {
 	pinctrl-names = "default";
 //	pinctrl-0 = <&pinctrl_hog_1>, <&pinctrl_hog_2>;
-	pinctrl-0 = <&pinctrl_hog_1>;
+//	pinctrl-0 = <&pinctrl_hog_1>;
 
 	ecspi1 {
 		pinctrl_ecspi1_mn: ecspi1grp-mn {
