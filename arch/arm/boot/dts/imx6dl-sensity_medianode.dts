@@ -10,7 +10,11 @@
 
 / {
 	model = "Sensity Systems Medianode";
-	compatible = "sensity,medianode";
+	compatible = "sensity,medianode", "fsl,imx6dl";
+
+	memory {
+		reg = <0x10000000 0x40000000>;
+	};
 };
 
 &ecspi1 {
