@@ -115,7 +115,8 @@ enum mx6q_clks {
 	ldb_di0_div_7, ldb_di1_div_7, ldb_di0_div_sel, ldb_di1_div_sel,
 	pll4_audio_div, lvds1_sel, lvds1_in, lvds1_out, caam_mem, caam_aclk,
 	caam_ipg, epit1, epit2, tzasc2, pll4_sel, lvds2_sel, lvds2_in, lvds2_out,
-	anaclk1, anaclk2, clk_max
+	anaclk1, anaclk2, clk_max,
+	i2c4 = ecspi5	/*  mx6sl/dl tradeoff.  */
 };
 
 static struct clk *clk[clk_max];
@@ -474,7 +475,14 @@ static void __init imx6q_clocks_init(struct device_node *ccm_node)
 	clk[ecspi2]       = imx_clk_gate2("ecspi2",        "ecspi_root",        base + 0x6c, 2);
 	clk[ecspi3]       = imx_clk_gate2("ecspi3",        "ecspi_root",        base + 0x6c, 4);
 	clk[ecspi4]       = imx_clk_gate2("ecspi4",        "ecspi_root",        base + 0x6c, 6);
-	clk[ecspi5]       = imx_clk_gate2("ecspi5",        "ecspi_root",        base + 0x6c, 8);
+	if (cpu_is_imx6q())
+		clk[ecspi5]       = imx_clk_gate2("ecspi5",        "ecspi_root",        base + 0x6c, 8);
+	else
+		/*
+		 * The multiplexer and divider of imx6q clock ecspi5 get
+		 * redefined/reused as i2c4 on imx6sl/dl.
+		 */
+		clk[i2c4]         = imx_clk_gate2("i2c4",          "ipg_per",           base + 0x6c, 8);
 	clk[enet]         = imx_clk_gate2("enet",          "ipg",               base + 0x6c, 10);
 	clk[epit1]        = imx_clk_gate2("epit1",         "ipg",               base + 0x6c, 12);
 	clk[epit2]        = imx_clk_gate2("epit2",         "ipg",               base + 0x6c, 14);

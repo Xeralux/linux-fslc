@@ -126,7 +126,8 @@ clocks and IDs.
 	ecspi2			113
 	ecspi3			114
 	ecspi4			115
-	ecspi5			116
+	ecspi5 (imx6q only)	116
+	i2c4 (imx6s/imx6dl)	116
 	enet			117
 	esai			118
 	gpt_ipg			119
