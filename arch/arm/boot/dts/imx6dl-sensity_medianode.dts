@@ -119,6 +119,7 @@
 
 &usdhc3 {
 	/*  FIXME: Reconfigure for 100MHz operation.  */
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc3_2>;
 	cd-gpios = <&gpio6 11 0>;
 	no-1-8-v;
@@ -127,6 +128,7 @@
 
 &usdhc4 {
 	/*  FIXME: Reconfigure for 100MHz operation.  */
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc4_1>;
 	no-1-8-v;
 	status = "okay";
