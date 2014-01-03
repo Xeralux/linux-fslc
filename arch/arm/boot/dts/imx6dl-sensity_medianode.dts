@@ -141,6 +141,12 @@
 	status = "okay";
 };
 
+&pcie {
+//	pwr-gpios = <&gpio3 19 0>;	/* <&gpio1 27 0>; */
+//	rst-gpios = <&gpio7 12 0>;
+//	status = "okay";
+};
+
 &pwm1 {
 	pinctrl-0 = <&pinctrl_pwm1_2>;	/*  DISP0_DAT8  */
 	status = "okay";
