@@ -142,9 +142,9 @@
 };
 
 &pcie {
-//	pwr-gpios = <&gpio3 19 0>;	/* <&gpio1 27 0>; */
-//	rst-gpios = <&gpio7 12 0>;
-//	status = "okay";
+	power-on-gpio = <&gpio3 19 0>;	/* <&gpio1 27 0>; */
+	reset-gpio = <&gpio7 12 0>;
+	status = "okay";
 };
 
 &pwm1 {
