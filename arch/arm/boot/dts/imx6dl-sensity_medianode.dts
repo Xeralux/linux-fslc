@@ -142,8 +142,10 @@
 };
 
 &pcie {
-	power-on-gpio = <&gpio3 19 0>;	/* <&gpio1 27 0>; */
+	power-on-gpio = <&gpio3 19 0>;	/*, <&gpio1 27 0>;  */
 	reset-gpio = <&gpio7 12 0>;
+	wake-up-gpio = <&gpio1 5 0>;	/*, <&gpio1 7 0>;  */
+	disable-gpio = <&gpio4 14 0>;	/*, <&gpio3 31 0>;  */
 	status = "okay";
 };
 
