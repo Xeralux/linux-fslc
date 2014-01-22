@@ -17,27 +17,75 @@
 	};
 };
 
+/*  Use native chipselects for all SPI channels.  */
 &ecspi1 {
 	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
+	cs-gpios = <0>;		// <&gpio4 9 0>;	/*  KEY_ROW1  */
 	pinctrl-0 = <&pinctrl_ecspi1_mn>;
 	status = "okay";
+
+	spidev@0 {
+		compatible = "spidev";
+		spi-max-frequency = <12000000>;
+		reg = <0>;
+	};
 };
 
 &ecspi2 {
 	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
+	cs-gpios = <0>;		// <&gpio2 26 0>;	/*  EIM_RW  */
 	pinctrl-0 = <&pinctrl_ecspi2_mn>;
 	status = "okay";
+
+	spidev@0 {
+		compatible = "spidev";
+		spi-max-frequency = <12000000>;
+		reg = <0>;
+	};
 };
 
 &ecspi3 {
 	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
+	cs-gpios = <0>;		// <&gpio4 24 0>;	/*  DISP0_DAT03  */
 	pinctrl-0 = <&pinctrl_ecspi3_mn>;
 	status = "okay";
 
-	/*  FIXME: Add SPI-UART bridge def here.  */
+	spi_uart: sc16is7x2@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "nxp,sc16is7x2";
+		spi-max-frequency = <12000000>;
+		reg = <0>;
+		uartclk = <1843200>;
+		uart_base = <0>;
+		gpio_base = <224>;	/*  <&gpio7 0 0> ?  */
+		interrupt-parent = <&gpio1>;
+		interrupts = <0 2>;
+	};
+	
+	/*  Entry for basic bus testing.  */
+//	spidev@0 {
+//		compatible = "spidev";
+//		spi-max-frequency = <12000000>;
+//		reg = <0>;
+//	};
+};
+
+&ecspi4 {
+	/*  All signals go out on connector J23.  */
+	fsl,spi-num-chipselects = <1>;
+	cs-gpios = <0>;		// <&gpio3 20 0>;	/*  EIM_D20  */
+	pinctrl-0 = <&pinctrl_ecspi4_mn>;
+	status = "okay";
+
+	spidev@0 {
+		compatible = "spidev";
+		spi-max-frequency = <12000000>;
+		reg = <0>;
+	};
 };
 
 &i2c1 {
@@ -176,8 +224,7 @@
 
 &iomuxc {
 	pinctrl-names = "default";
-//	pinctrl-0 = <&pinctrl_hog_1>, <&pinctrl_hog_2>;
-//	pinctrl-0 = <&pinctrl_hog_1>;
+	pinctrl-0 = <&pinctrl_hog_mn>;
 
 	ecspi1 {
 		pinctrl_ecspi1_mn: ecspi1grp-mn {
@@ -210,6 +257,17 @@
 				MX6QDL_PAD_DISP0_DAT1__ECSPI3_MOSI	0x100b1
 				MX6QDL_PAD_DISP0_DAT0__ECSPI3_SCLK	0x100b1
 				MX6QDL_PAD_DISP0_DAT3__ECSPI3_SS0	0x100b1
+			>;
+		};
+	};
+
+	ecspi4 {
+		pinctrl_ecspi4_mn: ecspi4grp-mn {
+			fsl,pins = <
+				MX6QDL_PAD_EIM_D22__ECSPI4_MISO		0x100b1
+				MX6QDL_PAD_EIM_D28__ECSPI4_MOSI		0x100b1
+				MX6QDL_PAD_EIM_D21__ECSPI4_SCLK		0x100b1
+				MX6QDL_PAD_EIM_D20__ECSPI4_SS0		0x100b1
 			>;
 		};
 	};
@@ -283,6 +341,16 @@
 		};
 	};
 
+	/*  Why did I do this?  */
+	hog {
+		pinctrl_hog_mn: hoggrp-mn {
+			fsl,pins = <
+				/*  SPI DUART IRQ line.  */
+				MX6QDL_PAD_GPIO_0__GPIO1_IO00	0x80000000
+			>;
+		};
+	};
+//---
 //	hog {
 //		pinctrl_hog_2: hoggrp-2 {
 //			fsl,pins = <

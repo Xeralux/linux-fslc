@@ -229,4 +229,6 @@
 /* Freescale lpuart */
 #define PORT_LPUART	103
 
+#define PORT_SC16IS7X2	110
+
 #endif /* _UAPILINUX_SERIAL_CORE_H */
