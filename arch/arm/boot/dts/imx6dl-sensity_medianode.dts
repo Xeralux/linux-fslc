@@ -22,6 +22,7 @@
 	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
 	cs-gpios = <0>;		// <&gpio4 9 0>;	/*  KEY_ROW1  */
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi1_mn>;
 	status = "okay";
 
@@ -36,6 +37,7 @@
 	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
 	cs-gpios = <0>;		// <&gpio2 26 0>;	/*  EIM_RW  */
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi2_mn>;
 	status = "okay";
 
@@ -47,9 +49,9 @@
 };
 
 &ecspi3 {
-	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
 	cs-gpios = <0>;		// <&gpio4 24 0>;	/*  DISP0_DAT03  */
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi3_mn>;
 	status = "okay";
 
@@ -60,13 +62,14 @@
 		spi-max-frequency = <12000000>;
 		reg = <0>;
 		uartclk = <1843200>;
+		rst_gpio = <&gpio6 16 1>;
 		uart_base = <0>;
 		gpio_base = <224>;	/*  <&gpio7 0 0> ?  */
 		interrupt-parent = <&gpio1>;
 		interrupts = <0 2>;
 	};
 	
-	/*  Entry for basic bus testing.  */
+//	/*  Entry for basic bus testing.  */
 //	spidev@0 {
 //		compatible = "spidev";
 //		spi-max-frequency = <12000000>;
@@ -78,6 +81,7 @@
 	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
 	cs-gpios = <0>;		// <&gpio3 20 0>;	/*  EIM_D20  */
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi4_mn>;
 	status = "okay";
 
@@ -198,26 +202,31 @@
 };
 
 &pwm1 {
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pwm1_2>;	/*  DISP0_DAT8  */
 	status = "okay";
 };
 
 &pwm2 {
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pwm2_1>;	/*  DISP0_DAT9  */
 	status = "okay";
 };
 
 &uart1 {
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart1_1>;
 	status = "okay";
 };
 
 &uart2 {
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart2_1>;
 	status = "okay";
 };
 
 &uart3 {
+	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart3_2>;	/*  EIM_D{24,25}  */
 	status = "okay";
 };
@@ -232,8 +241,8 @@
 				MX6QDL_PAD_KEY_COL1__ECSPI1_MISO	0x100b1
 				MX6QDL_PAD_KEY_ROW0__ECSPI1_MOSI	0x100b1
 				MX6QDL_PAD_KEY_COL0__ECSPI1_SCLK	0x100b1
-				MX6QDL_PAD_GPIO_19__ECSPI1_RDY		0x100b1
-				MX6QDL_PAD_KEY_ROW1__ECSPI1_SS0		0x100b1
+				MX6QDL_PAD_GPIO_19__ECSPI1_RDY		0x100b0
+				MX6QDL_PAD_KEY_ROW1__ECSPI1_SS0		0x100b0
 			>;
 		};
 	};
@@ -241,11 +250,11 @@
 	ecspi2 {
 		pinctrl_ecspi2_mn: ecspi2grp-mn {
 			fsl,pins = <
-				MX6QDL_PAD_DISP0_DAT17__ECSPI2_MISO	0x100b1
-				MX6QDL_PAD_DISP0_DAT16__ECSPI2_MOSI	0x100b1
-				MX6QDL_PAD_EIM_CS0__ECSPI2_SCLK		0x100b1
-				MX6QDL_PAD_EIM_A25__ECSPI2_RDY		0x100b1
-				MX6QDL_PAD_EIM_RW__ECSPI2_SS0		0x100b1
+				MX6QDL_PAD_DISP0_DAT17__ECSPI2_MISO	0x1b0b1
+				MX6QDL_PAD_DISP0_DAT16__ECSPI2_MOSI	0x1b0b1
+				MX6QDL_PAD_EIM_CS0__ECSPI2_SCLK		0x1b0b1
+				MX6QDL_PAD_EIM_A25__ECSPI2_RDY		0x1b0b0
+				MX6QDL_PAD_EIM_RW__ECSPI2_SS0		0x1b0b0
 			>;
 		};
 	};
@@ -256,7 +265,9 @@
 				MX6QDL_PAD_DISP0_DAT2__ECSPI3_MISO	0x100b1
 				MX6QDL_PAD_DISP0_DAT1__ECSPI3_MOSI	0x100b1
 				MX6QDL_PAD_DISP0_DAT0__ECSPI3_SCLK	0x100b1
-				MX6QDL_PAD_DISP0_DAT3__ECSPI3_SS0	0x100b1
+				MX6QDL_PAD_DISP0_DAT3__ECSPI3_SS0	0x100b0
+				/*  This should probably be somewhere else.  */
+				MX6QDL_PAD_NANDF_CS3__GPIO6_IO16	0x100b0
 			>;
 		};
 	};
@@ -267,7 +278,7 @@
 				MX6QDL_PAD_EIM_D22__ECSPI4_MISO		0x100b1
 				MX6QDL_PAD_EIM_D28__ECSPI4_MOSI		0x100b1
 				MX6QDL_PAD_EIM_D21__ECSPI4_SCLK		0x100b1
-				MX6QDL_PAD_EIM_D20__ECSPI4_SS0		0x100b1
+				MX6QDL_PAD_EIM_D20__ECSPI4_SS0		0x100b0
 			>;
 		};
 	};
