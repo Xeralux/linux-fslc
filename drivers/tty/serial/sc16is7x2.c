@@ -20,7 +20,7 @@
 #include <linux/serial_reg.h>
 #include <linux/serial_core.h>
 #include <linux/serial.h>
-#include <linux/gpio.h>
+#include <linux/of_gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/freezer.h>
 #include <linux/tty_flip.h>
@@ -84,6 +84,7 @@ struct sc16is7x2_channel {
 struct sc16is7x2_chip {
 	struct spi_device *spi;
 	struct sc16is7x2_channel channel[2];
+	unsigned	rst_gpio;	/* GPIO for RESET line, if any */
 
 #ifdef CONFIG_GPIOLIB
 	struct gpio_chip gpio;
@@ -966,12 +967,20 @@ sc16is7x2_parse_dt (struct spi_device *spi)
 	if (!pdata)
 		return NULL;
 
+	/*  Required properties.  */
 	if (of_property_read_u32 (dn, "uartclk", &pdata->uartclk))
 		goto oops;
 	if (of_property_read_u32 (dn, "uart_base", &pdata->uart_base))
 		goto oops;
 	if (of_property_read_u32 (dn, "gpio_base", &pdata->gpio_base))
 		goto oops;
+
+	/*  Optional property.  */
+	pdata->rst_gpio = of_get_named_gpio (dn, "rst_gpio", 0);
+	if (!gpio_is_valid (pdata->rst_gpio)) {
+		dev_info (&spi->dev, "Invalid rst_gpio; ignoring...");
+		pdata->rst_gpio = 0;
+	}
 
 	/*  FIXME: Parse out 'label' and 'names'.  */
 	return pdata;
@@ -993,7 +1002,13 @@ static int sc16is7x2_probe(struct spi_device *spi)
 	else
 		pdata = spi->dev.platform_data;
 
-	if (!pdata || !pdata->gpio_base || pdata->uart_base & 1) {
+dev_info (&spi->dev, "pdata: gpio_base=%d, uart_base=%d, uartclk=%d, rst_gpio=%d",
+          pdata->gpio_base, pdata->uart_base, pdata->uartclk, pdata->rst_gpio);
+	if (    !pdata
+	    ||  !pdata->gpio_base
+	    ||  !pdata->uartclk
+	    ||  pdata->uart_base & 1)
+	{
 		dev_dbg (&spi->dev, "incorrect or missing platform data\n");
 		return -EINVAL;
 	}
@@ -1011,10 +1026,8 @@ static int sc16is7x2_probe(struct spi_device *spi)
 		goto exit_destroy;
 	}
 	spi_set_drvdata(spi, ts);
-	ts->spi = spi;
-
-	/* Reset the chip */
-	sc16is7x2_write(ts, REG_IOC, 0, IOC_SRESET);
+	ts->spi		= spi;
+	ts->rst_gpio	= pdata->rst_gpio;
 
 	ret = sc16is7x2_register_uart_port(ts, pdata, 0);
 	if (ret) {
@@ -1029,9 +1042,35 @@ static int sc16is7x2_probe(struct spi_device *spi)
 
 	ret = sc16is7x2_register_gpio(ts, pdata);
 	if (ret) {
-		dev_info (&spi->dev, DRIVER_NAME " Failed to obtain GPIOs\n");
+		dev_info (&spi->dev, DRIVER_NAME " Failed to register GPIOs\n");
 		goto exit_uart1;
 	}
+
+	if (ts->rst_gpio) {
+		ret = gpio_request (ts->rst_gpio, "sc16is7x2");
+		if (ret) {
+			dev_err (&spi->dev, "Can't allocate GPIO%d (rst_gpio)",
+			         ts->rst_gpio);
+			ret = -EBUSY;
+			goto exit_gpioreg;
+		}
+		/*  Assert reset.  */
+		ret = gpio_direction_output (ts->rst_gpio, 0);
+		if (ret) {
+			dev_err (&spi->dev, "Can't configure GPIO%d (rst_gpio)",
+			         ts->rst_gpio);
+			ret = -EBUSY;
+			goto exit_reset;
+		}
+		usleep_range (3, 50);
+
+		/*  Release reset.  */
+		gpio_set_value (ts->rst_gpio, 1);
+		usleep_range (3, 50);
+	}
+
+	/* Soft-reset the chip */
+	sc16is7x2_write(ts, REG_IOC, 0, IOC_SRESET);
 
 	dev_info(&spi->dev, DRIVER_NAME " at CS%d (irq %d), 2 UARTs, 8 GPIOs\n"
 			"    eser%d, eser%d, gpiochip%d\n",
@@ -1042,6 +1081,12 @@ static int sc16is7x2_probe(struct spi_device *spi)
 	/*  FIXME: Free 'pdata' if we're parsing DTS.  */
 	return 0;
 
+exit_reset:
+	gpio_free (ts->rst_gpio);
+exit_gpioreg:
+#ifdef CONFIG_GPIOLIB
+	ret = gpiochip_remove(&ts->gpio);
+#endif
 exit_uart1:
 	uart_remove_one_port(&sc16is7x2_uart_driver, &ts->channel[1].uart);
 
@@ -1061,6 +1106,8 @@ static int sc16is7x2_remove(struct spi_device *spi)
 
 	if (ts == NULL)
 		return -ENODEV;
+
+	gpio_free (ts->rst_gpio);
 
 	ret = uart_remove_one_port(&sc16is7x2_uart_driver, &ts->channel[0].uart);
 	if (ret)
