@@ -15,6 +15,21 @@
 	memory {
 		reg = <0x10000000 0x40000000>;
 	};
+
+	pwm-floods {
+		compatible = "pwm-leds";
+
+		flood0 {
+			label = "medianode::flood0";
+			pwms = <&pwm1 0 20000>;	/*  50KHz cycle  */
+			max-brightness = <255>;
+		};
+		flood1 {
+			label = "medianode::flood1";
+			pwms = <&pwm2 0 20000>;	/*  50KHz cycle  */
+			max-brightness = <255>;
+		};
+	};
 };
 
 /*  Use native chipselects for all SPI channels.  */
