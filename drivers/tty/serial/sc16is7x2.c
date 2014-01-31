@@ -1017,9 +1017,14 @@ dev_info (&spi->dev, "pdata: gpio_base=%d, uart_base=%d, uartclk=%d, rst_gpio=%d
 	if (!ts)
 		return -ENOMEM;
 
+	/*
+	 * Max clk speeds are chip-specific; configure in DTS.
+	 * S752: 4 MHz
+	 * S762: 15 MHz (@3.3v)
+	 * Configure in DTS.
+	 */
 	spi->mode		= SPI_MODE_0;
 	spi->bits_per_word	= 8;
-	spi->max_speed_hz	= 12000000;	/*  Min clk cycle: 83ns  */
 	ret = spi_setup (spi);
 	if (ret) {
 		dev_err (&spi->dev, "SPI setup failed.\n");

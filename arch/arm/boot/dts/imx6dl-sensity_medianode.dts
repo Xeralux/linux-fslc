@@ -74,7 +74,7 @@
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "nxp,sc16is7x2";
-		spi-max-frequency = <12000000>;
+		spi-max-frequency = <4000000>;
 		reg = <0>;
 		uartclk = <1843200>;
 		rst_gpio = <&gpio6 16 1>;
