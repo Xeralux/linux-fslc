@@ -65,7 +65,7 @@
 
 &ecspi3 {
 	fsl,spi-num-chipselects = <1>;
-	cs-gpios = <0>;		// <&gpio4 24 0>;	/*  DISP0_DAT03  */
+	cs-gpios = <&gpio4 24 0>;	/*  DISP0_DAT03  */
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi3_mn>;
 	status = "okay";
@@ -277,12 +277,12 @@
 	ecspi3 {
 		pinctrl_ecspi3_mn: ecspi3grp-mn {
 			fsl,pins = <
-				MX6QDL_PAD_DISP0_DAT2__ECSPI3_MISO	0x100b1
+				MX6QDL_PAD_DISP0_DAT2__ECSPI3_MISO	0x400100b1
 				MX6QDL_PAD_DISP0_DAT1__ECSPI3_MOSI	0x100b1
 				MX6QDL_PAD_DISP0_DAT0__ECSPI3_SCLK	0x100b1
-				MX6QDL_PAD_DISP0_DAT3__ECSPI3_SS0	0x100b0
+				MX6QDL_PAD_DISP0_DAT3__GPIO4_IO24	0x1a090
 				/*  This should probably be somewhere else.  */
-				MX6QDL_PAD_NANDF_CS3__GPIO6_IO16	0x100b0
+				MX6QDL_PAD_NANDF_CS3__GPIO6_IO16	0x1a090
 			>;
 		};
 	};
