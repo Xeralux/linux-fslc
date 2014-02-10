@@ -230,10 +230,10 @@ static void sc16is7x2_handle_tx(struct sc16is7x2_chip *ts, unsigned ch)
 	spin_lock_irqsave(&uart->lock, flags);
 	if (chan->uart.x_char && chan->lsr & UART_LSR_THRE) {
 		dev_dbg(&ts->spi->dev, " tx: x-char\n");
-		uart->icount.tx++;
-		uart->x_char = 0;
 		spin_unlock_irqrestore(&uart->lock, flags);
 		sc16is7x2_write(ts, UART_TX, ch, uart->x_char);
+		uart->icount.tx++;
+		uart->x_char = 0;
 		return;
 	}
 	spin_unlock_irqrestore(&uart->lock, flags);
@@ -539,8 +539,11 @@ static int sc16is7x2_startup(struct uart_port *port)
 	chan->mcr = 0;
 	chan->fcr = 0;
 	chan->ier = UART_IER_RLSI | UART_IER_RDI | UART_IER_THRI;
+	chan->handle_regs =
+	chan->handle_baud = false;
 	spin_unlock_irqrestore(&chan->uart.lock, flags);
 
+	sc16is7x2_write(ts, UART_FCR, ch, UART_FCR_ENABLE_FIFO);
 	sc16is7x2_write(ts, UART_FCR, ch, UART_FCR_ENABLE_FIFO |
 		       UART_FCR_CLEAR_RCVR | UART_FCR_CLEAR_XMIT);
 	sc16is7x2_write(ts, UART_FCR, ch, chan->fcr);
@@ -548,6 +551,9 @@ static int sc16is7x2_startup(struct uart_port *port)
 	sc16is7x2_write(ts, UART_LCR, ch, chan->lcr);
 	sc16is7x2_write(ts, UART_MCR, ch, chan->mcr);
 	sc16is7x2_write(ts, UART_IER, ch, chan->ier);
+
+	/*  Might be redundant, but can help with debugging later.  */
+	sc16is7x2_read_status(ts, ch);
 
 	return 0;
 }
