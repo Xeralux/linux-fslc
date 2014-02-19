@@ -66,6 +66,8 @@ struct imx6_pcie {
 #define PL_OFFSET 0x700
 #define PCIE_PHY_DEBUG_R0 (PL_OFFSET + 0x28)
 #define PCIE_PHY_DEBUG_R1 (PL_OFFSET + 0x2c)
+#define PCIE_PHY_DEBUG_R1_XMLH_LINK_IN_TRAINING  (1 << 29)
+#define PCIE_PHY_DEBUG_R1_XMLH_LINK_UP           (1 << 4)
 
 #define PCIE_PHY_CTRL (PL_OFFSET + 0x114)
 #define PCIE_PHY_CTRL_DATA_LOC 0
@@ -450,13 +452,40 @@ static void imx6_pcie_reset_phy(struct pcie_port *pp)
 
 static int imx6_pcie_link_up(struct pcie_port *pp)
 {
-	u32 rc, ltssm, rx_valid;
+	u32 rc, debug_r0, rx_valid;
+	int count = 5;
 
-	/* link is debug bit 36, debug register 1 starts at bit 32 */
-	rc = readl(pp->dbi_base + PCIE_PHY_DEBUG_R1) & (0x1 << (36 - 32));
-	if (rc)
-		return -EAGAIN;
-
+	/*
+	 * Test if the PHY reports that the link is up and also that the LTSSM
+	 * training finished. There are three possible states of the link when
+	 * this code is called:
+	 * 1) The link is DOWN (unlikely)
+	 *     The link didn't come up yet for some reason. This usually means
+	 *     we have a real problem somewhere. Reset the PHY and exit. This
+	 *     state calls for inspection of the DEBUG registers.
+	 * 2) The link is UP, but still in LTSSM training
+	 *     Wait for the training to finish, which should take a very short
+	 *     time. If the training does not finish, we have a problem and we
+	 *     need to inspect the DEBUG registers. If the training does finish,
+	 *     the link is up and operating correctly.
+	 * 3) The link is UP and no longer in LTSSM training
+	 *     The link is up and operating correctly.
+	 */
+	while (1) {
+		rc = readl(pp->dbi_base + PCIE_PHY_DEBUG_R1);
+		if (!(rc & PCIE_PHY_DEBUG_R1_XMLH_LINK_UP))
+			break;
+		if (!(rc & PCIE_PHY_DEBUG_R1_XMLH_LINK_IN_TRAINING))
+			return 1;
+		if (!count--)
+			break;
+		dev_dbg(pp->dev, "Link is up, but still in training\n");
+		/*
+		 * Wait a little bit, then re-check if the link finished
+		 * the training.
+		 */
+		usleep_range(1000, 2000);
+	}
 	/*
 	 * From L0, initiate MAC entry to gen2 if EP/RC supports gen2.
 	 * Wait 2ms (LTSSM timeout is 24ms, PHY lock is ~5us in gen2).
@@ -465,15 +494,16 @@ static int imx6_pcie_link_up(struct pcie_port *pp)
 	 * to gen2 is stuck
 	 */
 	pcie_phy_read(pp->dbi_base, PCIE_PHY_RX_ASIC_OUT, &rx_valid);
-	ltssm = readl(pp->dbi_base + PCIE_PHY_DEBUG_R0) & 0x3F;
+	debug_r0 = readl(pp->dbi_base + PCIE_PHY_DEBUG_R0);
 
 	if (rx_valid & 0x01)
 		return 0;
 
-	if (ltssm != 0x0d)
+	if ((debug_r0 & 0x3f) != 0x0d)
 		return 0;
 
 	dev_err(pp->dev, "transition to gen2 is stuck, reset PHY!\n");
+	dev_dbg(pp->dev, "debug_r0=%08x debug_r1=%08x\n", debug_r0, rc);
 
 	imx6_pcie_reset_phy(pp);
 
