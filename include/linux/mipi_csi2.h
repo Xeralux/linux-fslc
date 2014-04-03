@@ -90,4 +90,7 @@ void mipi_csi2_pixelclk_disable(struct mipi_csi2_info *info);
 
 int mipi_csi2_reset(struct mipi_csi2_info *info);
 
+void mipi_csi2_dump_reg(struct mipi_csi2_info *info);
+void mipi_csi2_status_reg(struct mipi_csi2_info *info);
+
 #endif

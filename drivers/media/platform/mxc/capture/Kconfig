@@ -30,11 +30,63 @@ config MXC_CAMERA_OV5640_MIPI
 	---help---
 	  If you plan to use the ov5640 Camera with mipi interface in your MXC system, say Y here.
 
+config MXC_CAMERA_SSMN_MIPI
+	tristate "Camera support using MIPI CSI-2 interface on Sensity MediaNode"
+	depends on !VIDEO_MXC_EMMA_CAMERA
+	depends on SOC_IMX6Q
+	select MXC_MIPI_CSI2 if SOC_IMX6Q
+	select MXC_CAMERA_SENSOR_CLK
+	select MAX9271
+	select MAX9272
+	select TC_MIPI_BRIDGE
+	select AP0100_M034
+	---help---
+	  If you plan to use the camera with MIPI CSI-2 interface on Sensity MediaNode, say Y here.
+
+config MXC_CAMERA_SSMN_PARALLEL
+	tristate "Camera support using parallel interface on Sensity MediaNode"
+	depends on !VIDEO_MXC_EMMA_CAMERA
+	depends on SOC_IMX6Q
+	select MXC_CAMERA_SENSOR_CLK
+	select MAX9271
+	select MAX9272
+	select TC_MIPI_BRIDGE
+	select AP0100_M034
+	default n
+	---help---
+	  If you plan to use the camera with parallel interface on Sensity MediaNode, say Y here.
+
+config MAX9271
+	tristate "Maxim max9271 cable serializer"
+	---help---
+	If you plan to use max9271, say Y here.
+
+config MAX9272
+	tristate "Maxim max9272 cable deserializer"
+	---help---
+	If you plan to use max9272, say Y here.
+
+config TC_MIPI_BRIDGE
+	tristate "Toshiba MIPI bridge TC358748"
+	---help---
+	If you plan to use TC358748 say Y here.
+
+config AP0100_M034
+	tristate "Aptina Ap0100 + M034 driver"
+	---help---
+	If you plan to use ap0100 + m034, say Y here.
+
 config MXC_TVIN_ADV7180
 	tristate "Analog Device adv7180 TV Decoder Input support"
 	depends on !VIDEO_MXC_EMMA_CAMERA && I2C
 	---help---
 	  If you plan to use the adv7180 video decoder with your MXC system, say Y here.
+
+config MXC_CAMERA_SENSOR_CLK
+	tristate "camera clock"
+	depends on !VIDEO_MXC_EMMA_CAMERA
+	---help---
+	  If you plan to use the Camera with your MXC system, say Y here.
 
 choice
 	prompt "Select Overlay Rounting"

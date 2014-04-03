@@ -19,6 +19,8 @@
 #ifndef __MXC_MIPI_CSI2_H__
 #define __MXC_MIPI_CSI2_H__
 
+#define DEBUG
+
 #ifdef DEBUG
 #define mipi_dbg(fmt, ...)	\
 	printk(KERN_DEBUG pr_fmt(fmt), ##__VA_ARGS__)

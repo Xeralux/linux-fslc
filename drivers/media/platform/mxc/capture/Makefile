@@ -8,6 +8,9 @@ ifeq ($(CONFIG_VIDEO_MXC_IPU_CAMERA),y)
 	obj-$(CONFIG_MXC_IPU_CSI_ENC) += ipu_csi_enc.o ipu_still.o
 endif
 
+camera_sensor_clock-objs := sensor_clock.o
+obj-$(CONFIG_MXC_CAMERA_SENSOR_CLK) += camera_sensor_clock.o
+
 ov5640_camera-objs := ov5640.o
 obj-$(CONFIG_MXC_CAMERA_OV5640) += ov5640_camera.o
 
@@ -17,5 +20,16 @@ obj-$(CONFIG_MXC_CAMERA_OV5642) += ov5642_camera.o
 ov5640_camera_mipi-objs := ov5640_mipi.o
 obj-$(CONFIG_MXC_CAMERA_OV5640_MIPI) += ov5640_camera_mipi.o
 
+ssmn_camera_mipi-objs := ssmn_mipi.o
+obj-$(CONFIG_MXC_CAMERA_SSMN_MIPI) += ssmn_camera_mipi.o
+
+ssmn_camera_parallel-objs := ssmn_parallel.o
+obj-$(CONFIG_MXC_CAMERA_SSMN_PARALLEL) += ssmn_camera_parallel.o
+
 adv7180_tvin-objs := adv7180.o
 obj-$(CONFIG_MXC_TVIN_ADV7180) += adv7180_tvin.o
+
+obj-$(CONFIG_MAX9271) += max9271.o
+obj-$(CONFIG_MAX9272) += max9272.o
+obj-$(CONFIG_AP0100_M034) += ap0100_m034.o
+obj-$(CONFIG_TC_MIPI_BRIDGE) += tc_mipi_bridge.o

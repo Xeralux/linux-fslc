@@ -12,6 +12,11 @@
 	model = "Sensity Systems Medianode";
 	compatible = "sensity,medianode", "fsl,imx6dl";
 
+	aliases {
+		mxcfb0 = &mxcfb1;
+		mxcfb1 = &mxcfb2;
+	};
+
 	memory {
 		reg = <0x10000000 0x40000000>;
 	};
@@ -29,6 +34,73 @@
 			pwms = <&pwm2 0 20000>;	/*  50KHz cycle  */
 			max-brightness = <255>;
 		};
+	};
+
+	mxcfb1: fb@0 {
+		compatible = "fsl,mxc_sdc_fb";
+		disp_dev = "ldb";
+		interface_pix_fmt = "RGB666";
+		mode_str ="LDB-XGA";
+		default_bpp = <16>;
+		int_clk = <0>;
+		late_init = <0>;
+		status = "okay";
+	};
+
+	mxcfb2: fb@1 {
+		compatible = "fsl,mxc_sdc_fb";
+		disp_dev = "hdmi";
+		interface_pix_fmt = "RGB24";
+		mode_str ="1920x1080M@60";
+		default_bpp = <24>;
+		int_clk = <0>;
+		late_init = <0>;
+		status = "okay";
+	};
+
+	/*
+	mxcfb3: fb@2 {
+		compatible = "fsl,mxc_sdc_fb";
+		disp_dev = "lcd";
+		interface_pix_fmt = "RGB565";
+		mode_str ="CLAA-WVGA";
+		default_bpp = <16>;
+		int_clk = <0>;
+		late_init = <0>;
+		status = "okay";
+	};
+
+	mxcfb4: fb@3 {
+		compatible = "fsl,mxc_sdc_fb";
+		disp_dev = "ldb";
+		interface_pix_fmt = "RGB666";
+		mode_str ="LDB-XGA";
+		default_bpp = <16>;
+		int_clk = <0>;
+		late_init = <0>;
+		status = "okay";
+	};
+	*/
+
+	v4l2_cap_0 {
+		compatible = "fsl,imx6q-v4l2-capture";
+		ipu_id = <0>;
+		csi_id = <0>;
+		mclk_source = <0>;
+		status = "okay";
+	};
+
+	v4l2_cap_1 {
+		compatible = "fsl,imx6q-v4l2-capture";
+		ipu_id = <0>;
+		csi_id = <1>;
+		mclk_source = <0>;
+		status = "okay";
+	};
+
+	v4l2_out {
+		compatible = "fsl,mxc_v4l2_output";
+		status = "okay";
 	};
 };
 
@@ -83,7 +155,7 @@
 		interrupt-parent = <&gpio1>;
 		interrupts = <0 2>;
 	};
-	
+
 //	/*  Entry for basic bus testing.  */
 //	spidev@0 {
 //		compatible = "spidev";
@@ -107,16 +179,39 @@
 	};
 };
 
+&hdmi_audio {
+	status = "okay";
+};
+
+&hdmi_cec {
+	pinctrl-names = "default";
+	pinctrl-0 = <&pinctrl_hdmi_cec_2>;
+	status = "okay";
+};
+
+&hdmi_core {
+	ipu_id = <0>;
+	disp_id = <0>;
+	status = "okay";
+};
+
+&hdmi_video {
+	fsl,phy_reg_vlev = <0x0294>;
+	fsl,phy_reg_cksymtx = <0x800d>;
+	status = "okay";
+};
+
 &i2c1 {
 	clock-frequency = <400000>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_i2c1_2>;	/*  "CSI DATA" pins.  */
 	status = "okay";
 
-	/*  Toshiba video MIPI thing...  */
-	tc358748@0e {
-		compatible = "toshiba,358748", "toshiba,358746";
+	/*  Toshiba MIPI bridge 0 on parallel interface: CPLBTX->CPLBRX(MIPI-Rx Parallel-Tx) */
+	tc_mipi_bridge_0: tc_mipi_bridge@0e {
+		compatible = "toshiba,tc_mipi_bridge";
 		reg = <0x0e>;
+		tc_mipi_bridge = <0>;
 	};
 
 	mma8451@1c {
@@ -161,6 +256,103 @@
 	pinctrl-0 = <&pinctrl_i2c2_2>;	/*  "KEY COL/ROW" pins.  */
 	status = "okay";
 
+	/* PCA9546 I2C multiplexer */
+	i2cmux@70 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+		compatible = "nxp,pca9546";
+		reg = <0x70>;
+	        i2c@0 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "nxp,pca954x-bus";
+			reg = <0>;
+		};
+		i2c@1 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "nxp,pca954x-bus";
+			reg = <1>;
+		};
+		i2c@2 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "nxp,pca954x-bus";
+			reg = <2>;
+		};
+		i2c@3 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "nxp,pca954x-bus";
+			reg = <3>;
+		};
+	};
+
+	/* PCA9557 I/O expander */
+	io_expander@18 {
+		compatible = "nxp,pca9557";
+		gpio-controller;
+		#gpio-cells = <2>;
+		gpio_base = <248>;	/* /sys/kernel/debug/gpio */
+		reg = <0x18>;
+	};
+
+	/*  Toshiba MIPI bridge 1 on MIPI interface/channel: Parallel-Rx MIPI-Tx */
+	tc_mipi_bridge_1: tc_mipi_bridge@0e {
+		compatible = "toshiba,tc_mipi_bridge";
+		reg = <0x0e>;
+		tc_mipi_bridge = <1>;
+	};
+
+	/* MAX9271 serializer */
+	max9271@40 {
+		compatible = "maxim,max9271";
+		reg = <0x40>;
+	};
+
+	/* MAX9272 deserializer */
+	max9272@48 {
+		compatible = "maxim,max9272";
+		reg = <0x48>;
+	};
+
+	/* Drive HDMI via I2C */
+	mxc_hdmi_i2c@50 {
+		compatible = "fsl,mxc_hdmi_i2c";
+		reg = <0x50>;
+	};
+
+	/* Aptina 0100 camera sensor */
+	ap0100_m034@5d {
+		compatible = "aptina,ap0100_m034";
+		reg = <0x5d>;
+	};
+
+	/* Camera driver on parallel interface */
+	ssmn_parallel@7e {
+		compatible = "sensity,ssmn_parallel";
+		reg = <0x7e>; /* A dummy I2C slave address */
+		pinctrl-names = "default";
+		pinctrl-0 = <&pinctrl_ipu1_2>;
+		clocks = <&clks 201>;
+		clock-names = "csi_mclk";
+		csi_id = <0>;
+		mclk = <24000000>;
+		mclk_source = <0>;
+		gpr = <&gpr>;
+	};
+
+	/* Camera driver on MIPI interface */
+	ssmn_mipi@7f {
+		compatible = "sensity,ssmn_mipi";
+		reg = <0x7f>; /* A dummy I2C slave address */
+		clocks = <&clks 201>;
+		clock-names = "csi_mclk";
+		csi_id = <1>;
+		mclk = <24000000>;
+		mclk_source = <0>;
+		gpr = <&gpr>;
+	};
 };
 
 &i2c3 {
@@ -406,4 +598,12 @@
 //			>;
 //		};
 //	};
+};
+
+&mipi_csi {
+	status = "okay";
+	ipu_id = <0>;
+	csi_id = <1>;
+	v_channel = <0>;
+	lanes = <2>;
 };

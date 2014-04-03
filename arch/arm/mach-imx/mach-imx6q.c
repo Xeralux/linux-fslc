@@ -41,6 +41,7 @@
 #include "common.h"
 #include "cpuidle.h"
 #include "hardware.h"
+#include "iomux-v3.h"
 
 static struct flexcan_platform_data flexcan_pdata[2];
 static int flexcan_en_gpio;
@@ -223,11 +224,44 @@ static void __init imx6q_csi_mux_init(void)
 			of_machine_is_compatible("fsl,imx6q-sabreauto"))
 			regmap_update_bits(gpr, IOMUXC_GPR1, 1 << 19, 1 << 19);
 		else if (of_machine_is_compatible("fsl,imx6dl-sabresd") ||
-			 of_machine_is_compatible("fsl,imx6dl-sabreauto"))
+			 of_machine_is_compatible("fsl,imx6dl-sabreauto") ||
+			 of_machine_is_compatible("sensity,medianode"))
 			regmap_update_bits(gpr, IOMUXC_GPR13, 0x3F, 0x0C);
 	} else {
 		pr_err("%s(): failed to find fsl,imx6q-iomux-gpr regmap\n",
 		       __func__);
+	}
+}
+
+/*
+ * Disable Hannstar LVDS panel CABC function.
+ * This function turns the panel's backlight density automatically
+ * according to the content shown on the panel which may cause
+ * annoying unstable backlight issue.
+ */
+static void __init imx6q_lvds_cabc_init(void)
+{
+	struct device_node *np = NULL;
+	int ret, lvds0_gpio, lvds1_gpio;
+
+	np = of_find_node_by_name(NULL, "lvds_cabc_ctrl");
+	if (!np)
+		return;
+
+	lvds0_gpio = of_get_named_gpio(np, "lvds0-gpios", 0);
+	if (gpio_is_valid(lvds0_gpio)) {
+		ret = gpio_request_one(lvds0_gpio, GPIOF_OUT_INIT_LOW,
+				"LVDS0 CABC enable");
+		if (ret)
+			pr_warn("failed to request LVDS0 CABC gpio\n");
+	}
+
+	lvds1_gpio = of_get_named_gpio(np, "lvds1-gpios", 0);
+	if (gpio_is_valid(lvds1_gpio)) {
+		ret = gpio_request_one(lvds1_gpio, GPIOF_OUT_INIT_LOW,
+				"LVDS1 CABC enable");
+		if (ret)
+			pr_warn("failed to request LVDS1 CABC gpio\n");
 	}
 }
 
@@ -297,6 +331,32 @@ static inline void imx6q_enet_init(void)
 	imx6q_1588_init();
 }
 
+#if 1
+static int pca9557_setup(void)
+{
+#define MEDIANODE_PCA9557_BASE_ADDR     IMX_GPIO_NR(8, 24)
+	unsigned gpio_base = MEDIANODE_PCA9557_BASE_ADDR;
+	int pca9557_gpio_value[] = { 0, 0, 0, 0, 0, -1, -1, -1 };
+	int n;
+printk("pca9557_setup, gpio_base = %d\n", gpio_base);
+
+	/* By now, I/O expander pca953x driver should already be probed */
+	for (n = 0; n < ARRAY_SIZE(pca9557_gpio_value); ++n) {
+		gpio_request(gpio_base + n, "PCA9557 GPIO Expander");
+		if (pca9557_gpio_value[n] < 0) {
+			gpio_direction_input(gpio_base + n);
+			gpio_export(gpio_base + n, 0);
+		}
+		else
+			gpio_direction_output(gpio_base + n,
+			                      pca9557_gpio_value[n]);
+	}
+
+printk("pca9557_setup done\n");
+	return 0;
+}
+#endif
+
 /* Add auxdata to pass platform data */
 static const struct of_dev_auxdata imx6q_auxdata_lookup[] __initconst = {
 	OF_DEV_AUXDATA("fsl,imx6q-flexcan", 0x02090000, NULL, &flexcan_pdata[0]),
@@ -320,6 +380,7 @@ static void __init imx6q_init_machine(void)
 	imx_anatop_init();
 	imx6_pm_init();
 	imx6q_csi_mux_init();
+	imx6q_lvds_cabc_init();
 }
 
 #define OCOTP_CFG3			0x440
@@ -457,6 +518,9 @@ static void __init imx6q_init_late(void)
 		imx6q_flexcan_fixup_auto();
 		imx6q_audio_lvds2_init();
 	}
+
+	/* Initialize I/O expander PCA9557 */
+	pca9557_setup();
 }
 
 static void __init imx6q_map_io(void)
@@ -464,6 +528,13 @@ static void __init imx6q_map_io(void)
 	debug_ll_io_init();
 	imx_scu_map_io();
 	imx6_pm_map_io();
+}
+
+void __init imx6q_init_early(void)                                                                                                                                       
+{
+	mxc_set_cpu_type(MXC_CPU_IMX6Q);
+	mxc_iomux_v3_init(MX6Q_IO_ADDRESS(MX6Q_IOMUXC_BASE_ADDR));
+//	imx_src_init();
 }
 
 static void __init imx6q_init_irq(void)
@@ -498,6 +569,7 @@ DT_MACHINE_START(IMX6Q, "Freescale i.MX6 Quad/DualLite (Device Tree)")
 	.dma_zone_size	= (SZ_2G - SZ_256M),
 	.smp		= smp_ops(imx_smp_ops),
 	.map_io		= imx6q_map_io,
+        .init_early     = imx6q_init_early,
 	.init_irq	= imx6q_init_irq,
 	.init_time	= imx6q_timer_init,
 	.init_machine	= imx6q_init_machine,

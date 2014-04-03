@@ -271,6 +271,52 @@ void mipi_csi2_pixelclk_disable(struct mipi_csi2_info *info)
 EXPORT_SYMBOL(mipi_csi2_pixelclk_disable);
 
 /*!
+ * This function is called to dump mipi csi2 memory registers.
+ *
+ * @param	info		mipi csi2 hander
+ * @return      none
+ */
+void mipi_csi2_dump_reg(struct mipi_csi2_info *info)
+{
+	unsigned int reg_val;
+	int i;
+
+	mipi_dbg("mipi_csi2_dump_reg: \n");
+	_mipi_csi2_lock(info);
+	for (i=0;  i<0x34; i+=4) {
+		reg_val = mipi_csi2_read(info, i/4);
+		mipi_dbg("mipi_csi2 reg: 0x%04X = 0x%04X\n", i, reg_val);
+	}
+	_mipi_csi2_unlock(info);
+
+	return;
+}
+
+EXPORT_SYMBOL(mipi_csi2_dump_reg);
+
+/*!
+ * This function is called to dump mipi csi2 status registers.
+ *
+ * @param	info		mipi csi2 hander
+ * @return      none
+ */
+void mipi_csi2_status_reg(struct mipi_csi2_info *info)
+{
+	unsigned int reg_val;
+	int i;
+
+	_mipi_csi2_lock(info);
+	i = 0x14;
+	reg_val = mipi_csi2_read(info, i/4);
+	mipi_dbg("mipi_csi status reg: 0x%x = 0x%x\n", i, reg_val);
+	_mipi_csi2_unlock(info);
+
+	return;
+}
+
+EXPORT_SYMBOL(mipi_csi2_status_reg);
+
+/*!
  * This function is called to power on mipi csi2.
  *
  * @param	info		mipi csi2 hander

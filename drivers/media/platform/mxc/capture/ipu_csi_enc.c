@@ -33,6 +33,16 @@
 	#define CAMERA_TRACE(x)
 #endif
 
+static inline ipu_channel_t _get_ipu_channel(int csi_id)
+{
+    return (csi_id == 0)?CSI_MEM0:CSI_MEM1;
+}
+static inline int _get_ipu_irq(int csi_id)
+{
+    return (csi_id == 0)?IPU_IRQ_CSI0_OUT_EOF:IPU_IRQ_CSI1_OUT_EOF;
+}
+
+
 /*
  * Function definitions
  */
@@ -157,16 +167,20 @@ static int csi_enc_setup(cam_data *cam)
 			params.csi_mem.mipi_vc = 0;
 			params.csi_mem.mipi_id = 0;
 		}
+	} else {
+		printk(KERN_ERR "Fail to get mipi_csi2_info!\n");
+		return -EPERM;
 	}
 #endif
 
-	err = ipu_init_channel(cam->ipu, CSI_MEM, &params);
+	err = ipu_init_channel(cam->ipu, _get_ipu_channel(cam->csi), &params);
+
 	if (err != 0) {
 		printk(KERN_ERR "ipu_init_channel %d\n", err);
 		return err;
 	}
 
-	err = ipu_init_channel_buffer(cam->ipu, CSI_MEM, IPU_OUTPUT_BUFFER,
+	err = ipu_init_channel_buffer(cam->ipu, _get_ipu_channel(cam->csi), IPU_OUTPUT_BUFFER,
 				      pixel_fmt, cam->v2f.fmt.pix.width,
 				      cam->v2f.fmt.pix.height,
 				      cam->v2f.fmt.pix.bytesperline,
@@ -178,7 +192,9 @@ static int csi_enc_setup(cam_data *cam)
 		printk(KERN_ERR "CSI_MEM output buffer\n");
 		return err;
 	}
-	err = ipu_enable_channel(cam->ipu, CSI_MEM);
+
+	err = ipu_enable_channel(cam->ipu, _get_ipu_channel(cam->csi));
+
 	if (err < 0) {
 		printk(KERN_ERR "ipu_enable_channel CSI_MEM\n");
 		return err;
@@ -195,19 +211,18 @@ static int csi_enc_setup(cam_data *cam)
  *
  * @return  status
  */
-static int csi_enc_eba_update(struct ipu_soc *ipu, dma_addr_t eba,
-			      int *buffer_num)
+static int csi_enc_eba_update1(struct ipu_soc *ipu, dma_addr_t eba, int *buffer_num)
 {
 	int err = 0;
 
 	pr_debug("eba %x\n", eba);
-	err = ipu_update_channel_buffer(ipu, CSI_MEM, IPU_OUTPUT_BUFFER,
+	err = ipu_update_channel_buffer(ipu, CSI_MEM1, IPU_OUTPUT_BUFFER,
 					*buffer_num, eba);
 	if (err != 0) {
-		ipu_clear_buffer_ready(ipu, CSI_MEM, IPU_OUTPUT_BUFFER,
+		ipu_clear_buffer_ready(ipu, CSI_MEM1, IPU_OUTPUT_BUFFER,
 				       *buffer_num);
 
-		err = ipu_update_channel_buffer(ipu, CSI_MEM, IPU_OUTPUT_BUFFER,
+		err = ipu_update_channel_buffer(ipu, CSI_MEM1, IPU_OUTPUT_BUFFER,
 						*buffer_num, eba);
 		if (err != 0) {
 			pr_err("ERROR: v4l2 capture: fail to update "
@@ -216,7 +231,34 @@ static int csi_enc_eba_update(struct ipu_soc *ipu, dma_addr_t eba,
 		}
 	}
 
-	ipu_select_buffer(ipu, CSI_MEM, IPU_OUTPUT_BUFFER, *buffer_num);
+	ipu_select_buffer(ipu, CSI_MEM1, IPU_OUTPUT_BUFFER, *buffer_num);
+
+	*buffer_num = (*buffer_num == 0) ? 1 : 0;
+
+	return 0;
+}
+
+static int csi_enc_eba_update0(struct ipu_soc *ipu, dma_addr_t eba, int *buffer_num)
+{
+	int err = 0;
+
+	pr_debug("eba %x\n", eba);
+	err = ipu_update_channel_buffer(ipu, CSI_MEM0, IPU_OUTPUT_BUFFER,
+					*buffer_num, eba);
+	if (err != 0) {
+		ipu_clear_buffer_ready(ipu, CSI_MEM0, IPU_OUTPUT_BUFFER,
+				       *buffer_num);
+
+		err = ipu_update_channel_buffer(ipu, CSI_MEM0, IPU_OUTPUT_BUFFER,
+						*buffer_num, eba);
+		if (err != 0) {
+			pr_err("ERROR: v4l2 capture: fail to update "
+			       "buf%d\n", *buffer_num);
+			return err;
+		}
+	}
+
+	ipu_select_buffer(ipu, CSI_MEM0, IPU_OUTPUT_BUFFER, *buffer_num);
 
 	*buffer_num = (*buffer_num == 0) ? 1 : 0;
 
@@ -249,8 +291,8 @@ static int csi_enc_enabling_tasks(void *private)
 	    PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage);
 	cam->dummy_frame.buffer.m.offset = cam->dummy_frame.paddress;
 
-	ipu_clear_irq(cam->ipu, IPU_IRQ_CSI0_OUT_EOF);
-	err = ipu_request_irq(cam->ipu, IPU_IRQ_CSI0_OUT_EOF,
+	ipu_clear_irq(cam->ipu, _get_ipu_irq(cam->csi));
+	err = ipu_request_irq(cam->ipu, _get_ipu_irq(cam->csi),
 			      csi_enc_callback, 0, "Mxc Camera", cam);
 	if (err != 0) {
 		printk(KERN_ERR "Error registering rot irq\n");
@@ -282,9 +324,9 @@ static int csi_enc_disabling_tasks(void *private)
 	int csi_id;
 #endif
 
-	err = ipu_disable_channel(cam->ipu, CSI_MEM, true);
+	err = ipu_disable_channel(cam->ipu, _get_ipu_channel(cam->csi), true);
 
-	ipu_uninit_channel(cam->ipu, CSI_MEM);
+	ipu_uninit_channel(cam->ipu, _get_ipu_channel(cam->csi));
 
 	if (cam->dummy_frame.vaddress != 0) {
 		dma_free_coherent(0, cam->dummy_frame.buffer.length,
@@ -305,6 +347,9 @@ static int csi_enc_disabling_tasks(void *private)
 				&& cam->csi == csi_id)
 				mipi_csi2_pixelclk_disable(mipi_csi2_info);
 		}
+	} else {
+		printk(KERN_ERR "Fail to get mipi_csi2_info!\n");
+		return -EPERM;
 	}
 #endif
 
@@ -337,7 +382,9 @@ static int csi_enc_disable_csi(void *private)
 	/* free csi eof irq firstly.
 	 * when disable csi, wait for idmac eof.
 	 * it requests eof irq again */
-	ipu_free_irq(cam->ipu, IPU_IRQ_CSI0_OUT_EOF, cam);
+	ipu_free_irq(cam->ipu, _get_ipu_irq(cam->csi), cam);
+
+	//printk("\nMakis is invoking csi_enc_disable_csi(), ipu=%x, csi=%d \n", cam->ipu, cam->csi);
 
 	return ipu_disable_csi(cam->ipu, cam->csi);
 }
@@ -355,7 +402,10 @@ int csi_enc_select(void *private)
 	int err = 0;
 
 	if (cam) {
-		cam->enc_update_eba = csi_enc_eba_update;
+
+		if (cam->csi == 0) cam->enc_update_eba = csi_enc_eba_update0;
+		if (cam->csi == 1) cam->enc_update_eba = csi_enc_eba_update1;
+
 		cam->enc_enable = csi_enc_enabling_tasks;
 		cam->enc_disable = csi_enc_disabling_tasks;
 		cam->enc_enable_csi = csi_enc_enable_csi;
