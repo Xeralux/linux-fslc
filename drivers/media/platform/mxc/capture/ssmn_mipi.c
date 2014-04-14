@@ -79,7 +79,9 @@ enum ssmn_mipi_mode {
 	ssmn_mipi_mode_I2C_TEST_1 = 4,
 	ssmn_mipi_mode_I2C_TEST_2 = 5,
 	ssmn_mipi_mode_SENSOR_TEST_MODE = 6,
-	ssmn_mipi_mode_MAX = 6,
+	ssmn_mipi_mode_I2C_TEST_3 = 7,
+	ssmn_mipi_mode_I2C_TEST_4 = 8,
+	ssmn_mipi_mode_MAX = 8,
 	ssmn_mipi_mode_INIT = 0xff, /*only for sensor init*/
 };
 
@@ -124,6 +126,8 @@ static struct ssmn_mipi_mode_info ssmn_mipi_mode_info_data[2][ssmn_mipi_mode_MAX
 		{ssmn_mipi_mode_I2C_TEST_1, SUBSAMPLING, 640,  480},
 		{ssmn_mipi_mode_I2C_TEST_2, SUBSAMPLING, 640,  480},
 		{ssmn_mipi_mode_SENSOR_TEST_MODE, SUBSAMPLING, 1280,  720},
+		{ssmn_mipi_mode_I2C_TEST_3, SUBSAMPLING, 640,  480},
+		{ssmn_mipi_mode_I2C_TEST_4, SUBSAMPLING, 640,  480},
 	},
 	{
 		{ssmn_mipi_mode_720P_1280_720, SUBSAMPLING, 1280, 720},
@@ -133,6 +137,8 @@ static struct ssmn_mipi_mode_info ssmn_mipi_mode_info_data[2][ssmn_mipi_mode_MAX
 		{ssmn_mipi_mode_I2C_TEST_1, SUBSAMPLING, 640,  480},
 		{ssmn_mipi_mode_I2C_TEST_2, SUBSAMPLING, 640,  480},
 		{ssmn_mipi_mode_SENSOR_TEST_MODE, SUBSAMPLING, 1280,  720},
+		{ssmn_mipi_mode_I2C_TEST_3, SUBSAMPLING, 640,  480},
+		{ssmn_mipi_mode_I2C_TEST_4, SUBSAMPLING, 640,  480},
 	},
 };
 
@@ -301,20 +307,19 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 		tc_mipi_bridge_dev_init(1); // 1: mipi test output
 	} else if ( mode != ssmn_mipi_mode_INIT) { // I2C tests
 		max927x_init();
-/*
-		// max9272 I2C test
-		pr_debug("max9272 i2c test running ...... \n");
-		ret = max9272_I2C_test(i2c_test_cycles, &i2c_w_fail_cnt, &i2c_r_fail_cnt);
-		if ( ret == 0) {
-			pr_debug("max9272 i2c test passed !total test count = %d\n", i2c_test_cycles);
-		} else {
-			pr_debug("max9272 i2c test FAILED!write failure count = %d, read failure count = %d, total test count = %d\n",
+		if ( mode == ssmn_mipi_mode_I2C_TEST_3) {
+			// max9272 I2C test
+			pr_debug("max9272 i2c test running ...... \n");
+			ret = max9272_I2C_test(i2c_test_cycles, &i2c_w_fail_cnt, &i2c_r_fail_cnt);
+			if ( ret == 0) {
+				pr_debug("max9272 i2c test passed !total test count = %d\n", i2c_test_cycles);
+			} else {
+				pr_debug("max9272 i2c test FAILED!write failure count = %d, read failure count = %d, total test count = %d\n",
 				i2c_w_fail_cnt,  i2c_r_fail_cnt,  i2c_test_cycles);
-			pca954x_release_channel();
-			return -1;
-		}
-*/
-		if ( mode == ssmn_mipi_mode_I2C_TEST_1) {
+				pca954x_release_channel();
+				return -1;
+			}
+		} else if ( mode == ssmn_mipi_mode_I2C_TEST_1) {
 			// max9271 I2C test
 			pr_debug("max9271 i2c test running ...... \n");
 			ret = max9271_I2C_test(i2c_test_cycles, &i2c_w_retry_cnt, & i2c_r_retry_cnt, &i2c_w_fail_cnt, &i2c_r_fail_cnt);
@@ -341,6 +346,19 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 				return -1;
 			}
 
+		} else if ( mode == ssmn_mipi_mode_I2C_TEST_4) {
+			// max927x I2C test
+			pr_debug("max927x i2c test running ...... \n");
+			ret = max927x_I2C_test(i2c_test_cycles, &i2c_w_retry_cnt, & i2c_r_retry_cnt, &i2c_w_fail_cnt, &i2c_r_fail_cnt);
+			if ( ret == 0) {
+				pr_debug("max927x i2c test passed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
+					i2c_test_cycles, i2c_w_retry_cnt, i2c_r_retry_cnt, i2c_w_fail_cnt, i2c_r_fail_cnt);
+			} else {
+				pr_debug("max927x i2c test failed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
+					i2c_test_cycles, i2c_w_retry_cnt, i2c_r_retry_cnt, i2c_w_fail_cnt, i2c_r_fail_cnt);
+				pca954x_release_channel();
+				return -1;
+			}
 		}
 
 		tc_mipi_bridge_dev_init(1); // 1: mipi test output
