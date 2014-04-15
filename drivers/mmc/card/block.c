@@ -1897,6 +1897,13 @@ static int mmc_blk_issue_rq(struct mmc_queue *mq, struct request *req)
 		/* claim host only for the first request */
 		mmc_claim_host(card->host);
 
+	if (md->area_type & MMC_BLK_DATA_AREA_RPMB) {
+		if (req)
+			blk_end_request_all(req, 0);
+		ret = 0;
+		goto out;
+	}
+
 	ret = mmc_blk_part_switch(card, md);
 	if (ret) {
 		if (req) {
