@@ -333,7 +333,7 @@
 		compatible = "sensity,ssmn_parallel";
 		reg = <0x7e>; /* A dummy I2C slave address */
 		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_ipu1_2>;
+		pinctrl-0 = <&pinctrl_ipu1_2_mn>;
 		clocks = <&clks 201>;
 		clock-names = "csi_mclk";
 		csi_id = <0>;
@@ -578,6 +578,24 @@
 			fsl,pins = <
 				/*  SPI DUART IRQ line.  */
 				MX6QDL_PAD_GPIO_0__GPIO1_IO00	0x80000000
+			>;
+		};
+	};
+
+	ipu1_2 { /* parallel camera , no data enable*/
+		pinctrl_ipu1_2_mn: ipu1grp-2mn {
+			fsl,pins = <
+				MX6QDL_PAD_CSI0_DAT12__IPU1_CSI0_DATA12    0x80000000
+				MX6QDL_PAD_CSI0_DAT13__IPU1_CSI0_DATA13    0x80000000
+				MX6QDL_PAD_CSI0_DAT14__IPU1_CSI0_DATA14    0x80000000
+				MX6QDL_PAD_CSI0_DAT15__IPU1_CSI0_DATA15    0x80000000
+				MX6QDL_PAD_CSI0_DAT16__IPU1_CSI0_DATA16    0x80000000
+				MX6QDL_PAD_CSI0_DAT17__IPU1_CSI0_DATA17    0x80000000
+				MX6QDL_PAD_CSI0_DAT18__IPU1_CSI0_DATA18    0x80000000
+				MX6QDL_PAD_CSI0_DAT19__IPU1_CSI0_DATA19    0x80000000
+				MX6QDL_PAD_CSI0_PIXCLK__IPU1_CSI0_PIXCLK   0x80000000
+				MX6QDL_PAD_CSI0_MCLK__IPU1_CSI0_HSYNC      0x80000000
+				MX6QDL_PAD_CSI0_VSYNC__IPU1_CSI0_VSYNC     0x80000000
 			>;
 		};
 	};
