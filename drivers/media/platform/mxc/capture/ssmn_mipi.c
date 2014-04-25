@@ -964,6 +964,14 @@ static int ssmn_mipi_probe(struct i2c_client *client,
 		dev_err(dev, "missing gpr\n");
 		return -1;
 	}
+	retval = gpio_request(MEDIANODE_CAM_MIPI_PWR, "camera mipi pwr");
+	if(retval < 0)
+		return retval;
+
+	retval = gpio_request(MEDIANODE_MIPI_TC_RESET, "camera mipi tc rst");
+	if(retval < 0)
+		goto error1;
+
 	clk_prepare_enable(ssmn_mipi_data.sensor_clk);
 
 	ssmn_mipi_data.io_init = ssmn_mipi_sensor_io_init;
@@ -1008,6 +1016,9 @@ static int ssmn_mipi_probe(struct i2c_client *client,
 
 	printk("ssmn_mipi_probe done\n");
 	return retval;
+error1:
+	gpio_free(MEDIANODE_CAM_MIPI_PWR);
+	return retval;
 }
 
 /*!
@@ -1042,6 +1053,8 @@ static int ssmn_mipi_remove(struct i2c_client *client)
 		regulator_put(io_regulator);
 	}
 
+	gpio_free(MEDIANODE_MIPI_TC_RESET);
+	gpio_free(MEDIANODE_CAM_MIPI_PWR);
 	return 0;
 }
 

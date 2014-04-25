@@ -331,32 +331,6 @@ static inline void imx6q_enet_init(void)
 	imx6q_1588_init();
 }
 
-#if 1
-static int pca9557_setup(void)
-{
-#define MEDIANODE_PCA9557_BASE_ADDR     IMX_GPIO_NR(8, 24)
-	unsigned gpio_base = MEDIANODE_PCA9557_BASE_ADDR;
-	int pca9557_gpio_value[] = { 0, 0, 0, 0, 0, -1, -1, -1 };
-	int n;
-printk("pca9557_setup, gpio_base = %d\n", gpio_base);
-
-	/* By now, I/O expander pca953x driver should already be probed */
-	for (n = 0; n < ARRAY_SIZE(pca9557_gpio_value); ++n) {
-		gpio_request(gpio_base + n, "PCA9557 GPIO Expander");
-		if (pca9557_gpio_value[n] < 0) {
-			gpio_direction_input(gpio_base + n);
-			gpio_export(gpio_base + n, 0);
-		}
-		else
-			gpio_direction_output(gpio_base + n,
-			                      pca9557_gpio_value[n]);
-	}
-
-printk("pca9557_setup done\n");
-	return 0;
-}
-#endif
-
 /* Add auxdata to pass platform data */
 static const struct of_dev_auxdata imx6q_auxdata_lookup[] __initconst = {
 	OF_DEV_AUXDATA("fsl,imx6q-flexcan", 0x02090000, NULL, &flexcan_pdata[0]),
@@ -519,8 +493,6 @@ static void __init imx6q_init_late(void)
 		imx6q_audio_lvds2_init();
 	}
 
-	/* Initialize I/O expander PCA9557 */
-	pca9557_setup();
 }
 
 static void __init imx6q_map_io(void)

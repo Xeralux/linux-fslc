@@ -812,6 +812,14 @@ static int ssmn_parallel_probe(struct i2c_client *client,
 		return -1;
 	}
 
+	retval = gpio_request(MEDIANODE_CAM_PARALLEL_PWR, "camera parallel pwr");
+	if(retval < 0)
+		return retval;
+
+	retval = gpio_request(MEDIANODE_PARALLEL_TC_RESET, "camera parallel tc rst");
+	if(retval < 0)
+		goto error1;
+
 	clk_prepare_enable(ssmn_parallel_data.sensor_clk);
 
 	ssmn_parallel_data.io_init = ssmn_parallel_sensor_io_init;
@@ -856,6 +864,10 @@ static int ssmn_parallel_probe(struct i2c_client *client,
 
 	printk("ssmn_parallel_probe done\n");
 	return retval;
+
+error1:
+	gpio_free(MEDIANODE_CAM_PARALLEL_PWR);
+	return retval;
 }
 
 /*!
@@ -889,7 +901,8 @@ static int ssmn_parallel_remove(struct i2c_client *client)
 		regulator_disable(io_regulator);
 		regulator_put(io_regulator);
 	}
-
+	gpio_free(MEDIANODE_PARALLEL_TC_RESET);
+	gpio_free(MEDIANODE_CAM_PARALLEL_PWR);
 	return 0;
 }
 
