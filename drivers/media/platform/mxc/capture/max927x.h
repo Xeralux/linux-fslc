@@ -173,7 +173,7 @@ static s32 max927x_init(void)
 	pr_debug("max927x init\n");
 
 	retval = max9272_write_reg(0x15, 0x24);
-	mdelay(5);
+	msleep(500);
 	//retval  |= max9271_write_reg(0x08, 0x08);
 	/*
 	 *
@@ -201,7 +201,7 @@ static s32 max927x_init(void)
 			 (1 << MAX927X_REG_04_REVCCEN_SHIFT) |
 			 (1 << MAX927X_REG_04_FWDCCEN_SHIFT);
 	retval  |= max9271_write_reg(0x04, regval);
-
+	msleep(500);
 #if 0
 	regval = (0 << MAX927X_REG_05_I2CMETHOD_SHIFT) |
 			 (1 << MAX9271_REG_05_ENJITFILT_SHIFT) |

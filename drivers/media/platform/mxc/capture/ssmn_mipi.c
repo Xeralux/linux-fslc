@@ -189,7 +189,7 @@ static void ssmn_mipi_powerdown(int powerdown)
 		else if (of_machine_is_compatible("fsl,imx6dl"))
 			regmap_update_bits(gpr,IOMUXC_GPR13,0x38,0);
 	}
-	mdelay(5);
+	msleep(1100);
 }
 
 // Toshiba Mipi-bridge chip
