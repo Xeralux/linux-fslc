@@ -340,20 +340,6 @@ static int pca954x_probe(struct i2c_client *client,
 	} else
 		data->type = id->driver_data;
 
-	//HFC
-	if (NULL != client)
-		printk("%s: client->name=%s, client->addr=%d, client->irq=%d\n", __func__, client->name, client->addr, client->irq);
-	else
-		printk("%s: client=%p\n", __func__, client);
-	if (NULL != pdata) {
-		printk("%s: pdata->num_modes=%d, pdata->modes=%p\n", __func__, pdata->num_modes, pdata->modes);
-		if (NULL != pdata->modes)
-			printk("%s: pdata->modes->adap_id=%d\n", __func__, pdata->modes->adap_id);
-	}
-	else
-		printk("%s: pdata=%p\n", __func__, pdata);
-	//^^^
-
 	data->last_chan = 0;		   /* force the first selection */
 
 	/* Now create an adapter for each channel */

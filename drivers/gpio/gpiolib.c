@@ -1403,14 +1403,6 @@ static int gpiod_request(struct gpio_desc *desc, const char *label)
 
 	spin_lock_irqsave(&gpio_lock, flags);
 
-	//HFC
-	if (desc->chip != NULL)
-		printk("%s: desc->chip->label=%s, desc->chip->base=%d, desc->chip->ngpio=%d, desc->chip->names=%s\n",
-		       __func__, desc->chip->label, desc->chip->base, desc->chip->ngpio, (char *)desc->chip->names);
-	else
-		printk("%s: desc->chip = NULL!\n", __func__);
-	//^^^
-
 	chip = desc->chip;
 	if (chip == NULL)
 		goto done;
@@ -1460,7 +1452,6 @@ done:
 
 int gpio_request(unsigned gpio, const char *label)
 {
-	printk("%s: gpio=%d, label=%s\n", __func__, gpio, label);
 	return gpiod_request(gpio_to_desc(gpio), label);
 }
 EXPORT_SYMBOL_GPL(gpio_request);
@@ -1670,11 +1661,6 @@ static int gpiod_direction_input(struct gpio_desc *desc)
 		}
 	}
 
-	//HFC
-	printk("%s: calling chip->direction_input(chip=%p, offset=%d)=%p\n",
-	       __func__, chip, offset, (void *)chip->direction_input);
-	//^^^
-
 	status = chip->direction_input(chip, offset);
 	if (status == 0)
 		clear_bit(FLAG_IS_OUT, &desc->flags);
@@ -1708,10 +1694,6 @@ static int gpiod_direction_output(struct gpio_desc *desc, int value)
 		return -EINVAL;
 	}
 
-	//HFC
-	printk("%s: desc->flags=%lu\n", __func__, desc->flags);
-	//^^^
-
 	/* Open drain pin should not be driven to 1 */
 	if (value && test_bit(FLAG_OPEN_DRAIN,  &desc->flags))
 		return gpiod_direction_input(desc);
@@ -1723,11 +1705,6 @@ static int gpiod_direction_output(struct gpio_desc *desc, int value)
 	spin_lock_irqsave(&gpio_lock, flags);
 
 	chip = desc->chip;
-
-	//HFC
-	printk("%s: desc->chip->names=%s, desc->chip->base=%d, desc->chip->ngpio=%d\n",
-	       __func__, (char *)desc->chip->names, desc->chip->base, desc->chip->ngpio);
-	//^^^
 
 	if (!chip || !chip->set || !chip->direction_output)
 		goto fail;
@@ -1753,11 +1730,6 @@ static int gpiod_direction_output(struct gpio_desc *desc, int value)
 			goto lose;
 		}
 	}
-
-	//HFC
-	printk("%s: calling chip->direction_output(chip=%p, offset=%d, value=%d)=%p\n",
-	       __func__, chip, offset, value, (void *)chip->direction_output);
-	//^^^
 
 	status = chip->direction_output(chip, offset, value);
 	if (status == 0)

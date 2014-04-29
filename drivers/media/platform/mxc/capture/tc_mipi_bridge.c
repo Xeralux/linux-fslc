@@ -187,9 +187,6 @@ static s32 tc_mipi_bridge_write_reg(u16 reg, u16 val)
 		return -1;
 	}
 
-	//HFC
-	pr_debug("%s: reg=0x%02X, val=0x%02X\n", __func__, reg, val);
-
 	return 0;
 }
 
@@ -209,9 +206,6 @@ static s32 tc_mipi_bridge_write_reg_4B(u16 reg, u32 val)
 			__func__, reg, val);
 		return -1;
 	}
-
-	//HFC
-	pr_debug("%s: reg=0x%02X, val=0x%04X\n", __func__, reg, val);
 
 	return 0;
 }
@@ -237,9 +231,6 @@ s32 tc_mipi_bridge_read_reg(u16 reg, u16 *val)
 	}
 
 	*val = ((au8RdBuf[0] << 8) & 0xff00) | (au8RdBuf[1] & 0x00ff);
-
-	//HFC
-	pr_debug("%s: reg=0x%02X, val=0x%02X\n", __func__, reg, *val);
 
 	return 0;
 }
@@ -382,19 +373,6 @@ static int tc_mipi_bridge_probe(struct i2c_client *client,
 	pr_debug("%s: pos = %d\n", __func__, tc_mipi_bridge_pos);
 
 	tc_mipi_bridge_i2cclient = client;
-
-	//HFC
-	if (NULL != id) {
-		pr_debug("%s: i2c_device_id->name=%s\n", __func__, id->name);
-	}
-	if (NULL != client->adapter) {
-		pr_debug("%s: i2cclient->name=%s, i2cclient->addr=%d, i2cclient->adapter->name=%s\n",
-		         __func__, client->name, client->addr, client->adapter->name);
-	}
-	else {
-		pr_debug("%s: i2cclient->name=%s, i2cclient->addr=%d\n",
-		         __func__, client->name, client->addr);
-	}
 
 	// if this device is at position 0, it should be configured as parallel output
 	if (tc_mipi_bridge_pos == 0)

@@ -363,9 +363,6 @@ static s32 AM_write_reg_4B(u16 reg, u32 val)
 		return -1;
 	}
 
-	//HFC
-	pr_debug("%s: reg=0x%02X, val=0x%04X\n", __func__, reg, val);
-
 	return 0;
 }
 
@@ -388,9 +385,6 @@ static s32 AM_read_reg_1B(u16 reg, u8 *val)
 				__func__, reg, *val );
 		return -1;
 	}
-
-	//HFC
-	pr_debug("%s: reg=0x%02X, val=0x%X\n", __func__, reg, *val);
 
 	return 0;
 }
@@ -418,9 +412,6 @@ static s32 AM_read_reg_2B(u16 reg, u16 *val)
 	}
 
 	*val = ((au8RdBuf[0] << 8) & 0xff00) | (au8RdBuf[1] & 0x00ff);
-
-	//HFC
-	pr_debug("%s: reg=0x%02X, val=0x%02X\n", __func__, reg, *val);
 
 	return 0;
 }
@@ -489,8 +480,6 @@ s32 ap0100_m034_cmd_write(char *buf, int size)
 				__func__, (u16)buf[0] << 8 | buf[1], err);
 			return -1;
 		}
-		//HFC
-		pr_debug("%s: reg=0x%04X, val=0x%X\n", __func__, (u16)buf[0] << 8 | buf[1], buf[2]);
 	} else {
 		pr_err("%s: size=%x\n", __func__, size);
 		return -1;

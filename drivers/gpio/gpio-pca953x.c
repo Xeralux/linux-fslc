@@ -205,10 +205,6 @@ static int pca953x_gpio_direction_input(struct gpio_chip *gc, unsigned off)
 	u8 reg_val;
 	int ret, offset = 0;
 
-	//HFC
-	printk("%s: gc->base=%d, gc-ngpio=%d, offset=%d\n", __func__, gc->base, gc->ngpio, off);
-	//^^^
-
 	chip = container_of(gc, struct pca953x_chip, gpio_chip);
 
 	mutex_lock(&chip->i2c_lock);
@@ -239,10 +235,6 @@ static int pca953x_gpio_direction_output(struct gpio_chip *gc,
 	struct pca953x_chip *chip;
 	u8 reg_val;
 	int ret, offset = 0;
-
-	//HFC
-	printk("%s: gc->base=%d, gc-ngpio=%d, offset=%d\n", __func__, gc->base, gc->ngpio, off);
-	//^^^
 
 	chip = container_of(gc, struct pca953x_chip, gpio_chip);
 
@@ -358,12 +350,6 @@ static void pca953x_setup_gpio(struct pca953x_chip *chip, int gpios)
 	struct gpio_chip *gc;
 
 	gc = &chip->gpio_chip;
-
-	//HFC
-	printk("%s: ARCH_NR_GPIOS=%d\n", __func__, ARCH_NR_GPIOS);
-	printk("%s: pca953x_gpio_direction_input=%p, pca953x_gpio_direction_output=%p\n",
-	       __func__, (char *)pca953x_gpio_direction_input, (char *)pca953x_gpio_direction_output);
-	//^^^
 
 	gc->direction_input  = pca953x_gpio_direction_input;
 	gc->direction_output = pca953x_gpio_direction_output;
@@ -741,23 +727,10 @@ static int pca953x_probe(struct i2c_client *client,
 	int ret;
 	u32 invert = 0;
 
-	//HFC
-	printk("%s: probing ... addr=0x%02X, name=%s, id->name=%s\n",
-	       __func__, client->addr, client->name, id->name);
-
 	chip = devm_kzalloc(&client->dev,
 			sizeof(struct pca953x_chip), GFP_KERNEL);
 	if (chip == NULL)
 		return -ENOMEM;
-
-	//HFC
-	if (chip->client != NULL)
-		printk("%s: chip->gpio_start=%u, chip->client->addr=%d, chip->client->name=%s, chip->names=%s, chip->chip_type=%d\n",
-		       __func__, chip->gpio_start, chip->client->addr, chip->client->name, (char *)chip->names, chip->chip_type);
-	else
-		printk("%s: chip->gpio_start=%u, chip->names=%s, chip->chip_type=%d\n",
-		       __func__, chip->gpio_start, (char *)chip->names, chip->chip_type);
-	//^^^
 
 	pdata = client->dev.platform_data;
 	if (pdata) {
