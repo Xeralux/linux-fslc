@@ -66,6 +66,10 @@
 
 #define I2C_MUX_CHAN	I2C_MUX_CHAN_CSI1
 #define SSMN_CHANNEL 	"parallel"
+
+static void ssmn_parallel_powerdown(int powerdown);
+static void ssmn_parallel_tc_reset(int reset);
+
 #include "ap0100_param_sysfs.h"
 
 enum ssmn_parallel_mode {

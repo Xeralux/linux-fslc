@@ -68,6 +68,10 @@
 
 #define I2C_MUX_CHAN	I2C_MUX_CHAN_CSI0
 #define SSMN_CHANNEL "mipi"
+
+static void ssmn_mipi_powerdown(int powerdown);
+static void ssmn_mipi_tc_reset(int reset);
+
 #include "ap0100_param_sysfs.h"
 
 enum ssmn_mipi_mode {

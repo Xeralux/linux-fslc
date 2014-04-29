@@ -13,6 +13,8 @@
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
+#ifndef __max_ap0100_func_h__
+#define __max_ap0100_func_h__
 
 #ifdef pr_debug
 #undef pr_debug
@@ -39,8 +41,9 @@ extern void pca954x_release_channel (void);
 extern s32 tc_mipi_bridge_dev_init(int mode);
 extern s32 ap0100_m034_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fail, int *r_fail);
 extern s32 ap0100_m034_read_temperature(signed char *cur_temp, signed char *min_temp, signed char *max_temp);
-extern u16 ap0100_m034_cmd_status(void);
+extern s32 ap0100_m034_cmd_status(void);
 extern s32 ap0100_m034_cmd_write(char *buf, int size);
+extern s32 ap0100_m034_cmd_read(u16 reg, char *read_buf, int sensor_read_len);
 
 
 static s32 ap0100_hw_reset(void)
@@ -218,3 +221,5 @@ static s32 max927x_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fai
 	else
 		return -1;
 }
+
+#endif

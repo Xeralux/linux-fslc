@@ -454,7 +454,7 @@ static void ap0100_m034_soft_reset(void)
 }
 #endif
 
-u16 ap0100_m034_cmd_status(void)
+s32 ap0100_m034_cmd_status(void)
 {
 	int i;
 	u16 val=0;
@@ -467,7 +467,10 @@ u16 ap0100_m034_cmd_status(void)
 			break;
 		mdelay(5);
 	}
-	return val;
+	if (i<20)
+		return 0;
+	else
+		return 1;
 }
 EXPORT_SYMBOL(ap0100_m034_cmd_status);
 
@@ -476,7 +479,7 @@ s32 ap0100_m034_cmd_write(char *buf, int size)
 	int err;
 	if (size > 2) {
 		if ((err = i2c_master_send(ap0100_m034_i2cclient, buf, size)) < 0) {
-			pr_err("%s:write reg error:reg=%xn,err=%d",
+			pr_err("%s:write reg error:reg=%x\n,err=%d",
 				__func__, (u16)buf[0] << 8 | buf[1], err);
 			return -1;
 		}
@@ -488,6 +491,30 @@ s32 ap0100_m034_cmd_write(char *buf, int size)
 	return 0;
 }
 EXPORT_SYMBOL(ap0100_m034_cmd_write);
+
+s32 ap0100_m034_cmd_read(u16 reg, char *read_buf, int sensor_read_len)
+{
+	u8 au8RegBuf[2] = {0};
+
+	au8RegBuf[0] = reg >> 8;
+	au8RegBuf[1] = reg & 0xff;
+
+	if (2 != i2c_master_send(ap0100_m034_i2cclient, au8RegBuf, 2)) {
+		pr_err("%s:write reg error:reg=%x\n",
+				__func__, reg);
+		return -1;
+	}
+
+	if (sensor_read_len != i2c_master_recv(ap0100_m034_i2cclient, read_buf, sensor_read_len)) {
+		pr_err("%s:read reg error: len=%d\n",
+				__func__, sensor_read_len);
+		return -1;
+	}
+
+	return 0;
+}
+EXPORT_SYMBOL(ap0100_m034_cmd_read);
+
 
 s32 ap0100_m034_test_mode(int enable)
 {
