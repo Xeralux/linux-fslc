@@ -53,19 +53,18 @@ static s32 ap0100_hw_reset(void)
 //	val &= (~0x20); // set GPIO5 low
 	retval |= max9271_write_reg(0x0F, val);
 
-	mdelay(5);
+	msleep(1100);
 
 	val |= (1 << MAX9271_REG_0F_GPIO5OUT_SHIFT);
 //	val |= 0x20; // set GPIO5 high
 	retval |= max9271_write_reg(0x0F, val);
-
-	mdelay(1000);
 
 	if (retval) {
 		pr_debug("ap0100 hw reset failed \n");
 		return -1;
 	}
 
+	msleep(1000);
 	pr_debug("ap0100 hw reset done \n");
 
 	return retval;

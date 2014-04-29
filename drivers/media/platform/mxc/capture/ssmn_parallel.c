@@ -155,7 +155,7 @@ static void ssmn_parallel_powerdown(int powerdown)
 					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0);
 	}
 	//mdelay(5);
-	mdelay(500);
+	msleep(1100);
 }
 
 // Toshiba Mipi-bridge chip
