@@ -396,6 +396,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_enet_4>;
 	phy-mode = "rgmii";
+	phy-reset-gpios = <&gpio1 25 0>
 	status = "okay";
 };
 
@@ -505,7 +506,7 @@
 	enet {
 		/*
 		 * Same as pinctrl_enet_1, but with no mapping for ENET_REF_CLK
-		 * or ENET_TX_EN.
+		 * or ENET_TX_EN; add mapping for ENET_CRS_DV -> GPIO1_25
 		 */
 		pinctrl_enet_4: enetgrp-4 {
 			fsl,pins = <
@@ -524,6 +525,7 @@
 				MX6QDL_PAD_RGMII_RD2__RGMII_RD2       0x1b0b0
 				MX6QDL_PAD_RGMII_RD3__RGMII_RD3       0x1b0b0
 				MX6QDL_PAD_RGMII_RX_CTL__RGMII_RX_CTL 0x1b0b0
+				MX6QDL_PAD_ENET_CRS_DV__GPIO1_IO25    0x1b0b0
 			>;
 		};
 	};
