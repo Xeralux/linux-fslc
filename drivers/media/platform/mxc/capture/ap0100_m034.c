@@ -588,11 +588,11 @@ static s32 ap0100_handle_registers(AP0100_M034_DATA *ap0100_reg, int reg_size)
 				return -1;
 #endif
 		} else if (ap0100_reg[i].data_size == 0xC2) {
-				if ( AM_read_reg_2B(ap0100_reg[i].reg_addr, &val) != 0)
-					return -1;
-				val |= ap0100_reg[i].data;
-				if ( AM_send_command(ap0100_reg[i].reg_addr, val) != 0)
-					return -1;
+			if ( AM_send_command(ap0100_reg[i].reg_addr, ap0100_reg[i].data) != 0)
+				return -1;
+		} else {
+			pr_err("Unhandled data size %x\n", ap0100_reg[i].data_size);
+			return -1;
 		}
 	}
 	return 0;
