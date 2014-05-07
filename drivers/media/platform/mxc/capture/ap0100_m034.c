@@ -542,8 +542,6 @@ s32 ap0100_doorbell_cleared(void)
 s32 ap0100_m034_cmd_status(void)
 {
 	int i;
-	if(ap0100_doorbell_cleared() < 0)
-		return -1;
 
 	for (i=0; i<CMD_CHECK_RETRIES; i++) {
 		if(AM_send_command(0x0040, 0x8101) == 0)
