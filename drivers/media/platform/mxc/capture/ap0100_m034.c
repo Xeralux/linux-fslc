@@ -406,9 +406,9 @@ static s32 AM_read_reg_1B(u16 reg, u8 *val)
 		return -1;
 	}
 
-	if (1 != i2c_master_recv(ap0100_m034_i2cclient, val, 1)) {
-		pr_err("%s:read reg error:reg=%x,val=%x\n",
-				__func__, reg, *val );
+	if (1 != (err = i2c_master_recv(ap0100_m034_i2cclient, val, 1))) {
+		pr_err("%s:read reg error:reg=%x,val=%x,err=%x\n",
+				__func__, reg, *val, err);
 		return -1;
 	}
 
