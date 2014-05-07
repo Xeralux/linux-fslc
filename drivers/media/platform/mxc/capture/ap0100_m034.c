@@ -36,6 +36,8 @@
 
 // Ap0100 program is stored in the on-board flash
 #define PROG_IN_FLASH
+#define I2C_RETRIES (5)
+#define CMD_CHECK_RETRIES (20)
 
 typedef struct AP0100_M034_DATA {
     unsigned char data_size;  // bit 7 of data_size is a flag for "read and then write"
@@ -300,6 +302,7 @@ s32 ap0100_doorbell_cleared(void);
 static s32 AM_write_reg_1B(u16 reg, u8 val)
 {
 	int err;
+	int i;
 	u8 check;
 	u8 au8Buf[3] = {0};
 
@@ -307,22 +310,30 @@ static s32 AM_write_reg_1B(u16 reg, u8 val)
 	au8Buf[1] = reg & 0xff;
 	au8Buf[2] = val;
 
-	if ((err = i2c_master_send(ap0100_m034_i2cclient, au8Buf, 3)) < 0) {
-		pr_err("%s:write reg error:reg=%x,val=%x,err=%d\n",
-			__func__, reg, val, err);
-		return -1;
+	for(i = 0; i < I2C_RETRIES; i++) {
+		if ((err = i2c_master_send(ap0100_m034_i2cclient, au8Buf, 3)) < 0) {
+			pr_warn("%s:write reg error:reg=%x,val=%x,err=%d\n",
+					__func__, reg, val, err);
+			continue;
+		}
+		if((err = AM_read_reg_1B(reg,&check)) != 0)
+			continue;
+
+	    if(val != check) {
+			pr_warn("%s:check reg error:reg=%x,val=%x,check=%x\n",
+					__func__, reg, val, check);
+			continue;
+		}
+		return 0;
 	}
-	if((err = AM_read_reg_1B(reg,&check)) == 0 && val != check) {
-		pr_err("%s:check reg error:reg=%x,val=%x,check=%x\n",
-			__func__, reg, val, check);
-		return -1;
-	}
-	return err;
+	pr_err("%s: too many retries, giving up\n",__func__);
+	return -1;
 }
 
 static s32 AM_write_reg_2B(u16 reg, u16 val)
 {
 	int err;
+	int i;
 	u16 check;
 	u8 au8Buf[4] = {0};
 
@@ -331,18 +342,23 @@ static s32 AM_write_reg_2B(u16 reg, u16 val)
 	au8Buf[2] = val >> 8;
 	au8Buf[3] = val & 0xff;
 
-	if ((err = i2c_master_send(ap0100_m034_i2cclient, au8Buf, 4)) < 0) {
-		pr_err("%s:write reg error:reg=%x,val=%x,err=%d\n",
-			__func__, reg, val, err);
-		return -1;
+	for(i=0; i< I2C_RETRIES; i++) {
+		if ((err = i2c_master_send(ap0100_m034_i2cclient, au8Buf, 4)) < 0) {
+			pr_warn("%s:write reg error:reg=%x,val=%x,err=%d\n",
+					__func__, reg, val, err);
+			continue;
+		}
+		if((err = AM_read_reg_2B(reg,&check)) != 0)
+			continue;
+		if(val != check) {
+			pr_warn("%s:check reg error:reg=%x,val=%x,check=%x\n",
+					__func__, reg, val, check);
+			continue;
+		}
+		return 0;
 	}
-
-	if((err = AM_read_reg_2B(reg,&check)) == 0 && val != check) {
-		pr_err("%s:check reg error:reg=%x,val=%x,check=%x\n",
-			__func__, reg, val, check);
-		return -1;
-	}
-	return err;
+	pr_err("%s: too many retries, giving up\n",__func__);
+	return -1;
 }
 
 static s32 AM_send_command(u16 reg, u16 val)
@@ -350,15 +366,23 @@ static s32 AM_send_command(u16 reg, u16 val)
 	int err;
 	u16 ap0100_err;
 	u8 au8Buf[4] = {0};
+	int i;
 
 	au8Buf[0] = reg >> 8;
 	au8Buf[1] = reg & 0xff;
 	au8Buf[2] = val >> 8;
 	au8Buf[3] = val & 0xff;
 
-	if ((err = i2c_master_send(ap0100_m034_i2cclient, au8Buf, 4)) < 0) {
-		pr_err("%s:write reg error:reg=%x,val=%x,err=%d\n",
-			__func__, reg, val, err);
+	for(i=0; i< I2C_RETRIES; i++) {
+		if ((err = i2c_master_send(ap0100_m034_i2cclient, au8Buf, 4)) < 0) {
+			pr_warn("%s:write reg error:reg=%x,val=%x,err=%d\n",
+					__func__, reg, val, err);
+		} else {
+			break;
+		}
+	}
+	if(i == I2C_RETRIES) {
+		pr_err("%s: too many retries, giving up\n",__func__);
 		return -1;
 	}
 
@@ -366,12 +390,15 @@ static s32 AM_send_command(u16 reg, u16 val)
 	if(err < 0)
 		return err;
 
-	if((err = AM_read_reg_2B(reg,&ap0100_err)) == 0 && ap0100_err != 0) {
-		pr_err("%s:command error:reg=%x,ap0100_err=%x\n",
-			__func__, reg, ap0100_err);
-		return -1;
+	for(i=0; i < I2C_RETRIES; i++) {
+		if((err = AM_read_reg_2B(reg,&ap0100_err)) == 0 && ap0100_err == 0) {
+			return 0;
+		}
 	}
-	return err;
+
+	pr_err("%s:command error:reg=%x,err=%x,ap0100_err=%x\n",
+			__func__, reg, err, ap0100_err);
+	return -1;
 }
 
 #ifndef PROG_IN_FLASH
@@ -404,51 +431,58 @@ static s32 AM_write_reg_4B(u16 reg, u32 val)
 static s32 AM_read_reg_1B(u16 reg, u8 *val)
 {
 	int err;
+	int i;
 	u8 au8RegBuf[2] = {0};
 
 	au8RegBuf[0] = reg >> 8;
 	au8RegBuf[1] = reg & 0xff;
-
-	if (2 != (err = i2c_master_send(ap0100_m034_i2cclient, au8RegBuf, 2))) {
-		pr_err("%s:write reg error:reg=%x,err=%d\n",
+	for(i=0; i< I2C_RETRIES; i++) {
+		if (2 != (err = i2c_master_send(ap0100_m034_i2cclient, au8RegBuf, 2))) {
+			pr_warn("%s:write reg error:reg=%x,err=%d\n",
 				__func__, reg, err);
-		return -1;
-	}
+			continue;
+		}
 
-	if (1 != (err = i2c_master_recv(ap0100_m034_i2cclient, val, 1))) {
-		pr_err("%s:read reg error:reg=%x,val=%x,err=%x\n",
-				__func__, reg, *val, err);
-		return -1;
+		if (1 != (err = i2c_master_recv(ap0100_m034_i2cclient, val, 1))) {
+			pr_warn("%s:read reg error:reg=%x,val=%x,err=%x\n",
+					__func__, reg, *val, err);
+			continue;
+		}
+		return 0;
 	}
-
-	return 0;
+	pr_err("%s: too many retries, giving up\n",__func__);
+	return -1;
 }
 
 static s32 AM_read_reg_2B(u16 reg, u16 *val)
 {
 	int err;
+	int i;
 	u8 au8RegBuf[2] = {0};
 	u8 au8RdBuf[2] = {0};
 
 	au8RegBuf[0] = reg >> 8;
 	au8RegBuf[1] = reg & 0xff;
 
-	if (2 != (err = i2c_master_send(ap0100_m034_i2cclient, au8RegBuf, 2))) {
-		pr_err("%s:write reg error:reg=%x,err=%d\n",
-				__func__, reg, err);
-		return -1;
-	}
+	for(i=0; i<I2C_RETRIES; i++) {
+		if (2 != (err = i2c_master_send(ap0100_m034_i2cclient, au8RegBuf, 2))) {
+			pr_warn("%s:write reg error:reg=%x,err=%d\n",
+					__func__, reg, err);
+			continue;
+		}
 
-	if (2 != (err = i2c_master_recv(ap0100_m034_i2cclient, au8RdBuf, 2))) {
-		pr_err("%s:read reg error:reg=%x,val=%x,err=%d\n",
+		if (2 != (err = i2c_master_recv(ap0100_m034_i2cclient, au8RdBuf, 2))) {
+			pr_warn("%s:read reg error:reg=%x,val=%x,err=%d\n",
 				__func__, reg, ((au8RdBuf[0] << 8) & 0xff00) | (au8RdBuf[1] & 0x00ff),
 				err);
-		return -1;
+			continue;
+		}
+
+		*val = ((au8RdBuf[0] << 8) & 0xff00) | (au8RdBuf[1] & 0x00ff);
+		return 0;
 	}
-
-	*val = ((au8RdBuf[0] << 8) & 0xff00) | (au8RdBuf[1] & 0x00ff);
-
-	return 0;
+	pr_err("%s: too many retries, giving up\n",__func__);
+	return -1;
 }
 
 #if 0
@@ -496,18 +530,14 @@ s32 ap0100_doorbell_cleared(void)
 	u16 val=0;
 
 	//mdelay(100);
-	for (i=0; i<20; i++) {
-		if ( AM_read_reg_2B(0x0040, &val) != 0)
-			return -1;
-		if ((val & 0x8000) == 0)
-			break;
-		mdelay(5);
+	for (i=0; i<CMD_CHECK_RETRIES; i++) {
+		if ((AM_read_reg_2B(0x0040, &val) == 0) &&
+				(val & 0x8000) == 0)
+			return 0;
+		msleep(5);
 	}
-	if (i == 20) {
-		pr_err("%s: doorbell never cleared\n", __func__);
-		return -1;
-	}
-	return 0;
+	pr_err("%s: doorbell never cleared\n", __func__);
+	return -1;
 }
 s32 ap0100_m034_cmd_status(void)
 {
@@ -515,7 +545,7 @@ s32 ap0100_m034_cmd_status(void)
 	if(ap0100_doorbell_cleared() < 0)
 		return -1;
 
-	for (i=0; i<20; i++) {
+	for (i=0; i<CMD_CHECK_RETRIES; i++) {
 		if(AM_send_command(0x0040, 0x8101) == 0)
 			return 0;
 	}
