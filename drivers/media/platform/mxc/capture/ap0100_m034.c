@@ -292,6 +292,9 @@ static AP0100_M034_DATA M960p_22fps_hdr_reg[] = {
 
 static s32 AM_read_reg_1B(u16 reg, u8 *val);
 static s32 AM_read_reg_2B(u16 reg, u16 *val);
+#ifndef PROG_IN_FLASH
+static s32 AM_read_reg_4B(u16 reg, u32 *val);
+#endif
 s32 ap0100_doorbell_cleared(void);
 
 static s32 AM_write_reg_1B(u16 reg, u8 val)
@@ -371,10 +374,12 @@ static s32 AM_send_command(u16 reg, u16 val)
 	return err;
 }
 
+#ifndef PROG_IN_FLASH
 static s32 AM_write_reg_4B(u16 reg, u32 val)
 {
 	int err;
 	u8 au8Buf[6];
+	u32 check;;
 
 	au8Buf[0] = reg >> 8;
 	au8Buf[1] = reg & 0xff;
@@ -386,11 +391,15 @@ static s32 AM_write_reg_4B(u16 reg, u32 val)
 	if ((err = i2c_master_send(ap0100_m034_i2cclient, au8Buf, 6)) < 0) {
 		pr_err("%s:write reg error:reg=%x,val=%x,err=%d\n",
 			__func__, reg, val, err);
+
+	if((err = AM_read_reg_4B(reg,&check)) == 0 && val != check) {
+		pr_err("%s:check reg error:reg=%x,val=%x,check=%x\n",
+			__func__, reg, val, check);
 		return -1;
 	}
-
-	return 0;
+	return err;
 }
+#endif
 
 static s32 AM_read_reg_1B(u16 reg, u8 *val)
 {
@@ -445,21 +454,22 @@ static s32 AM_read_reg_2B(u16 reg, u16 *val)
 #if 0
 static s32 AM_read_reg_4B(u16 reg, u32 *val)
 {
+	int err;
 	u8 au8RegBuf[2] = {0};
 	u8 au8RdBuf[4] = {0};
 
 	au8RegBuf[0] = reg >> 8;
 	au8RegBuf[1] = reg & 0xff;
 
-	if (2 != i2c_master_send(ap0100_m034_i2cclient, au8RegBuf, 2)) {
+	if (2 != (err = i2c_master_send(ap0100_m034_i2cclient, au8RegBuf, 2))) {
 		pr_err("%s:write reg error:reg=%x\n",
 				__func__, reg);
 		return -1;
 	}
 
-	if (4 != i2c_master_recv(ap0100_m034_i2cclient, au8RdBuf, 4)) {
-		pr_err("%s:read reg error:reg=%x,val=%x\n",
-				__func__, reg, ((au8RdBuf[0] << 8) & 0xff00) | (au8RdBuf[1] & 0x00ff));
+	if (4 != (err = i2c_master_recv(ap0100_m034_i2cclient, au8RdBuf, 4))) {
+		pr_err("%s:read reg error:reg=%x,val=%x,err=%x\n",
+				__func__, reg, ((au8RdBuf[0] << 8) & 0xff00) | (au8RdBuf[1] & 0x00ff), err);
 		return -1;
 	}
 
@@ -566,15 +576,17 @@ static s32 ap0100_handle_registers(AP0100_M034_DATA *ap0100_reg, int reg_size)
 		} else if ( ap0100_reg[i].data_size == 2) {
 			if ( AM_write_reg_2B(ap0100_reg[i].reg_addr, ap0100_reg[i].data) != 0)
 				return -1;
+#ifndef PROG_IN_FLASH
 		} else if (ap0100_reg[i].data_size == 4) {
 			if ( AM_write_reg_4B(ap0100_reg[i].reg_addr, ap0100_reg[i].data) != 0)
 				return -1;
 		} else if (ap0100_reg[i].data_size == 0x82) {
-				if ( AM_read_reg_2B(ap0100_reg[i].reg_addr, &val) != 0)
-					return -1;
-				val |= ap0100_reg[i].data;
-				if ( AM_write_reg_2B(ap0100_reg[i].reg_addr, val) != 0)
-					return -1;
+			if ( AM_read_reg_2B(ap0100_reg[i].reg_addr, &val) != 0)
+				return -1;
+			val |= ap0100_reg[i].data;
+			if ( AM_write_reg_2B(ap0100_reg[i].reg_addr, val) != 0)
+				return -1;
+#endif
 		} else if (ap0100_reg[i].data_size == 0xC2) {
 				if ( AM_read_reg_2B(ap0100_reg[i].reg_addr, &val) != 0)
 					return -1;
