@@ -37,6 +37,8 @@
 // Ap0100 program is stored in the on-board flash
 #define PROG_IN_FLASH
 
+#define RETRY_CNT 5
+
 typedef struct AP0100_M034_DATA {
     unsigned char data_size;  // bit 7 of data_size is a flag for "read and then write"
     short reg_addr;
@@ -297,7 +299,7 @@ static AP0100_M034_DATA M960p_22fps_hdr_reg[] = {
 static s32 AM_read_reg_1B(u16 reg, u8 *val);
 static s32 AM_read_reg_2B(u16 reg, u16 *val);
 
-static s32 AM_write_reg_1B(u16 reg, u8 val)
+static s32 _AM_write_reg_1B(u16 reg, u8 val)
 {
 	int err;
 	u8 check;
@@ -320,7 +322,22 @@ static s32 AM_write_reg_1B(u16 reg, u8 val)
 	return err;
 }
 
-static s32 AM_write_reg_2B(u16 reg, u16 val)
+static s32 AM_write_reg_1B(u16 reg, u8 val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_write_reg_1B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
+}
+
+static s32 _AM_write_reg_2B(u16 reg, u16 val)
 {
 	int err;
 	u16 check;
@@ -345,7 +362,22 @@ static s32 AM_write_reg_2B(u16 reg, u16 val)
 	return err;
 }
 
-static s32 AM_write_reg_4B(u16 reg, u32 val)
+static s32 AM_write_reg_2B(u16 reg, u16 val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_write_reg_2B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
+}
+
+static s32 _AM_write_reg_4B(u16 reg, u32 val)
 {
 	int err;
 	u8 au8Buf[6];
@@ -366,7 +398,22 @@ static s32 AM_write_reg_4B(u16 reg, u32 val)
 	return 0;
 }
 
-static s32 AM_read_reg_1B(u16 reg, u8 *val)
+static s32 AM_write_reg_4B(u16 reg, u32 val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_write_reg_4B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
+}
+
+static s32 _AM_read_reg_1B(u16 reg, u8 *val)
 {
 	int err;
 	u8 au8RegBuf[2] = {0};
@@ -389,7 +436,22 @@ static s32 AM_read_reg_1B(u16 reg, u8 *val)
 	return 0;
 }
 
-static s32 AM_read_reg_2B(u16 reg, u16 *val)
+static s32 AM_read_reg_1B(u16 reg, u8 *val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_read_reg_1B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
+}
+
+static s32 _AM_read_reg_2B(u16 reg, u16 *val)
 {
 	int err;
 	u8 au8RegBuf[2] = {0};
@@ -414,6 +476,21 @@ static s32 AM_read_reg_2B(u16 reg, u16 *val)
 	*val = ((au8RdBuf[0] << 8) & 0xff00) | (au8RdBuf[1] & 0x00ff);
 
 	return 0;
+}
+
+static s32 AM_read_reg_2B(u16 reg, u16 *val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_read_reg_2B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
 }
 
 #if 0
