@@ -1462,6 +1462,9 @@ CONFIG_MICREL_PHY=y
 # CONFIG_MICREL_KS8995MA is not set
 # CONFIG_PPP is not set
 CONFIG_SLIP=y
+# CONFIG_SLIP_COMPRESSED is not set
+# CONFIG_SLIP_SMART is not set
+# CONFIG_SLIP_MODE_SLIP6 is not set
 
 #
 # USB Network Adapters
