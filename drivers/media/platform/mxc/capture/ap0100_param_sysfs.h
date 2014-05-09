@@ -161,6 +161,7 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 	switch (cur_sss_status  ) {
 		case SSS_UPDATE :
 			pca954x_select_channel(I2C_MUX_CHAN);
+			mdelay(1);
 			if (!update_init) {
 				//camera_power_cycle(camera_plat);
 #if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
