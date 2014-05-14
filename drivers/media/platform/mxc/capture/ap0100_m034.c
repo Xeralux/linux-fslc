@@ -39,6 +39,8 @@
 #define I2C_RETRIES (5)
 #define CMD_CHECK_RETRIES (20)
 
+#define RETRY_CNT 5
+
 typedef struct AP0100_M034_DATA {
     unsigned char data_size;  // bit 7 of data_size is a flag for "read and then write"
     short reg_addr;
@@ -299,7 +301,7 @@ static s32 AM_read_reg_4B(u16 reg, u32 *val);
 #endif
 s32 ap0100_doorbell_cleared(void);
 
-static s32 AM_write_reg_1B(u16 reg, u8 val)
+static s32 _AM_write_reg_1B(u16 reg, u8 val)
 {
 	int err;
 	int i;
@@ -330,7 +332,22 @@ static s32 AM_write_reg_1B(u16 reg, u8 val)
 	return -1;
 }
 
-static s32 AM_write_reg_2B(u16 reg, u16 val)
+static s32 AM_write_reg_1B(u16 reg, u8 val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_write_reg_1B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
+}
+
+static s32 _AM_write_reg_2B(u16 reg, u16 val)
 {
 	int err;
 	int i;
@@ -401,8 +418,22 @@ static s32 AM_send_command(u16 reg, u16 val)
 	return -1;
 }
 
-#ifndef PROG_IN_FLASH
-static s32 AM_write_reg_4B(u16 reg, u32 val)
+static s32 AM_write_reg_2B(u16 reg, u16 val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_write_reg_2B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
+}
+
+static s32 _AM_write_reg_4B(u16 reg, u32 val)
 {
 	int err;
 	u8 au8Buf[6];
@@ -426,9 +457,23 @@ static s32 AM_write_reg_4B(u16 reg, u32 val)
 	}
 	return err;
 }
-#endif
 
-static s32 AM_read_reg_1B(u16 reg, u8 *val)
+static s32 AM_write_reg_4B(u16 reg, u32 val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_write_reg_4B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
+}
+
+static s32 _AM_read_reg_1B(u16 reg, u8 *val)
 {
 	int err;
 	int i;
@@ -454,7 +499,22 @@ static s32 AM_read_reg_1B(u16 reg, u8 *val)
 	return -1;
 }
 
-static s32 AM_read_reg_2B(u16 reg, u16 *val)
+static s32 AM_read_reg_1B(u16 reg, u8 *val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_read_reg_1B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
+}
+
+static s32 _AM_read_reg_2B(u16 reg, u16 *val)
 {
 	int err;
 	int i;
@@ -483,6 +543,21 @@ static s32 AM_read_reg_2B(u16 reg, u16 *val)
 	}
 	pr_err("%s: too many retries, giving up\n",__func__);
 	return -1;
+}
+
+static s32 AM_read_reg_2B(u16 reg, u16 *val)
+{
+	int retry=0;
+	s32 ret;
+
+	while (retry < RETRY_CNT) {
+		ret = _AM_read_reg_2B(reg, val);
+		if ( ret == 0)
+			return 0;
+		retry++;
+	}
+
+	return ret;
 }
 
 #if 0
