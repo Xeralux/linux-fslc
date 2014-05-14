@@ -99,6 +99,54 @@ struct pca953x_chip {
 	int	chip_type;
 };
 
+static struct pca953x_platform_data *spdata;
+/************ gpio sysfs *****************/
+#ifdef CONFIG_SYSFS
+static ssize_t gpio_sysfs_read(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	return 0;
+}
+
+static ssize_t gpio_sysfs_write(struct device *dev,
+				   struct device_attribute *attr, const char *buf, int count)
+{
+	char io_num, level;
+	io_num = buf[0] - '0';
+	level = buf[2] - '0';
+
+	if (spdata != NULL) {
+		if (spdata->setIO != NULL && io_num < 8 && io_num > 4)
+			spdata->setIO(spdata->gpio_base, (int)io_num, (int)level);
+	}
+	return count;
+}
+
+static DEVICE_ATTR(medianode_gpio, 0666, (void *)gpio_sysfs_read, (void *)gpio_sysfs_write);
+
+static int add_medianode_gpio(struct device *dev)
+{
+	int err;
+
+	err = device_create_file(dev, &dev_attr_medianode_gpio);
+	if (err != 0)
+		dev_err(dev, "Error in creating sysfs file for pca953x\n");
+
+	return err;
+}
+
+static void remove_medianode_gpio(struct device *dev)
+{
+	device_remove_file(dev, &dev_attr_medianode_gpio);
+}
+
+#else
+#define add_medianode_gpio(dev) 0
+#define remove_medianode_gpio(dev) do {} while (0)
+#endif /* CONFIG_SYSFS */
+
+/************* end of gpio sysfs ***************/
+
 static int pca953x_read_single(struct pca953x_chip *chip, int reg, u32 *val,
 				int off)
 {
@@ -593,7 +641,6 @@ static int pca953x_irq_setup(struct pca953x_chip *chip,
 
 		chip->gpio_chip.to_irq = pca953x_gpio_to_irq;
 	}
-
 	return 0;
 }
 
@@ -733,6 +780,7 @@ static int pca953x_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	pdata = client->dev.platform_data;
+	spdata = client->dev.platform_data;
 	if (pdata) {
 		irq_base = pdata->irq_base;
 		chip->gpio_start = pdata->gpio_base;
@@ -785,6 +833,7 @@ static int pca953x_probe(struct i2c_client *client,
 	}
 
 	i2c_set_clientdata(client, chip);
+	add_medianode_gpio(&client->dev);
 	printk("%s: probing done!\n", __func__);
 	return 0;
 }
@@ -804,6 +853,8 @@ static int pca953x_remove(struct i2c_client *client)
 			return ret;
 		}
 	}
+
+	remove_medianode_gpio(&client->dev);
 
 	ret = gpiochip_remove(&chip->gpio_chip);
 	if (ret) {
