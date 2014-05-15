@@ -296,7 +296,7 @@ static AP0100_M034_DATA M960p_22fps_hdr_reg[] = {
 
 static s32 AM_read_reg_1B(u16 reg, u8 *val);
 static s32 AM_read_reg_2B(u16 reg, u16 *val);
-#ifndef PROG_IN_FLASH
+#if 0
 static s32 AM_read_reg_4B(u16 reg, u32 *val);
 #endif
 s32 ap0100_doorbell_cleared(void);
@@ -433,6 +433,7 @@ static s32 AM_write_reg_2B(u16 reg, u16 val)
 	return ret;
 }
 
+#ifndef PROG_IN_FLASH
 static s32 _AM_write_reg_4B(u16 reg, u32 val)
 {
 	int err;
@@ -449,6 +450,7 @@ static s32 _AM_write_reg_4B(u16 reg, u32 val)
 	if ((err = i2c_master_send(ap0100_m034_i2cclient, au8Buf, 6)) < 0) {
 		pr_err("%s:write reg error:reg=%x,val=%x,err=%d\n",
 			__func__, reg, val, err);
+	}
 
 	if((err = AM_read_reg_4B(reg,&check)) == 0 && val != check) {
 		pr_err("%s:check reg error:reg=%x,val=%x,check=%x\n",
@@ -472,6 +474,7 @@ static s32 AM_write_reg_4B(u16 reg, u32 val)
 
 	return ret;
 }
+#endif
 
 static s32 _AM_read_reg_1B(u16 reg, u8 *val)
 {
@@ -560,7 +563,7 @@ static s32 AM_read_reg_2B(u16 reg, u16 *val)
 	return ret;
 }
 
-#if 0
+#ifndef PROG_IN_FLASH
 static s32 AM_read_reg_4B(u16 reg, u32 *val)
 {
 	int err;
@@ -670,7 +673,6 @@ EXPORT_SYMBOL(ap0100_m034_cmd_read);
 
 static s32 ap0100_handle_registers(AP0100_M034_DATA *ap0100_reg, int reg_size)
 {
-	u16  val=0;
 	int i;
 	for (i=0; i<reg_size  ; i++) {
 		if (ap0100_reg[i].data_size == 1) {
