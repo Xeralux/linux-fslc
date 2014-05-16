@@ -21,6 +21,8 @@ static enum SENSOR_SYSFS_STATUS cur_sss_status = SSS_IDLE;
 static signed char cur_temp, min_temp, max_temp, detected_err_cnt, corrected_err_cnt;
 static int sensor_read_len = 0;
 static int update_init = 0;
+static u8  read_buf[256];
+
 static ssize_t sensor_sysfs_read(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -96,6 +98,13 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 					detected_err_cnt, corrected_err_cnt);
 			break;
 		case SSS_SENSOR_READ:
+			if ( sensor_read_len > 0) {
+				memcpy(buf, read_buf, sensor_read_len);
+				ret = sensor_read_len;
+				sensor_read_len = 0;
+				return ret;
+			} else
+				return 0;
 			break;
 		case SSS_IDLE:
 			break;
@@ -152,7 +161,6 @@ static enum SENSOR_SYSFS_STATUS check_buf_command(const char * buf)
 static ssize_t sensor_sysfs_write(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
 {
-	u8  read_buf[256];
 	u16 reg_addr;
 	int retry;
 
