@@ -815,7 +815,8 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
 	enum ssmn_mipi_frame_rate frame_rate;
 	void *mipi_csi2_info;
 
-	ssmn_mipi_data.on = true;
+	if(ssmn_mipi_data.on)
+		return 0;
 
 	/* mclk */
 	tgt_xclk = ssmn_mipi_data.mclk;
@@ -847,6 +848,7 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
 		return -EPERM;
 	}
 
+	ssmn_mipi_data.on = true;
 	return 0;
 }
 
@@ -867,6 +869,7 @@ static int ioctl_dev_exit(struct v4l2_int_device *s)
 		if (mipi_csi2_get_status(mipi_csi2_info))
 			mipi_csi2_disable(mipi_csi2_info);
 
+	ssmn_mipi_data.on = false;
 	return 0;
 }
 

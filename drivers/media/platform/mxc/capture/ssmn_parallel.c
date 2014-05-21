@@ -675,7 +675,8 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
 	u32 tgt_fps;	/* target frames per secound */
 	enum ssmn_parallel_frame_rate frame_rate;
 
-	ssmn_parallel_data.on = true;
+	if(ssmn_parallel_data.on)
+		return 0;
 
 	/* mclk */
 	tgt_xclk = ssmn_parallel_data.mclk;
@@ -702,6 +703,7 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
 	else
 		return -EINVAL; /* Only support 15fps or 30fps now. */
 
+	ssmn_parallel_data.on = true;
 	return 0;
 }
 
@@ -713,6 +715,7 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
  */
 static int ioctl_dev_exit(struct v4l2_int_device *s)
 {
+	ssmn_parallel_data.on = false;
 	return 0;
 }
 
