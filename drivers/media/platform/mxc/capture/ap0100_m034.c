@@ -37,7 +37,8 @@
 // Ap0100 program is stored in the on-board flash
 #define PROG_IN_FLASH
 #define I2C_RETRIES (5)
-#define CMD_CHECK_RETRIES (20)
+#define CMD_CHECK_RETRIES (5)
+#define DOORBELL_CHECK_RETRIES (20)
 
 #define RETRY_CNT 5
 
@@ -48,6 +49,9 @@ typedef struct AP0100_M034_DATA {
 } AP0100_M034_DATA;
 
 struct i2c_client *ap0100_m034_i2cclient = NULL;
+
+static int ap0100_cur_mode = 0;
+static int ap0100_in_wdr_mode =1;
 
 static AP0100_M034_DATA ap0100_normal_mode_reg[] = {
 {2, 0x098E, 0xC88C},
@@ -588,7 +592,7 @@ s32 ap0100_doorbell_cleared(void)
 	u16 val=0;
 
 	//mdelay(100);
-	for (i=0; i<CMD_CHECK_RETRIES; i++) {
+	for (i=0; i<DOORBELL_CHECK_RETRIES; i++) {
 		if ((AM_read_reg_2B(0x0040, &val) == 0) &&
 				(val & 0x8000) == 0)
 			return 0;
@@ -608,7 +612,7 @@ s32 ap0100_m034_cmd_status(void)
 			return -1;
 		if (val == 0)
 			return 0;
-		mdelay(5);
+		mdelay(1);
 	}
 	return 1;
 }
@@ -803,6 +807,8 @@ s32 ap0100_m034_sensor_init(int mode)
 			val = ap0100_m034_test_mode(0);
 		if (val == 0) {
 			pr_debug("ap0100 init OK, mode = %d\n", mode);
+			ap0100_cur_mode = mode;
+			ap0100_in_wdr_mode = 1;
 		} else {
 			pr_debug("ap0100 init failed!!\n");
 			return -1;
@@ -816,6 +822,108 @@ s32 ap0100_m034_sensor_init(int mode)
 }
 
 EXPORT_SYMBOL(ap0100_m034_sensor_init);
+
+/* update the mode val between WDR & SDR */
+/* mode 0 - 3 are WDR, mode 4 - 7 are SDR correspondingly */
+static int ap0100_update_mode_val(int wdr)
+{
+	if (wdr) {
+		if ( ap0100_cur_mode >= 4 && ap0100_cur_mode <= 7)
+			return ap0100_cur_mode - 4;
+	} else {
+		if ( ap0100_cur_mode <  4 && ap0100_cur_mode >= 0)
+			return ap0100_cur_mode + 4;
+	}	
+	
+	return ap0100_cur_mode;
+}
+
+s32 ap0100_m034_sensor_set_cmd(int cmd)
+{
+	int reg_size;
+	u16  val=0;
+	AP0100_M034_DATA *ap0100_reg;
+	int err;
+
+	AM_read_reg_2B(0x0000, &val);
+	if (val != 0x0062) {
+		pr_err("ap0100 not found=%x\n", val);
+		return -1;
+	} else {
+		pr_debug("ap0100 found = 0x%x\n", val);
+	}
+
+	val = ap0100_m034_cmd_status();
+	if(val != 0)
+		return val;
+
+#ifdef PROG_IN_FLASH
+	reg_size = sizeof(ap0100_cmd_reg) / sizeof(AP0100_M034_DATA);
+	ap0100_reg = ap0100_cmd_reg;
+
+	switch (cmd) {
+		case 0: // CMD_NO_FLIP_NO_MIRROR
+			pr_debug("ap0100 set cmd : CMD_NO_FLIP_NO_MIRROR\n");
+			ap0100_cmd_reg[1].data = 0x0a;
+			break;
+		case 1: // CMD_FLIP_IMAGE
+			ap0100_cmd_reg[1].data = 0x0b;
+			pr_debug("ap0100 set cmd : CMD_FLIP_IMAGE\n");
+			break;
+		case 2: // CMD_MIRROR_IMAGE
+			ap0100_cmd_reg[1].data = 0x0c;
+			pr_debug("ap0100 set cmd : CMD_MIRROR_IMAGE\n");
+			break;
+		case 3: // CMD_FLIP_N_MIRROR
+			ap0100_cmd_reg[1].data = 0x0d;
+			pr_debug("ap0100 set cmd : CMD_FLIP_N_MIRROR\n");
+			break;
+		case 4: // CMD_WDR_MODE
+			ap0100_cmd_reg[1].data = ap0100_update_mode_val(1);
+			pr_debug("ap0100 set cmd : CMD_WDR_MODE\n");
+			break;
+		case 5: // CMD_SDR_MODE
+			ap0100_cmd_reg[1].data = ap0100_update_mode_val(0);
+			pr_debug("ap0100 set cmd : CMD_SDR_MODE\n");
+			break;
+		default:
+			ap0100_cmd_reg[1].data = 1;
+			pr_debug("ap0100 set cmd : cmd not supported \n");
+			return -1;
+			break;
+	}
+
+	err = ap0100_handle_registers(ap0100_reg, reg_size);
+	if(err < 0)
+		return err;
+
+	mdelay(50);
+	val = ap0100_m034_cmd_status();
+
+	if (val == 0) {
+		// update mode based on WDR or SDR
+		if ( cmd == 4) { // CMD_WDR_MODE
+			ap0100_cur_mode = ap0100_update_mode_val(1);
+			ap0100_in_wdr_mode = 1;
+		} else if ( cmd == 5) {
+			ap0100_cur_mode = ap0100_update_mode_val(0);
+			ap0100_in_wdr_mode = 0;
+		}
+			
+		pr_debug("ap0100 set cmd OK\n");
+	} else {
+		pr_debug("ap0100 set cmd failed!!\n");
+	}
+	
+	return val;
+#else
+	pr_debug("ap0100 host mode doesn't support set cmd !! \n");
+	return -1;
+#endif
+
+}
+
+EXPORT_SYMBOL(ap0100_m034_sensor_set_cmd);
 
 s32 ap0100_m034_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fail, int *r_fail)
 {

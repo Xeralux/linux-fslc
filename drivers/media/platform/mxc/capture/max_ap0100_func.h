@@ -44,7 +44,7 @@ extern s32 ap0100_m034_read_temperature(signed char *cur_temp, signed char *min_
 extern s32 ap0100_m034_cmd_status(void);
 extern s32 ap0100_m034_cmd_write(char *buf, int size);
 extern s32 ap0100_m034_cmd_read(u16 reg, char *read_buf, int sensor_read_len);
-
+extern s32 ap0100_m034_sensor_set_cmd(int cmd);
 
 static s32 ap0100_hw_reset(void)
 {

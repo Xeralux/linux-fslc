@@ -8,12 +8,23 @@
 #define SENSOR_READ_TEMPERATURE_UUID 	"ec3d5630-ab46-11e3-a5e2-0800200c9a66"
 #define SENSOR_READ_ERROR_CNT_UUID	"13f071e0-b91a-11e3-a5e2-0800200c9a66"
 #define SENSOR_READ_UUID		"941b5580-b21a-11e3-a5e2-0800200c9a66"
+#define SENSOR_SET_CMD_UUID					"23917fa2-bc3a-11e3-a5e2-0800200c9a66"
+
+enum AP0100_SET_CMD {
+	CMD_NO_FLIP_NO_MIRROR 		= 0,
+	CMD_FLIP_IMAGE 	= 1,
+	CMD_MIRROR_IMAGE	= 2,
+	CMD_FLIP_N_MIRROR	= 3,
+	CMD_WDR_MODE		= 4,
+	CMD_SDR_MODE		= 5,
+};
 
 enum SENSOR_SYSFS_STATUS {
 	SSS_UPDATE = 0,
 	SSS_READ_TEMPERATURE,
 	SSS_READ_ERROR_CNT,
 	SSS_SENSOR_READ,
+	SSS_SENSOR_SET_CMD,
 	SSS_IDLE,
 };
 
@@ -106,6 +117,22 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 			} else
 				return 0;
 			break;
+		case SSS_SENSOR_SET_CMD:
+			printk("%s, SSS_SENSOR_SET_CMD \n", __func__);
+			pca954x_select_channel(I2C_MUX_CHAN);
+			retry = 0;
+			while (retry < 5) {
+				cmd_status = ap0100_m034_cmd_status();
+
+				if ( cmd_status != -1)
+					break;
+				printk("%s, cmd retry\n", __func__);
+				retry++;
+			}
+			pca954x_release_channel();
+			return snprintf(buf, PAGE_SIZE, "%d\n", cmd_status);
+			
+			break;			
 		case SSS_IDLE:
 			break;
 	}
@@ -121,6 +148,7 @@ static enum SENSOR_SYSFS_STATUS check_buf_command(const char * buf)
 	char *sensor_read_temperature_uuid = SENSOR_READ_TEMPERATURE_UUID;
 	char *sensor_read_error_cnt_uuid = SENSOR_READ_ERROR_CNT_UUID;
 	char *sensor_read_uuid = SENSOR_READ_UUID;
+	char *sensor_set_cmd_uuid = SENSOR_SET_CMD_UUID;
 
 	for (i=0; i<sizeof(sensor_update_uuid)-1; i++) {
 		if (buf[i] != sensor_update_uuid[i]) {
@@ -154,6 +182,14 @@ static enum SENSOR_SYSFS_STATUS check_buf_command(const char * buf)
 	if ( i == sizeof(sensor_read_error_cnt_uuid)-1)
 		return SSS_READ_ERROR_CNT;
 
+	for (i=0; i<sizeof(sensor_set_cmd_uuid)-1; i++) {
+		if (buf[i] != sensor_set_cmd_uuid[i]) {
+			break;
+		}
+	}
+	if ( i == sizeof(sensor_set_cmd_uuid)-1)
+		return SSS_SENSOR_SET_CMD;
+	
 	return SSS_IDLE;
 
 }
@@ -162,6 +198,7 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
 {
 	u16 reg_addr;
+	unsigned char sensor_cmd;
 	int retry;
 
 	cur_sss_status  = check_buf_command(buf);
@@ -169,7 +206,7 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 	switch (cur_sss_status  ) {
 		case SSS_UPDATE :
 			pca954x_select_channel(I2C_MUX_CHAN);
-			mdelay(1);
+			//mdelay(1);
 			if (!update_init) {
 				//camera_power_cycle(camera_plat);
 #if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
@@ -219,6 +256,22 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 			retry = 0;
 			while (retry < 5) {
 				if ( 0 == ap0100_m034_cmd_read(reg_addr, read_buf, sensor_read_len) )
+					break;
+				printk("%s, cmd retry\n", __func__);
+				retry++;
+			}
+			pca954x_release_channel();
+			break;
+		case SSS_SENSOR_SET_CMD:
+			sensor_cmd = (buf[sizeof(SENSOR_READ_UUID)-1 + 1]);
+
+			printk("%s, SSS_SENSOR_SET_CMD, read cmd %d\n", __func__, sensor_cmd );
+			
+			pca954x_select_channel(I2C_MUX_CHAN);
+
+			retry = 0;
+			while (retry < 5) {
+				if ( 0 == ap0100_m034_sensor_set_cmd(sensor_cmd) )
 					break;
 				printk("%s, cmd retry\n", __func__);
 				retry++;
