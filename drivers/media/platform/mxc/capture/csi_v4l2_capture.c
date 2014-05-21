@@ -622,7 +622,6 @@ static int csi_streamon(cam_data *cam)
 	frame->csi_buf_num = 2;
 	spin_unlock_irqrestore(&cam->queue_int_lock, flags);
 
-	cam->capture_pid = current->pid;
 	cam->capture_on = true;
 	csi_cap_image(cam);
 
@@ -1191,13 +1190,9 @@ static int csi_v4l_close(struct file *file)
 		return -EBADF;
 	}
 
-	/* for the case somebody hit the ctrl C */
-	if (cam->overlay_pid == current->pid) {
+	if (--cam->open_count == 0) {
 		err = stop_preview(cam);
 		cam->overlay_on = false;
-	}
-
-	if (--cam->open_count == 0) {
 		wait_event_interruptible(cam->power_queue,
 					 cam->low_power == false);
 		file->private_data = NULL;
@@ -1334,7 +1329,6 @@ static long csi_v4l_do_ioctl(struct file *file,
 			pr_debug("   case VIDIOC_OVERLAY\n");
 			if (*on) {
 				cam->overlay_on = true;
-				cam->overlay_pid = current->pid;
 				start_preview(cam);
 			}
 			if (!*on) {
