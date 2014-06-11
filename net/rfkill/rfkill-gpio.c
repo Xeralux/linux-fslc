@@ -24,6 +24,7 @@
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
 
 #include <linux/rfkill-gpio.h>
 #include <linux/of_gpio.h>
@@ -79,7 +80,7 @@ static const struct rfkill_ops rfkill_gpio_ops = {
 };
 
 static int rfkill_gpio_dt_probe(struct device *dev,
-				struct rfkill_gpio_platform_data* pdata)
+				struct rfkill_gpio_platform_data* pdata, bool* enable_quirk)
 {
 	struct device_node * np = dev->of_node;
 	int ret, i;
@@ -102,6 +103,8 @@ static int rfkill_gpio_dt_probe(struct device *dev,
 			return -1;
 		}
 	}
+	if(of_find_property(np,"enable-quirk", NULL))
+		*enable_quirk = true;
 	return 0;
 }
 
@@ -111,12 +114,13 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
 	struct rfkill_gpio_platform_data *pdata = pdev->dev.platform_data;
 	int ret = 0;
 	int len = 0;
+	bool enable_quirk = false;
 
 	if (&pdev->dev.of_node) {
 		pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
 		if (!pdata)
 			return -ENOMEM;
-		ret = rfkill_gpio_dt_probe(&pdev->dev, pdata);
+		ret = rfkill_gpio_dt_probe(&pdev->dev, pdata, &enable_quirk);
 		if (ret)
 			return ret;
 	} else if (!pdata) {
@@ -201,7 +205,11 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, rfkill);
 
 	dev_info(&pdev->dev, "%s device registered.\n", pdata->name);
-
+	if(enable_quirk) {
+		rfkill_gpio_set_power(rfkill, 1);
+		msleep(100);
+		rfkill_gpio_set_power(rfkill, 0);
+	}
 	return 0;
 
 fail_rfkill:

@@ -11,6 +11,7 @@ Required properties:
 
 Optional properties:
 - clocks		: phandle to clock to enable/disable
+- enable-quirk :  If present, device is not actually enabled until the rfkill device is toggled.
 
 Example:
 

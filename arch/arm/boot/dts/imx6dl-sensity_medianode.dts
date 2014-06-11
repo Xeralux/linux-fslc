@@ -132,6 +132,7 @@
 		rfkill-type = <5>;
 		gpios = <&gpio4 14 0>;
 		gpio-names = "shutdown";
+		enable-quirk;
 	};
 
 	rfkill_slot2: rfkill-slot2 {
