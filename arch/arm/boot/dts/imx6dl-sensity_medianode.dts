@@ -125,6 +125,22 @@
 			regulator-always-on;
 		};
 	};
+
+	rfkill_slot1: rfkill-slot1 {
+		compatible = "rfkill-gpio";
+		rfkill-name = "pcie-slot1";
+		rfkill-type = <5>;
+		gpios = <&gpio4 14 0>;
+		gpio-names = "shutdown";
+	};
+
+	rfkill_slot2: rfkill-slot2 {
+		compatible = "rfkill-gpio";
+		rfkill-name = "pcie-slot2";
+		rfkill-type = <5>;
+		gpios = <&gpio3 31 0>;
+		gpio-names = "shutdown";
+	};
 };
 
 /*  Use native chipselects for all SPI channels.  */
@@ -427,7 +443,6 @@
 &pcie {
 	reset-gpio = <&gpio7 12 0>;
 	wake-up-gpio = <&gpio1 5 0>;	/*, <&gpio1 7 0>;  */
-	disable-gpio = <&gpio4 14 0>;	/*, <&gpio3 31 0>;  */
 	status = "okay";
 };
 
