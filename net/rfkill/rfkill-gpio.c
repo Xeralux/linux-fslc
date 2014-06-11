@@ -26,6 +26,7 @@
 #include <linux/slab.h>
 
 #include <linux/rfkill-gpio.h>
+#include <linux/of_gpio.h>
 
 enum rfkill_gpio_clk_state {
 	UNSPECIFIED = 0,
@@ -77,6 +78,33 @@ static const struct rfkill_ops rfkill_gpio_ops = {
 	.set_block = rfkill_gpio_set_power,
 };
 
+static int rfkill_gpio_dt_probe(struct device *dev,
+				struct rfkill_gpio_platform_data* pdata)
+{
+	struct device_node * np = dev->of_node;
+	int ret, i;
+	const char *gpio_name;
+	pdata->reset_gpio = -1;
+	pdata->shutdown_gpio = -1;
+	pdata->name = np->name;
+	of_property_read_string(np, "rfkill-name", &pdata->name);
+	of_property_read_u32(np, "rfkill-type", &pdata->type);
+	for(i = 0; i < 2; i++) {
+		ret = of_property_read_string_index(np,"gpio-names",i,&gpio_name);
+		if (ret)
+			break;
+		if (!strcmp(gpio_name,"reset")) {
+			pdata->reset_gpio = of_get_gpio(np, i);
+		} else if(!strcmp(gpio_name,"shutdown")) {
+			pdata->shutdown_gpio = of_get_gpio(np, i);
+		} else {
+			dev_err(dev,"Bad gpio name %s\n", gpio_name);
+			return -1;
+		}
+	}
+	return 0;
+}
+
 static int rfkill_gpio_probe(struct platform_device *pdev)
 {
 	struct rfkill_gpio_data *rfkill;
@@ -84,7 +112,14 @@ static int rfkill_gpio_probe(struct platform_device *pdev)
 	int ret = 0;
 	int len = 0;
 
-	if (!pdata) {
+	if (&pdev->dev.of_node) {
+		pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
+		if (!pdata)
+			return -ENOMEM;
+		ret = rfkill_gpio_dt_probe(&pdev->dev, pdata);
+		if (ret)
+			return ret;
+	} else if (!pdata) {
 		pr_warn("%s: No platform data specified\n", __func__);
 		return -EINVAL;
 	}
@@ -214,12 +249,18 @@ static int rfkill_gpio_remove(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct of_device_id rfkill_of_match[] = {
+	{ .compatible = "rfkill-gpio", },
+	{},
+};
+
 static struct platform_driver rfkill_gpio_driver = {
 	.probe = rfkill_gpio_probe,
 	.remove = rfkill_gpio_remove,
 	.driver = {
 		   .name = "rfkill_gpio",
 		   .owner = THIS_MODULE,
+		   .of_match_table = of_match_ptr(rfkill_of_match),
 	},
 };
 
