@@ -101,6 +101,30 @@
 		compatible = "fsl,mxc_v4l2_output";
 		status = "okay";
 	};
+
+	regulators {
+		compatible = "simple-bus";
+
+		pcie1_fixed_3v3: pcie1-fixed-3v3 {
+			compatible = "regulator-fixed";
+			regulator-name = "pcie1-fixed-3v3";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			gpio = <&gpio3 19 0>;
+			enable-active-high;
+			regulator-always-on;
+		};
+
+		pcie2_fixed_3v3: pcie2-fixed-3v3 {
+			compatible = "regulator-fixed";
+			regulator-name = "pcie2-fixed-3v3";
+			regulator-min-microvolt = <3300000>;
+			regulator-max-microvolt = <3300000>;
+			gpio = <&gpio1 27 0>;
+			enable-active-high;
+			regulator-always-on;
+		};
+	};
 };
 
 /*  Use native chipselects for all SPI channels.  */
@@ -401,7 +425,6 @@
 };
 
 &pcie {
-	power-on-gpio = <&gpio3 19 0>;	/*, <&gpio1 27 0>;  */
 	reset-gpio = <&gpio7 12 0>;
 	wake-up-gpio = <&gpio1 5 0>;	/*, <&gpio1 7 0>;  */
 	disable-gpio = <&gpio4 14 0>;	/*, <&gpio3 31 0>;  */
