@@ -215,8 +215,10 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 	if (mode < ssmn_parallel_mode_TEST_1280_720  || mode == ssmn_parallel_mode_SENSOR_TEST_MODE) {
 		init_retry = 0;
 		while ( init_retry < INIT_RETRY) {
-			if (max_ap0100_init(mode, 0) == 0)
-				break;
+			if (max_ap0100_init(mode, 0) == 0) {
+				if ( ap0100_m034_sensor_mode_init() == 0)
+					break;
+			}
 			init_retry++;
 			camera_power_cycle(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 			pca954x_release_channel();

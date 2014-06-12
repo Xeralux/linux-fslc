@@ -69,6 +69,8 @@
 #define I2C_MUX_CHAN	I2C_MUX_CHAN_CSI0
 #define SSMN_CHANNEL "mipi"
 
+#define SSMN_CONFIG_FILE "/etc/ssmn_mipi.conf"
+
 static void ssmn_mipi_powerdown(int powerdown);
 static void ssmn_mipi_tc_reset(int reset);
 
@@ -293,8 +295,10 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 	if (mode < ssmn_mipi_mode_TEST_1280_720 ||mode == ssmn_mipi_mode_SENSOR_TEST_MODE) {
 		init_retry = 0;
 		while ( init_retry < INIT_RETRY) {
-			if (max_ap0100_init(mode, 0) == 0)
-				break;
+			if (max_ap0100_init(mode, 0) == 0) {
+				if ( ap0100_m034_sensor_mode_init() == 0)
+					break;
+			}
 			init_retry++;
 			camera_power_cycle(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
 			pca954x_release_channel();

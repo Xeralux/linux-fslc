@@ -45,6 +45,8 @@ extern s32 ap0100_m034_cmd_status(void);
 extern s32 ap0100_m034_cmd_write(char *buf, int size);
 extern s32 ap0100_m034_cmd_read(u16 reg, char *read_buf, int sensor_read_len);
 extern s32 ap0100_m034_sensor_set_cmd(int cmd);
+extern s32 ap0100_m034_sensor_update_init_buf(unsigned char *buf, int count);
+extern s32 ap0100_m034_sensor_mode_init(void);
 
 static s32 ap0100_hw_reset(void)
 {
