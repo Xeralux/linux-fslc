@@ -1228,8 +1228,6 @@ static struct aead_edesc *aead_edesc_alloc(struct aead_request *req,
 	edesc->sec4_sg_bytes = sec4_sg_bytes;
 	edesc->sec4_sg = (void *)edesc + sizeof(struct aead_edesc) +
 			 desc_bytes;
-	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-					    sec4_sg_bytes, DMA_TO_DEVICE);
 	*all_contig_ptr = all_contig;
 
 	sec4_sg_index = 0;
@@ -1252,6 +1250,9 @@ static struct aead_edesc *aead_edesc_alloc(struct aead_request *req,
 		sg_to_sec4_sg_last(req->dst, dst_nents,
 				   edesc->sec4_sg + sec4_sg_index, 0);
 	}
+
+	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+					    sec4_sg_bytes, DMA_TO_DEVICE);
 	dma_sync_single_for_device(jrdev, edesc->sec4_sg_dma, sec4_sg_bytes,
 				   DMA_TO_DEVICE);
 
@@ -1421,8 +1422,6 @@ static struct aead_edesc *aead_giv_edesc_alloc(struct aead_givcrypt_request
 	edesc->sec4_sg_bytes = sec4_sg_bytes;
 	edesc->sec4_sg = (void *)edesc + sizeof(struct aead_edesc) +
 			 desc_bytes;
-	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
-					    sec4_sg_bytes, DMA_TO_DEVICE);
 	*contig_ptr = contig;
 
 	sec4_sg_index = 0;
@@ -1446,6 +1445,9 @@ static struct aead_edesc *aead_giv_edesc_alloc(struct aead_givcrypt_request
 		sg_to_sec4_sg_last(req->dst, dst_nents,
 				   edesc->sec4_sg + sec4_sg_index, 0);
 	}
+
+	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+					    sec4_sg_bytes, DMA_TO_DEVICE);
 	dma_sync_single_for_device(jrdev, edesc->sec4_sg_dma, sec4_sg_bytes,
 				   DMA_TO_DEVICE);
 
