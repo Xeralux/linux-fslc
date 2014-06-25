@@ -17,6 +17,7 @@ enum AP0100_SET_CMD {
 	CMD_FLIP_N_MIRROR	= 3,
 	CMD_WDR_MODE		= 4,
 	CMD_SDR_MODE		= 5,
+	CMD_INIT_MODE_BUF	= 0xFF,
 };
 
 enum SENSOR_SYSFS_STATUS {
@@ -263,20 +264,27 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 			pca954x_release_channel();
 			break;
 		case SSS_SENSOR_SET_CMD:
+			if ( count < sizeof(SENSOR_READ_UUID))
+				break;
+			
 			sensor_cmd = (buf[sizeof(SENSOR_READ_UUID)-1 + 1]);
 
 			printk("%s, SSS_SENSOR_SET_CMD, read cmd %d\n", __func__, sensor_cmd );
-			
-			pca954x_select_channel(I2C_MUX_CHAN);
 
-			retry = 0;
-			while (retry < 5) {
-				if ( 0 == ap0100_m034_sensor_set_cmd(sensor_cmd) )
-					break;
-				printk("%s, cmd retry\n", __func__);
-				retry++;
+			if (sensor_cmd == CMD_INIT_MODE_BUF) {
+				ap0100_m034_sensor_update_init_buf((unsigned char *)buf + sizeof(SENSOR_READ_UUID) + 1, count - sizeof(SENSOR_READ_UUID)-1);
+			} else {
+				pca954x_select_channel(I2C_MUX_CHAN);
+
+				retry = 0;
+				while (retry < 5) {
+					if ( 0 == ap0100_m034_sensor_set_cmd(sensor_cmd) )
+						break;
+					printk("%s, cmd retry\n", __func__);
+					retry++;
+				}
+				pca954x_release_channel();
 			}
-			pca954x_release_channel();
 			break;
 		case SSS_IDLE:
 			update_init = 0;

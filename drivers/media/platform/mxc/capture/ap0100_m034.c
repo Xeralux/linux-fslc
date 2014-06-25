@@ -29,6 +29,8 @@
 
 #define TEST_RETRY_NUM (5)
 
+#define INIT_BUF_MAX (256)
+
 #ifdef pr_debug
 #undef pr_debug
 #define pr_debug(fmt, ...) printk(fmt, ##__VA_ARGS__);
@@ -52,6 +54,10 @@ struct i2c_client *ap0100_m034_i2cclient = NULL;
 
 static int ap0100_cur_mode = 0;
 static int ap0100_in_wdr_mode =1;
+
+// a place to store ini modes ( FLIP/FNM/MIRROR, SDR/WDR)
+static unsigned char mode_init_buf[INIT_BUF_MAX];
+static int mode_init_buf_count=0; // how many modes to do in sequence
 
 static AP0100_M034_DATA ap0100_normal_mode_reg[] = {
 {2, 0x098E, 0xC88C},
@@ -924,6 +930,34 @@ s32 ap0100_m034_sensor_set_cmd(int cmd)
 }
 
 EXPORT_SYMBOL(ap0100_m034_sensor_set_cmd);
+
+s32 ap0100_m034_sensor_update_init_buf(unsigned char *buf, int count)
+{
+	if (count > INIT_BUF_MAX) 
+		return -1;
+
+	memcpy(mode_init_buf, buf, count);
+	mode_init_buf_count= count;
+	return 0;
+}
+EXPORT_SYMBOL(ap0100_m034_sensor_update_init_buf);
+
+s32 ap0100_m034_sensor_mode_init(void)
+{
+	int i;
+	
+	if (mode_init_buf_count <= 0) 
+		return 0;
+
+	for (i=0; i<mode_init_buf_count; i++) {
+		pr_debug("sensor set mode: %d\n", mode_init_buf[i]);
+		if ( 0 != ap0100_m034_sensor_set_cmd((int)mode_init_buf[i]) )
+			return -1;
+	}
+		
+	return 0;
+}
+EXPORT_SYMBOL(ap0100_m034_sensor_mode_init);
 
 s32 ap0100_m034_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fail, int *r_fail)
 {
