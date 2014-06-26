@@ -133,12 +133,10 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 			if (!update_init) {
 				//camera_power_cycle(camera_plat);
 #if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
-				camera_power_cycle(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+				max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
 #else
-				camera_power_cycle(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+				max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 #endif
-				msleep(1000);
-				max927x_init();
 				update_init = 1;
 			}
 			retry = 0;
@@ -235,14 +233,11 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 			pca954x_select_channel(I2C_MUX_CHAN);
 			//mdelay(1);
 			if (!update_init) {
-				//camera_power_cycle(camera_plat);
 #if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
-				camera_power_cycle(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+				max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
 #else
-				camera_power_cycle(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+				max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 #endif
-				msleep(1000);
-				max927x_init();
 				update_init = 1;
 			}
 
@@ -263,14 +258,11 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 
 			pca954x_select_channel(I2C_MUX_CHAN);
 			if (!update_init) {
-				//camera_power_cycle(camera_plat);
 #if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
-				camera_power_cycle(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+				max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
 #else
-				camera_power_cycle(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+				max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 #endif
-				msleep(1000);
-				max927x_init();
 				update_init = 1;
 			}
 

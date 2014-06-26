@@ -77,12 +77,8 @@ static s32 ap0100_hw_reset(void)
 }
 
 
-static int max_ap0100_init(int mode, int hw_reset)
+static int ap0100_init(int mode, int hw_reset)
 {
-	//max9272_remote_ena(1);
-	if (max927x_init() != 0)
-		return -1;
-
 	if (hw_reset) {
 		if ( ap0100_hw_reset() != 0)
 			return -1;
@@ -97,29 +93,6 @@ static int max_ap0100_init(int mode, int hw_reset)
 	//max9272_remote_ena(0);
 
 	return 0;
-}
-
-static void camera_power_cycle(void (*pwdn)(int powerdown), void (*tc_reset)(int reset))
-{
-	if (pwdn == NULL || tc_reset == NULL)
-		return;
-
-	pr_debug("power cycle the camera\n");
-
-	// reset toshiba chip & max9272
-	tc_reset(1);
-	mdelay(100);
-	tc_reset(0);
-	mdelay(100);
-
-	// power down camera
-	pwdn(1);
-	mdelay(500);
-	max9272_magic_reg();
-	pwdn(0);
-
-	// wait for the POR delay
-	mdelay(500);
 }
 
 #define TEST_RETRY_NUM (5)

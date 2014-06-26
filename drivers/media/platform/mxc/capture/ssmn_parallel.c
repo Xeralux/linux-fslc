@@ -208,19 +208,18 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 	ssmn_parallel_data.pix.width = ssmn_parallel_mode_info_data[frame_rate][mode].width;
 	ssmn_parallel_data.pix.height = ssmn_parallel_mode_info_data[frame_rate][mode].height;
 
-	camera_power_cycle(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
-
 	pca954x_select_channel(I2C_MUX_CHAN);
+	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 	// within select channel, we need to call pca954x_release_channel() after I2C use is done
 	if (mode < ssmn_parallel_mode_TEST_1280_720  || mode == ssmn_parallel_mode_SENSOR_TEST_MODE) {
 		init_retry = 0;
 		while ( init_retry < INIT_RETRY) {
-			if (max_ap0100_init(mode, 0) == 0) {
+			if (ap0100_init(mode, 0) == 0) {
 				if ( ap0100_m034_sensor_mode_init() == 0)
 					break;
 			}
 			init_retry++;
-			camera_power_cycle(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+			max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 			pca954x_release_channel();
 			pca954x_select_channel(I2C_MUX_CHAN);
 		}
@@ -233,7 +232,6 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 	} else if ( mode == ssmn_parallel_mode_TEST_1280_720) {
 		tc_mipi_bridge_dev_init(3); // 3: mipi test output for parallel
 	}else if ( mode != ssmn_parallel_mode_INIT) { // I2C tests
-		max927x_init();
 		//ap0100_hw_reset();
 
 		// max9272 I2C test
@@ -844,16 +842,16 @@ static int ssmn_parallel_probe(struct i2c_client *client,
 
 	//clk_disable_unprepare(ssmn_parallel_data.sensor_clk);
 
-	camera_power_cycle(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 
 	pca954x_select_channel(I2C_MUX_CHAN);
+	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 
 	init_retry = 0;
 	while (init_retry < INIT_RETRY) {
-		if (max_ap0100_init(0, 0) == 0)
+		if (ap0100_init(0, 0) == 0)
 			break;
 		init_retry++;
-		camera_power_cycle(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+		max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
 		pca954x_release_channel();
 		pca954x_select_channel(I2C_MUX_CHAN);
 	}

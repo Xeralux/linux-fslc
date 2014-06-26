@@ -288,19 +288,18 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 	if (retval < 0)
 		goto err;
 
-	camera_power_cycle(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
-
 	pca954x_select_channel(I2C_MUX_CHAN);
+	max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
 	// within select channel, we need to call pca954x_release_channel() after I2C use is done
 	if (mode < ssmn_mipi_mode_TEST_1280_720 ||mode == ssmn_mipi_mode_SENSOR_TEST_MODE) {
 		init_retry = 0;
 		while ( init_retry < INIT_RETRY) {
-			if (max_ap0100_init(mode, 0) == 0) {
+			if (ap0100_init(mode, 0) == 0) {
 				if ( ap0100_m034_sensor_mode_init() == 0)
 					break;
 			}
 			init_retry++;
-			camera_power_cycle(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+			max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
 			pca954x_release_channel();
 			pca954x_select_channel(I2C_MUX_CHAN);
 		}
@@ -314,7 +313,6 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 	} else if ( mode == ssmn_mipi_mode_TEST_1280_720) {
 		tc_mipi_bridge_dev_init(1); // 1: mipi test output
 	} else if ( mode != ssmn_mipi_mode_INIT) { // I2C tests
-		max927x_init();
 		if ( mode == ssmn_mipi_mode_I2C_TEST_3) {
 			// max9272 I2C test
 			pr_debug("max9272 i2c test running ...... \n");
@@ -998,16 +996,15 @@ static int ssmn_mipi_probe(struct i2c_client *client,
 
 	//clk_disable_unprepare(ssmn_mipi_data.sensor_clk);
 
-	camera_power_cycle(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
-
 	pca954x_select_channel(I2C_MUX_CHAN);
+	max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
 	if (1) { // within select channel, we need to call pca954x_release_channel() after I2C use is done
 		init_retry = 0;
 		while (init_retry < INIT_RETRY) {
-			if (max_ap0100_init(0, 0) == 0)
+			if (ap0100_init(0, 0) == 0)
 				break;
 			init_retry++;
-			camera_power_cycle(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+			max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
 			pca954x_release_channel();
 			pca954x_select_channel(I2C_MUX_CHAN);
 		}

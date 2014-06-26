@@ -166,14 +166,31 @@ static s32 max9272_magic_reg(void)
 	return retval;
 }
 
-static s32 max927x_init(void)
+static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset))
 {
 	s32 retval=0;
 	u8 regval;
+
+	if (pwdn == NULL || tc_reset == NULL)
+		return -1;
+
+	pr_debug("power cycle the camera\n");
+
+	// reset toshiba chip & max9272
+	tc_reset(1);
+	msleep(100);
+	tc_reset(0);
+	msleep(100);
+
+	// power down camera
+	pwdn(1);
+	msleep(500);
+
+	max9272_magic_reg();
+	msleep(1000);
+
 	pr_debug("max927x init\n");
 
-	retval = max9272_write_reg(0x15, 0x24);
-	msleep(500);
 	//retval  |= max9271_write_reg(0x08, 0x08);
 	/*
 	 *
@@ -191,7 +208,8 @@ static s32 max927x_init(void)
 			 (0x2 << MAX927X_REG_0D_I2CMSTBT_SHIFT) |
 			 (0x2 << MAX927X_REG_0D_I2CSLVTO_SHIFT);
 	retval  |= max9272_write_reg(0x0d, regval);
-	mdelay(5);
+	pwdn(0);
+	msleep(1000);
 
 	regval = (0 << MAX9271_REG_04_SEREN_SHIFT) |
 			 (1 << MAX9271_REG_04_CLINKEN_SHIFT) |
