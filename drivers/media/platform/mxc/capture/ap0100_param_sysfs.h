@@ -5,8 +5,6 @@
 
 #ifdef CONFIG_SYSFS
 #define SENSOR_UPDATE_UUID 		"2c3fc110-ab3c-11e3-a5e2-0800200c9a66"
-#define SENSOR_READ_TEMPERATURE_UUID 	"ec3d5630-ab46-11e3-a5e2-0800200c9a66"
-#define SENSOR_READ_ERROR_CNT_UUID	"13f071e0-b91a-11e3-a5e2-0800200c9a66"
 #define SENSOR_READ_UUID		"941b5580-b21a-11e3-a5e2-0800200c9a66"
 #define SENSOR_SET_CMD_UUID					"23917fa2-bc3a-11e3-a5e2-0800200c9a66"
 
@@ -22,18 +20,105 @@ enum AP0100_SET_CMD {
 
 enum SENSOR_SYSFS_STATUS {
 	SSS_UPDATE = 0,
-	SSS_READ_TEMPERATURE,
-	SSS_READ_ERROR_CNT,
 	SSS_SENSOR_READ,
 	SSS_SENSOR_SET_CMD,
 	SSS_IDLE,
 };
 
 static enum SENSOR_SYSFS_STATUS cur_sss_status = SSS_IDLE;
-static signed char cur_temp, min_temp, max_temp, detected_err_cnt, corrected_err_cnt;
 static int sensor_read_len = 0;
 static int update_init = 0;
 static u8  read_buf[256];
+
+static ssize_t max9272_show_regs(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	int cnt = 0;
+	u8 i;
+	u8 val;
+	int err;
+	pca954x_select_channel(I2C_MUX_CHAN);
+	for(i=0; i < 0x20 && cnt < PAGE_SIZE; i++) {
+		err = max9272_read_reg(i, &val);
+		if(err)
+			continue;
+		cnt += snprintf(buf+cnt,PAGE_SIZE-cnt,"%02x:%02x\n", i, val);
+	}
+	pca954x_release_channel();
+	return cnt;
+}
+static DEVICE_ATTR(max9272_regs, 0444, (void *)max9272_show_regs, NULL);
+
+static ssize_t max9271_show_regs(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	int cnt = 0;
+	u8 i;
+	u8 val;
+	int err;
+	pca954x_select_channel(I2C_MUX_CHAN);
+	for(i=0; i < 0x20 && cnt < PAGE_SIZE; i++) {
+		err = max9271_read_reg(i, &val);
+		if(err)
+			continue;
+		cnt += snprintf(buf+cnt,PAGE_SIZE-cnt,"%02x:%02x\n", i, val);
+	}
+	pca954x_release_channel();
+	return cnt;
+}
+static DEVICE_ATTR(max9271_regs, 0444, (void *)max9271_show_regs, NULL);
+
+static ssize_t max9272_show_errors(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	static signed char detected_err_cnt, corrected_err_cnt;
+	s32 ret;
+	pca954x_select_channel(I2C_MUX_CHAN);
+	ret = max9272_read_error_cnt(&detected_err_cnt, &corrected_err_cnt);
+	pca954x_release_channel();
+
+	if (ret != 0) {
+		return snprintf(buf, PAGE_SIZE, "SSMN camera (%s), read error count error\n\n", SSMN_CHANNEL);
+	}
+
+	return snprintf(buf, PAGE_SIZE,
+			"SSMN camera (%s)\n"
+			"Detected error count: %d\n"
+			"Corrected error count %d\n\n",
+			SSMN_CHANNEL,
+			detected_err_cnt, corrected_err_cnt);
+}
+static DEVICE_ATTR(max9272_errors, 0444, (void *)max9272_show_errors, NULL);
+
+static ssize_t ap0100_show_temp(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	int ret, retry;
+	static signed char cur_temp, min_temp, max_temp;
+	pca954x_select_channel(I2C_MUX_CHAN);
+	retry = 0;
+	while (retry < 5) {
+		ret = ap0100_m034_read_temperature(&cur_temp, &min_temp, &max_temp);
+		if ( ret != -1)
+			break;
+		printk("%s, cmd retry\n", __func__);
+		retry++;
+	}
+
+	pca954x_release_channel();
+
+	if (ret != 0) {
+		return snprintf(buf, PAGE_SIZE, "SSMN camera (%s), read temperature error\n\n", SSMN_CHANNEL);
+	}
+	return snprintf(buf, PAGE_SIZE,
+			"SSMN camera (%s)\n"
+			"Current Temperature: %d\n"
+			"Min Temperature: %d\n"
+			"Max Temperature: %d\n\n",
+				SSMN_CHANNEL,
+				cur_temp, min_temp, max_temp);
+}
+static DEVICE_ATTR(ap0100_temp, 0444, (void *)ap0100_show_temp, NULL);
 
 static ssize_t sensor_sysfs_read(struct device *dev,
 				   struct device_attribute *attr, char *buf)
@@ -67,47 +152,6 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 			}
 			pca954x_release_channel();
 			return snprintf(buf, PAGE_SIZE, "%d\n", cmd_status);
-			break;
-		case SSS_READ_TEMPERATURE:
-			pca954x_select_channel(I2C_MUX_CHAN);
-			retry = 0;
-			while (retry < 5) {
-				ret = ap0100_m034_read_temperature(&cur_temp, &min_temp, &max_temp);
-				if ( ret != -1)
-					break;
-				printk("%s, cmd retry\n", __func__);
-				retry++;
-			}
-
-			pca954x_release_channel();
-
-			if (ret != 0) {
-				return snprintf(buf, PAGE_SIZE, "SSMN camera (%s), read temperature error\n\n", SSMN_CHANNEL);
-			}
-			else
-				return snprintf(buf, PAGE_SIZE,
-					"SSMN camera (%s)\n"
-					"Current Temperature: %d\n"
-					"Min Temperature: %d\n"
-					"Max Temperatuer: %d\n\n",
-					SSMN_CHANNEL,
-					cur_temp, min_temp, max_temp);
-			break;
-		case SSS_READ_ERROR_CNT:
-			pca954x_select_channel(I2C_MUX_CHAN);
-			ret = max9272_read_error_cnt(&detected_err_cnt, &corrected_err_cnt);
-			pca954x_release_channel();
-
-			if (ret != 0) {
-				return snprintf(buf, PAGE_SIZE, "SSMN camera (%s), read error count error\n\n", SSMN_CHANNEL);
-			}
-			else
-				return snprintf(buf, PAGE_SIZE,
-					"SSMN camera (%s)\n"
-					"Detected error count: %d\n"
-					"Corrected error count %d\n\n",
-					SSMN_CHANNEL,
-					detected_err_cnt, corrected_err_cnt);
 			break;
 		case SSS_SENSOR_READ:
 			if ( sensor_read_len > 0) {
@@ -146,8 +190,6 @@ static enum SENSOR_SYSFS_STATUS check_buf_command(const char * buf)
 {
 	int i;
 	char *sensor_update_uuid = SENSOR_UPDATE_UUID ;
-	char *sensor_read_temperature_uuid = SENSOR_READ_TEMPERATURE_UUID;
-	char *sensor_read_error_cnt_uuid = SENSOR_READ_ERROR_CNT_UUID;
 	char *sensor_read_uuid = SENSOR_READ_UUID;
 	char *sensor_set_cmd_uuid = SENSOR_SET_CMD_UUID;
 
@@ -166,22 +208,6 @@ static enum SENSOR_SYSFS_STATUS check_buf_command(const char * buf)
 	}
 	if ( i == sizeof(sensor_read_uuid)-1)
 		return SSS_SENSOR_READ;
-
-	for (i=0; i<sizeof(sensor_read_temperature_uuid)-1; i++) {
-		if (buf[i] != sensor_read_temperature_uuid[i]) {
-			break;
-		}
-	}
-	if ( i == sizeof(sensor_read_temperature_uuid)-1)
-		return SSS_READ_TEMPERATURE;
-
-	for (i=0; i<sizeof(sensor_read_error_cnt_uuid)-1; i++) {
-		if (buf[i] != sensor_read_error_cnt_uuid[i]) {
-			break;
-		}
-	}
-	if ( i == sizeof(sensor_read_error_cnt_uuid)-1)
-		return SSS_READ_ERROR_CNT;
 
 	for (i=0; i<sizeof(sensor_set_cmd_uuid)-1; i++) {
 		if (buf[i] != sensor_set_cmd_uuid[i]) {
@@ -229,12 +255,6 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 				retry++;
 			}
 			pca954x_release_channel();
-			break;
-		case SSS_READ_TEMPERATURE:
-			printk("received SSS_READ_TEMPRATURE cmd\n");
-			break;
-		case SSS_READ_ERROR_CNT:
-			printk("received SSS_READ_ERROR_CNT cmd\n");
 			break;
 		case SSS_SENSOR_READ:
 			sensor_read_len = (buf[sizeof(SENSOR_READ_UUID)-1]) & 0x00ff;
@@ -297,21 +317,27 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 
 static DEVICE_ATTR(ap0100_param, 0666, (void *)sensor_sysfs_read, (void *)sensor_sysfs_write);
 
+static struct attribute *attributes[] = {
+		&dev_attr_ap0100_param.attr,
+		&dev_attr_max9272_regs.attr,
+		&dev_attr_max9271_regs.attr,
+		&dev_attr_ap0100_temp.attr,
+		&dev_attr_max9272_errors.attr,
+		NULL,
+};
+
+static const struct attribute_group attr_group = {
+	.attrs	= attributes,
+};
+
 static int add_ap0100_param(struct device *dev)
 {
-	int err;
-
-	err = device_create_file(dev, &dev_attr_ap0100_param);
-	if (err < 0)
-		goto fail;
-
-fail:
-	return err;
+	return sysfs_create_group(&dev->kobj, &attr_group);
 }
 
 static void remove_ap0100_param(struct device *dev)
 {
-	device_remove_file(dev, &dev_attr_ap0100_param);
+	sysfs_remove_group(&dev->kobj, &attr_group);
 }
 
 #else
