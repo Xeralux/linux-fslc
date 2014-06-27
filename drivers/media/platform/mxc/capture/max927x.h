@@ -83,7 +83,9 @@ extern s32 max9271_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fai
 
 #define MAX927X_REG_0D_I2CLOCACK_SHIFT (7)
 #define MAX927X_REG_0D_I2CSLVSH_SHIFT  (5)
+#define MAX927X_REG_0D_I2CSLVSH_MASK   (0x3 << MAX927X_REG_0D_I2CSLVSH_SHIFT)
 #define MAX927X_REG_0D_I2CMSTBT_SHIFT  (2)
+#define MAX927X_REG_0D_I2CMSTBT_MASK   (0x7 << MAX927X_REG_0D_I2CMSTBT_SHIFT)
 #define MAX927X_REG_0D_I2CSLVTO_SHIFT  (0)
 
 #define MAX9271_REG_0E_DIS_REV_P_SHIFT (7)
@@ -183,6 +185,11 @@ static s32 max9272_magic_reg(void)
 	return retval;
 }
 
+static u8 max927x_i2c = (1 << MAX927X_REG_0D_I2CLOCACK_SHIFT) |
+			 (0x1 << MAX927X_REG_0D_I2CSLVSH_SHIFT) |
+			 (0x2 << MAX927X_REG_0D_I2CMSTBT_SHIFT) |
+			 (0x2 << MAX927X_REG_0D_I2CSLVTO_SHIFT);
+
 static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset))
 {
 	s32 retval=0;
@@ -220,11 +227,7 @@ static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset)
 			 (0x0 << MAX9272_REG_05_EQTUNE_SHIFT);
 	retval  |= max9272_write_reg(0x05, regval);
 #endif
-	regval = (1 << MAX927X_REG_0D_I2CLOCACK_SHIFT) |
-			 (0x1 << MAX927X_REG_0D_I2CSLVSH_SHIFT) |
-			 (0x2 << MAX927X_REG_0D_I2CMSTBT_SHIFT) |
-			 (0x2 << MAX927X_REG_0D_I2CSLVTO_SHIFT);
-	retval  |= max9272_write_reg(0x0d, regval);
+	retval  |= max9272_write_reg(0x0d, max927x_i2c);
 	pwdn(0);
 	msleep(1000);
 
@@ -237,6 +240,7 @@ static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset)
 			 (1 << MAX927X_REG_04_FWDCCEN_SHIFT);
 	retval  |= max9271_write_reg(0x04, regval);
 	msleep(500);
+
 #if 0
 	regval = (0 << MAX927X_REG_05_I2CMETHOD_SHIFT) |
 			 (1 << MAX9271_REG_05_ENJITFILT_SHIFT) |
@@ -250,11 +254,7 @@ static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset)
 	retval  |= max9271_write_reg(0x06, regval);
 #endif
 
-	regval = (1 << MAX927X_REG_0D_I2CLOCACK_SHIFT) |
-			 (0x1 << MAX927X_REG_0D_I2CSLVSH_SHIFT) |
-			 (0x2 << MAX927X_REG_0D_I2CMSTBT_SHIFT) |
-			 (0x2 << MAX927X_REG_0D_I2CSLVTO_SHIFT);
-	retval  |= max9271_write_reg(0x0d, regval);
+	retval  |= max9271_write_reg(0x0d, max927x_i2c);
 
 	regval = (1 << MAX927X_REG_07_DBL_SHIFT) |
 			 (0 << MAX927X_REG_07_DRS_SHIFT) |

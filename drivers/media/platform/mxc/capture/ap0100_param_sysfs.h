@@ -73,6 +73,70 @@ static ssize_t max9272_rev_trf_show(struct device *dev,
 static DEVICE_ATTR(magic_rev_trf, 0666, (void *)max9272_rev_trf_show, (void *)max9272_rev_trf_store);
 
 
+static ssize_t max927x_i2c_slvsh_store(struct device *dev,
+				   struct device_attribute *attr, const char *buf, int count)
+{
+	unsigned long val;
+	if(_kstrtoul(buf, 10, &val) || val > 3) {
+		dev_err(dev,"Must supply value between 0-3.");
+		return count;
+	}
+	max927x_i2c &=       ~MAX927X_REG_0D_I2CSLVSH_MASK;
+	max927x_i2c |= val << MAX927X_REG_0D_I2CSLVSH_SHIFT;
+
+	pca954x_select_channel(I2C_MUX_CHAN);
+#if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
+	max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+#else
+	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+#endif
+	pca954x_release_channel();
+	return count;
+}
+
+static ssize_t max927x_i2c_slvsh_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+
+	u8 val = (max927x_i2c & MAX927X_REG_0D_I2CSLVSH_MASK);
+	val >>=                 MAX927X_REG_0D_I2CSLVSH_SHIFT;
+
+	return sprintf(buf, "%d\n", val);
+}
+static DEVICE_ATTR(i2c_slvsh, 0666, (void *)max927x_i2c_slvsh_show, (void *)max927x_i2c_slvsh_store);
+
+static ssize_t max927x_i2c_mstbt_store(struct device *dev,
+				   struct device_attribute *attr, const char *buf, int count)
+{
+	unsigned long val;
+	if(_kstrtoul(buf, 10, &val) || val > 7) {
+		dev_err(dev,"Must supply value between 0-7.");
+		return count;
+	}
+	max927x_i2c &=       ~MAX927X_REG_0D_I2CMSTBT_MASK;
+	max927x_i2c |= val << MAX927X_REG_0D_I2CMSTBT_SHIFT;
+
+	pca954x_select_channel(I2C_MUX_CHAN);
+#if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
+	max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+#else
+	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+#endif
+	pca954x_release_channel();
+	return count;
+}
+
+static ssize_t max927x_i2c_mstbt_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+
+	u8 val = (max927x_i2c & MAX927X_REG_0D_I2CMSTBT_MASK);
+	val >>=                 MAX927X_REG_0D_I2CMSTBT_SHIFT;
+
+	return sprintf(buf, "%d\n", val);
+}
+static DEVICE_ATTR(i2c_mstbt, 0666, (void *)max927x_i2c_mstbt_show, (void *)max927x_i2c_mstbt_store);
+
 static ssize_t max9272_revtxamp_store(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
 {
@@ -393,6 +457,8 @@ static struct attribute *attributes[] = {
 		&dev_attr_max9272_errors.attr,
 		&dev_attr_magic_rev_trf.attr,
 		&dev_attr_magic_revtxamp.attr,
+		&dev_attr_i2c_slvsh.attr,
+		&dev_attr_i2c_mstbt.attr,
 		NULL,
 };
 
