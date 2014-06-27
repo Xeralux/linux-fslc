@@ -30,6 +30,82 @@ static int sensor_read_len = 0;
 static int update_init = 0;
 static u8  read_buf[256];
 
+static ssize_t max9272_rev_trf_store(struct device *dev,
+				   struct device_attribute *attr, const char *buf, int count)
+{
+	unsigned long val;
+	if(_kstrtoul(buf, 10, &val) || val > 3) {
+		dev_err(dev,"Must supply value between 0-3.");
+		return count;
+	}
+	max9272_magic &= ~MAX9272_REG_15_REV_TRF_MASK;
+	max9272_magic |= val << MAX9272_REG_15_REV_TRF_SHIFT;
+
+	pca954x_select_channel(I2C_MUX_CHAN);
+#if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
+	max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+#else
+	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+#endif
+	pca954x_release_channel();
+	return count;
+}
+
+static ssize_t max9272_rev_trf_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+
+	u8 val = (max9272_magic & MAX9272_REG_15_REV_TRF_MASK);
+	val >>= MAX9272_REG_15_REV_TRF_SHIFT;
+
+	switch(val) {
+	case 0:
+		return sprintf(buf, "0:211ns,100ns\n");
+	case 1:
+		return sprintf(buf, "1:281ns,200ns\n");
+	case 2:
+		return sprintf(buf, "2:422ns,300ns\n");
+	case 3:
+		return sprintf(buf, "3:563ns,400ns\n");
+	};
+	return 0;
+}
+static DEVICE_ATTR(magic_rev_trf, 0666, (void *)max9272_rev_trf_show, (void *)max9272_rev_trf_store);
+
+
+static ssize_t max9272_revtxamp_store(struct device *dev,
+				   struct device_attribute *attr, const char *buf, int count)
+{
+	unsigned long val;
+	if(_kstrtoul(buf, 10, &val) || val > 7) {
+		dev_err(dev,"Must supply value between 0-7.\n");
+		return count;
+	}
+
+	max9272_magic &= ~MAX9272_REG_15_REVTXAMP_MASK;
+	max9272_magic |= val << MAX9272_REG_15_REVTXAMP_SHIFT;
+
+	pca954x_select_channel(I2C_MUX_CHAN);
+#if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
+	max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+#else
+	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+#endif
+	pca954x_release_channel();
+	return count;
+}
+
+static ssize_t max9272_revtxamp_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+
+	u8 val = (max9272_magic & MAX9272_REG_15_REVTXAMP_MASK);
+	val >>= MAX9272_REG_15_REVTXAMP_SHIFT;
+
+	return sprintf(buf, "%d:%dmV\n",val,val*10+30);
+}
+static DEVICE_ATTR(magic_revtxamp, 0666, (void *)max9272_revtxamp_show, (void *)max9272_revtxamp_store);
+
 static ssize_t max9272_show_regs(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -315,6 +391,8 @@ static struct attribute *attributes[] = {
 		&dev_attr_max9271_regs.attr,
 		&dev_attr_ap0100_temp.attr,
 		&dev_attr_max9272_errors.attr,
+		&dev_attr_magic_rev_trf.attr,
+		&dev_attr_magic_revtxamp.attr,
 		NULL,
 };
 
