@@ -72,6 +72,37 @@ static ssize_t max9272_rev_trf_show(struct device *dev,
 }
 static DEVICE_ATTR(magic_rev_trf, 0666, (void *)max9272_rev_trf_show, (void *)max9272_rev_trf_store);
 
+static ssize_t max9271_rev_logain_store(struct device *dev,
+				   struct device_attribute *attr, const char *buf, int count)
+{
+	unsigned long val;
+	if(_kstrtoul(buf, 10, &val) || val > 1) {
+		dev_err(dev,"Must supply value between 0-1.");
+		return count;
+	}
+	max9271_magic &= ~MAX9271_REG_08_REV_LOGAIN_MASK;
+	max9271_magic |= val << MAX9271_REG_08_REV_LOGAIN_SHIFT;
+
+	pca954x_select_channel(I2C_MUX_CHAN);
+#if (I2C_MUX_CHAN == I2C_MUX_CHAN_CSI0)
+	max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+#else
+	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+#endif
+	pca954x_release_channel();
+	return count;
+}
+
+static ssize_t max9271_rev_logain_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+
+	u8 val = (max9271_magic & MAX9271_REG_08_REV_LOGAIN_MASK);
+	val >>= MAX9271_REG_08_REV_LOGAIN_SHIFT;
+
+	return sprintf(buf, "%d\n", val);
+}
+static DEVICE_ATTR(magic_rev_logain, 0666, (void *)max9271_rev_logain_show, (void *)max9271_rev_logain_store);
 
 static ssize_t max927x_i2c_slvsh_store(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
@@ -457,6 +488,7 @@ static struct attribute *attributes[] = {
 		&dev_attr_max9272_errors.attr,
 		&dev_attr_magic_rev_trf.attr,
 		&dev_attr_magic_revtxamp.attr,
+		&dev_attr_magic_rev_logain.attr,
 		&dev_attr_i2c_slvsh.attr,
 		&dev_attr_i2c_mstbt.attr,
 		NULL,

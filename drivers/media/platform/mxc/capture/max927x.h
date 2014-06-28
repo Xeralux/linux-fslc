@@ -81,6 +81,9 @@ extern s32 max9271_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fai
 #define MAX9272_REG_08_AUTORST_SHIFT (2)
 #define MAX9272_REG_08_ERRSEL_SHIFT (0)
 
+#define MAX9271_REG_08_REV_LOGAIN_SHIFT (3)
+#define MAX9271_REG_08_REV_LOGAIN_MASK (1 << MAX9271_REG_08_REV_LOGAIN_SHIFT)
+
 #define MAX927X_REG_0D_I2CLOCACK_SHIFT (7)
 #define MAX927X_REG_0D_I2CSLVSH_SHIFT  (5)
 #define MAX927X_REG_0D_I2CSLVSH_MASK   (0x3 << MAX927X_REG_0D_I2CSLVSH_SHIFT)
@@ -190,6 +193,10 @@ static u8 max927x_i2c = (1 << MAX927X_REG_0D_I2CLOCACK_SHIFT) |
 			 (0x2 << MAX927X_REG_0D_I2CMSTBT_SHIFT) |
 			 (0x2 << MAX927X_REG_0D_I2CSLVTO_SHIFT);
 
+static u8 max9271_magic = (0 << MAX927X_REG_08_INVVS_SHIFT) |
+			(0 << MAX927X_REG_08_INVHS_SHIFT) |
+			(0 << MAX9271_REG_08_REV_LOGAIN_SHIFT);
+
 static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset))
 {
 	s32 retval=0;
@@ -253,6 +260,9 @@ static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset)
 			 (0x0 << MAX9271_REG_06_PREEMP_SHIFT);
 	retval  |= max9271_write_reg(0x06, regval);
 #endif
+
+	retval  |= max9271_write_reg(0x08, max9271_magic);
+	msleep(500);
 
 	retval  |= max9271_write_reg(0x0d, max927x_i2c);
 
