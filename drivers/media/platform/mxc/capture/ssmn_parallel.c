@@ -195,7 +195,7 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 {
 	int retval = 0, init_retry;
 	s32 ret=0;
-	int i2c_test_cycles = 1000000, i2c_r_fail_cnt, i2c_w_fail_cnt;
+	int i2c_test_cycles = 10000, i2c_r_fail_cnt, i2c_w_fail_cnt;
 	int i2c_w_retry_cnt, i2c_r_retry_cnt;
 
 	pr_debug("%s, mode = %d\n", __func__, mode);

@@ -232,7 +232,7 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 	void *mipi_csi2_info;
 	u32 mipi_reg;
 	s32 ret=0;
-	int i2c_test_cycles = 1000000, i2c_r_fail_cnt, i2c_w_fail_cnt;
+	int i2c_test_cycles = 10000, i2c_r_fail_cnt, i2c_w_fail_cnt;
 	int i2c_w_retry_cnt, i2c_r_retry_cnt;
 	enum ssmn_mipi_downsize_mode dn_mode, orig_dn_mode;
 
