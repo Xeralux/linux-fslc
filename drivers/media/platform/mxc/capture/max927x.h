@@ -178,7 +178,8 @@ static s32 max9272_remote_ena(int ena)
 }
 */
 
-static u8 max9272_magic = 0x24;
+static u8 max9272_magic = (3 << MAX9272_REG_15_REVTXAMP_SHIFT) |
+						  (2 << MAX9272_REG_15_REV_TRF_SHIFT);
 static s32 max9272_magic_reg(void)
 {
 	s32 retval=0;
@@ -189,8 +190,8 @@ static s32 max9272_magic_reg(void)
 }
 
 static u8 max927x_i2c = (1 << MAX927X_REG_0D_I2CLOCACK_SHIFT) |
-			 (0x1 << MAX927X_REG_0D_I2CSLVSH_SHIFT) |
-			 (0x2 << MAX927X_REG_0D_I2CMSTBT_SHIFT) |
+			 (0x3 << MAX927X_REG_0D_I2CSLVSH_SHIFT) |
+			 (0x4 << MAX927X_REG_0D_I2CMSTBT_SHIFT) |
 			 (0x2 << MAX927X_REG_0D_I2CSLVTO_SHIFT);
 
 static u8 max9271_magic = (0 << MAX927X_REG_08_INVVS_SHIFT) |
