@@ -243,8 +243,11 @@
 
 &i2c1 {
 	clock-frequency = <400000>;
-	pinctrl-names = "default";
+	pinctrl-names = "default" , "recovery";
 	pinctrl-0 = <&pinctrl_i2c1_2>;	/*  "CSI DATA" pins.  */
+	pinctrl-1 = <&pinctrl_i2c1_2_recovery>;
+	sda-gpio = <&gpio5 26 0>;
+	scl-gpio = <&gpio5 27 0>;
 	status = "okay";
 
 	/*  Toshiba MIPI bridge 0 on parallel interface: CPLBTX->CPLBRX(MIPI-Rx Parallel-Tx) */
@@ -292,8 +295,11 @@
 &i2c2 {
 	/*  All signals go out on connector J23.  */
 	clock-frequency = <100000>;
-	pinctrl-names = "default";
+	pinctrl-names = "default", "recovery";
 	pinctrl-0 = <&pinctrl_i2c2_2>;	/*  "KEY COL/ROW" pins.  */
+	pinctrl-1 = <&pinctrl_i2c2_2_recovery>;
+	scl-gpio = <&gpio4 12 0>;
+	sda-gpio = <&gpio4 13 0>;
 	status = "okay";
 
 	/* PCA9546 I2C multiplexer */
@@ -398,9 +404,12 @@
 &i2c3 {
 	/*  All signals go out on mini PCIe bus connectors.  */
 	clock-frequency = <400000>;
-	pinctrl-names = "default";
+	pinctrl-names = "default", "recovery";
 	pinctrl-0 = <&pinctrl_i2c3_2>;	/*  "GPIO[36]" pins.  */
+	pinctrl-1 = <&pinctrl_i2c3_2_recovery>;
 	status = "okay";
+	scl-gpio = <&gpio1 3 0>;
+	sda-gpio = <&gpio1 6 0>;
 
 };
 
@@ -493,6 +502,31 @@
 &iomuxc {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_hog_mn>;
+
+	i2c1 {
+		pinctrl_i2c1_2_recovery: i2c1grp-2-recovery {
+			fsl,pins = <
+				MX6QDL_PAD_CSI0_DAT8__GPIO5_IO26 0x4001b8b1
+				MX6QDL_PAD_CSI0_DAT9__GPIO5_IO27 0x4001b8b1
+			>;
+		};
+	};
+	i2c2 {
+		pinctrl_i2c2_2_recovery: i2c2grp-2-recovery {
+			fsl,pins = <
+				MX6QDL_PAD_KEY_COL3__GPIO4_IO12 0x4001b8b1
+				MX6QDL_PAD_KEY_ROW3__GPIO4_IO13 0x4001b8b1
+			>;
+		};
+	};
+	i2c3 {
+		pinctrl_i2c3_2_recovery: i2c3grp-2-recovery {
+			fsl,pins = <
+				MX6QDL_PAD_GPIO_3__GPIO1_IO03 0x4001b8b1
+				MX6QDL_PAD_GPIO_6__GPIO1_IO06 0x4001b8b1
+			>;
+		};
+	};
 
 	ecspi1 {
 		pinctrl_ecspi1_mn: ecspi1grp-mn {
