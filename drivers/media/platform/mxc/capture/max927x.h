@@ -293,6 +293,16 @@ static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset)
 	retval  |= max9272_write_reg(0x08, regval);
 	msleep(5);
 
+	regval = (0 << MAX9271_REG_0E_DIS_REV_P_SHIFT) |
+			 (1 << MAX9271_REG_0E_DIS_REV_N_SHIFT) |
+			 (1 << MAX9271_REG_0E_DIS_GPIO5EN_SHIFT) |
+			 (0 << MAX9271_REG_0E_DIS_GPIO4EN_SHIFT) |
+			 (0 << MAX9271_REG_0E_DIS_GPIO3EN_SHIFT) |
+			 (0 << MAX9271_REG_0E_DIS_GPIO2EN_SHIFT) |
+			 (0 << MAX9271_REG_0E_DIS_GPIO1EN_SHIFT);
+	retval  |= max9271_write_reg(0x0E, regval); // enable GPIO5
+	msleep(5);
+
 	if (retval) {
 		pr_debug("max927x init failed \n");
 		return -1;

@@ -50,8 +50,30 @@ extern s32 ap0100_m034_sensor_mode_init(void);
 
 static s32 ap0100_hw_reset(void)
 {
+	s32 retval=0;
+	u8 val=0;
 
-	return 0;
+	retval = max9271_read_reg(0x0F, &val);
+	val &= ~(1 << MAX9271_REG_0F_GPIO5OUT_SHIFT);
+//	val &= (~0x20); // set GPIO5 low
+	retval |= max9271_write_reg(0x0F, val);
+
+	msleep(1100);
+
+	val |= (1 << MAX9271_REG_0F_GPIO5OUT_SHIFT);
+//	val |= 0x20; // set GPIO5 high
+	retval |= max9271_write_reg(0x0F, val);
+
+	if (retval) {
+		pr_debug("ap0100 hw reset failed \n");
+		return -1;
+	}
+
+	msleep(1000);
+	pr_debug("ap0100 hw reset done \n");
+
+	return retval;
+
 }
 
 
