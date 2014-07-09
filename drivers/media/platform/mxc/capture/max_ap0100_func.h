@@ -38,7 +38,23 @@
 extern s32 ap0100_m034_sensor_init(int mode);
 extern void pca954x_select_channel (int chan);
 extern void pca954x_release_channel (void);
-extern s32 tc_mipi_bridge_dev_init(int mode);
+
+typedef struct MIPI_DATA {
+    unsigned char data_size;
+    short reg_addr;
+    long data;
+} MIPI_DATA_TYPE;
+
+struct tc_mipi_bridge_platform {
+	bool write_test_pattern;
+	MIPI_DATA_TYPE* regs;
+};
+extern s32 tc_mipi_bridge_dev_init(const struct tc_mipi_bridge_platform* data);
+
+void tc_mipi_bridge_stop(void);
+void tc_mipi_bridge_start(void);
+void tc_mipi_bridge_reset(void);
+
 extern s32 ap0100_m034_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fail, int *r_fail);
 extern s32 ap0100_m034_read_temperature(signed char *cur_temp, signed char *min_temp, signed char *max_temp);
 extern s32 ap0100_m034_cmd_status(void);
@@ -55,13 +71,11 @@ static s32 ap0100_hw_reset(void)
 
 	retval = max9271_read_reg(0x0F, &val);
 	val &= ~(1 << MAX9271_REG_0F_GPIO5OUT_SHIFT);
-//	val &= (~0x20); // set GPIO5 low
 	retval |= max9271_write_reg(0x0F, val);
 
 	msleep(1100);
 
 	val |= (1 << MAX9271_REG_0F_GPIO5OUT_SHIFT);
-//	val |= 0x20; // set GPIO5 high
 	retval |= max9271_write_reg(0x0F, val);
 
 	if (retval) {

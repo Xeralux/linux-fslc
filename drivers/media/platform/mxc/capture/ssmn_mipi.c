@@ -18,8 +18,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#define DEBUG
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -154,6 +152,91 @@ static struct regulator *analog_regulator;
 static struct regulator *gpo_regulator;
 static struct regmap *gpr;
 
+static MIPI_DATA_TYPE bridge_normal_regs[] = {
+   {2, 0x00e0, 0x0100},
+
+   {2, 0x0016, 0x612c},
+   {2, 0x0018, 0x0613},
+
+   {2, 0x0006, 0x0104},
+   {2, 0x0008, 0x0060},
+   {2, 0x0022, 0x0A00},
+
+   {4, 0x0140, 0x00000000},
+   {4, 0x0144, 0x00000000},
+   {4, 0x0148, 0x00000000},
+   {4, 0x014C, 0x00000001},
+   {4, 0x0150, 0x00000001},
+
+   {4, 0x0210, 0x00000900},
+   {4, 0x0214, 0x00000001},
+   {4, 0x0218, 0x00000400},
+   {4, 0x021C, 0x00000000},
+   {4, 0x0220, 0x00000001},
+   {4, 0x0224, 0x00002800},
+   {4, 0x0228, 0x00000000},
+   {4, 0x022C, 0x00000000},
+   {4, 0x0234, 0x00000007},
+   {4, 0x0238, 0x00000001},
+   {4, 0x0204, 0x00000001},
+
+   {4, 0x0518, 0x00000001},
+   {4, 0x0500, 0xA30080A3},
+
+   {2, 0x0032, 0x0000},
+   {2, 0x0004, 0x0041},
+   {0,0,0},
+};
+static const struct tc_mipi_bridge_platform bridge_normal = {
+	.write_test_pattern = false,
+	.regs = bridge_normal_regs,
+};
+
+static MIPI_DATA_TYPE bridge_test_regs[] = {
+   {2, 0x00e0, 0x0000},
+
+   {2, 0x0016, 0x612c},
+   {2, 0x0018, 0x0613},
+
+   {2, 0x0006, 0x0000},
+
+   {4, 0x0140, 0x00000000},
+   {4, 0x0144, 0x00000000},
+   {4, 0x0148, 0x00000000},
+   {4, 0x014C, 0x00000001},
+   {4, 0x0150, 0x00000001},
+
+   {4, 0x0210, 0x00000900},
+   {4, 0x0214, 0x00000001},
+   {4, 0x0218, 0x00000400},
+   {4, 0x021C, 0x00000000},
+   {4, 0x0220, 0x00000001},
+   {4, 0x0224, 0x00002800},
+   {4, 0x0228, 0x00000000},
+   {4, 0x022C, 0x00000000},
+   {4, 0x0234, 0x00000007},
+   {4, 0x0238, 0x00000001},
+   {4, 0x0204, 0x00000001},
+
+   {4, 0x0518, 0x00000001},
+   {4, 0x0500, 0xA30080A3},
+
+   {2, 0x0008, 0x0001},
+   {2, 0x0050, 0x001e},
+   {2, 0x0022, 0x0A00},
+   {2, 0x00e0, 0x8000},
+   {2, 0x00e2, 0x0A00},
+   {2, 0x00e4, 0x058},
+
+   {2, 0x0032, 0x0000},
+   {0,0,0},
+};
+
+static struct tc_mipi_bridge_platform bridge_test = {
+	.write_test_pattern = true,
+	.regs = bridge_test_regs,
+};
+
 static int ssmn_mipi_probe(struct i2c_client *adapter,
                       const struct i2c_device_id *device_id);
 static int ssmn_mipi_remove(struct i2c_client *client);
@@ -235,6 +318,7 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 	int i2c_test_cycles = 10000, i2c_r_fail_cnt, i2c_w_fail_cnt;
 	int i2c_w_retry_cnt, i2c_r_retry_cnt;
 	enum ssmn_mipi_downsize_mode dn_mode, orig_dn_mode;
+	unsigned int i;
 
 	pr_debug("%s, mode = %d\n", __func__, mode);
 
@@ -244,28 +328,33 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 		return -1;
 	}
 
+	pca954x_select_channel(I2C_MUX_CHAN);
+	tc_mipi_bridge_stop();
+
 	mipi_csi2_info = mipi_csi2_get_info();
 
 	/* initial mipi dphy */
-        if (!mipi_csi2_info) {
+	if (!mipi_csi2_info) {
 		printk(KERN_ERR "%s() in %s: Fail to get mipi_csi2_info!\n",
-		       __func__, __FILE__);
-                return -1;
-        }
+	       __func__, __FILE__);
+		pca954x_release_channel();
+		return -1;
+	}
 
 	if (!mipi_csi2_get_status(mipi_csi2_info))
 		mipi_csi2_enable(mipi_csi2_info);
 
         if (!mipi_csi2_get_status(mipi_csi2_info)) {
 		pr_err("Can not enable mipi csi2 driver!\n");
+		pca954x_release_channel();
 		return -1;
 	}
 
-	mipi_csi2_set_lanes(mipi_csi2_info);
+
+	mipi_reg = mipi_csi2_dphy_status(mipi_csi2_info);
+	pr_debug("pre mipi_csi2 state reg: 0x%x\n", mipi_reg);
 
 	/*Only reset MIPI CSI2 HW at sensor initialize*/
-	//if (mode == ssmn_mipi_mode_INIT)
-		mipi_csi2_reset(mipi_csi2_info);
 
 	if (ssmn_mipi_data.pix.pixelformat == V4L2_PIX_FMT_UYVY)
 		mipi_csi2_set_datatype(mipi_csi2_info, MIPI_DT_YUV422);
@@ -285,11 +374,10 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 		retval = ssmn_mipi_change_mode_direct(frame_rate, mode);
 	}
 
-	if (retval < 0)
+	if (retval < 0) {
+		pca954x_release_channel();
 		goto err;
-
-	pca954x_select_channel(I2C_MUX_CHAN);
-	max927x_init(ssmn_mipi_powerdown, ssmn_mipi_tc_reset);
+	}
 	// within select channel, we need to call pca954x_release_channel() after I2C use is done
 	if (mode < ssmn_mipi_mode_TEST_1280_720 ||mode == ssmn_mipi_mode_SENSOR_TEST_MODE) {
 		init_retry = 0;
@@ -309,9 +397,9 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 			goto err;
 		}
 
-		tc_mipi_bridge_dev_init(0); // 0: mipi output
+		tc_mipi_bridge_dev_init(&bridge_normal);
 	} else if ( mode == ssmn_mipi_mode_TEST_1280_720) {
-		tc_mipi_bridge_dev_init(1); // 1: mipi test output
+		tc_mipi_bridge_dev_init(&bridge_test);
 	} else if ( mode != ssmn_mipi_mode_INIT) { // I2C tests
 		if ( mode == ssmn_mipi_mode_I2C_TEST_3) {
 			// max9272 I2C test
@@ -367,7 +455,7 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 			}
 		}
 
-		tc_mipi_bridge_dev_init(1); // 1: mipi test output
+		tc_mipi_bridge_dev_init(&bridge_test);
 
 	}
 
@@ -376,12 +464,6 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 	mipi_csi2_dump_reg(mipi_csi2_info);
 
 	if (mipi_csi2_info) {
-		unsigned int i;
-
-		for (i=0;i<20;i++) {
-			mipi_reg = mipi_csi2_dphy_status(mipi_csi2_info);
-			//pr_debug("mipi_csi2 state reg: 0x%x\n", mipi_reg);
-		}
 
 		i = 0;
 
@@ -389,7 +471,7 @@ static int ssmn_mipi_init_mode(enum ssmn_mipi_frame_rate frame_rate,
 		mipi_reg = mipi_csi2_dphy_status(mipi_csi2_info);
 		while ((mipi_reg  != 0x300) && (i < 20)) {
 			mipi_reg = mipi_csi2_dphy_status(mipi_csi2_info);
-			//pr_debug("mipi_csi2 state reg: 0x%x\n", mipi_reg);
+			pr_debug("post mipi_csi2 state reg: 0x%x\n", mipi_reg);
 			i++;
 			msleep(10);
 		}
@@ -815,10 +897,7 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
 	u32 tgt_xclk;	/* target xclk */
 	u32 tgt_fps;	/* target frames per secound */
 	enum ssmn_mipi_frame_rate frame_rate;
-	void *mipi_csi2_info;
-
-	if(ssmn_mipi_data.on)
-		return 0;
+	pr_debug("%s\n", __FUNCTION__);
 
 	/* mclk */
 	tgt_xclk = ssmn_mipi_data.mclk;
@@ -840,17 +919,19 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
 	else
 		return -EINVAL; /* Only support 15fps or 30fps now. */
 
+	return 0;
+}
+
+static int mipi_csi2_off(void)
+{
+	void *mipi_csi2_info;
+	pr_debug("%s\n", __FUNCTION__);
 	mipi_csi2_info = mipi_csi2_get_info();
 
-	/* enable mipi csi2 */
-	if (mipi_csi2_info)
-		mipi_csi2_enable(mipi_csi2_info);
-	else {
-		printk(KERN_ERR "Fail to get mipi_csi2_info!\n");
-		return -EPERM;
-	}
+	/* disable mipi csi2 */
+	if (mipi_csi2_info && mipi_csi2_get_status(mipi_csi2_info))
+		mipi_csi2_disable(mipi_csi2_info);
 
-	ssmn_mipi_data.on = true;
 	return 0;
 }
 
@@ -862,19 +943,8 @@ static int ioctl_dev_init(struct v4l2_int_device *s)
  */
 static int ioctl_dev_exit(struct v4l2_int_device *s)
 {
-	void *mipi_csi2_info;
-
-	mipi_csi2_info = mipi_csi2_get_info();
-
-	/* disable mipi csi2 */
-	if (mipi_csi2_info)
-		if (mipi_csi2_get_status(mipi_csi2_info))
-			mipi_csi2_disable(mipi_csi2_info);
-
-	ssmn_mipi_data.on = false;
 	return 0;
 }
-
 /*!
  * This structure defines all the ioctls for this module and links them to the
  * enumeration.
@@ -928,7 +998,10 @@ static struct v4l2_int_device ssmn_mipi_int_device = {
 static int ssmn_mipi_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
+	int i;
 	struct device *dev = &client->dev;
+	u32 mipi_reg;
+	void *mipi_csi2_info;
 	int retval, init_retry;
 #if 0
 	u8 chip_id_high, chip_id_low;
@@ -1013,7 +1086,6 @@ static int ssmn_mipi_probe(struct i2c_client *client,
 			retval = -1;
 		}
 
-		tc_mipi_bridge_dev_init(0); // 0: mipi output
 	}
 	pca954x_release_channel();
 
@@ -1021,6 +1093,27 @@ static int ssmn_mipi_probe(struct i2c_client *client,
 	retval = v4l2_int_device_register(&ssmn_mipi_int_device);
 
 	add_ap0100_param((&client->dev));
+
+	mipi_csi2_info = mipi_csi2_get_info();
+
+	/* enable mipi csi2 */
+	if (!mipi_csi2_info) {
+		printk(KERN_ERR "Fail to get mipi_csi2_info!\n");
+		return -EPERM;
+	}
+	if (!mipi_csi2_get_status(mipi_csi2_info)) {
+		mipi_csi2_enable(mipi_csi2_info);
+	}
+	if (!mipi_csi2_get_status(mipi_csi2_info)) {
+		pr_err("Can not enable mipi csi2 driver!\n");
+		return -EPERM;
+	}
+	mipi_csi2_set_lanes(mipi_csi2_info);
+	mipi_csi2_reset(mipi_csi2_info);
+	for (i=0;i<20;i++) {
+		mipi_reg = mipi_csi2_dphy_status(mipi_csi2_info);
+		pr_debug("ioctl_dev_init state reg: 0x%x\n", mipi_reg);
+	}
 
 	printk("ssmn_mipi_probe done\n");
 	return retval;
@@ -1037,6 +1130,7 @@ error1:
  */
 static int ssmn_mipi_remove(struct i2c_client *client)
 {
+	mipi_csi2_off();
 	remove_ap0100_param(&client->dev);
 
 	v4l2_int_device_unregister(&ssmn_mipi_int_device);

@@ -26,6 +26,7 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/i2c.h>
+#include "max_ap0100_func.h"
 
 #ifdef pr_debug
 #undef pr_debug
@@ -39,86 +40,7 @@ static int tc_mipi_bridge_pos=0;
 
 struct i2c_client *tc_mipi_bridge_i2cclient = NULL;
 
-typedef struct MIPI_DATA {
-    unsigned char data_size;
-    short reg_addr;
-    long data;
-} MIPI_DATA_TYPE;
-
-MIPI_DATA_TYPE mipi_reg_mipi_test[] = {
-   {2, 0x00e0, 0x0000},
-   {2, 0x0002, 0x0001},
-   {2, 0x0002, 0x0000},
-
-   {2, 0x0016, 0x612c},
-   {2, 0x0018, 0x0613},
-
-   {2, 0x0006, 0x0000},
-
-   {4, 0x0140, 0x00000000},
-   {4, 0x0144, 0x00000000},
-   {4, 0x0148, 0x00000000},
-   {4, 0x014C, 0x00000001},
-   {4, 0x0150, 0x00000001},
-
-   {4, 0x0210, 0x00000900},
-   {4, 0x0214, 0x00000001},
-   {4, 0x0218, 0x00000400},
-   {4, 0x021C, 0x00000000},
-   {4, 0x0220, 0x00000001},
-   {4, 0x0224, 0x00002800},
-   {4, 0x0228, 0x00000000},
-   {4, 0x022C, 0x00000000},
-   {4, 0x0234, 0x00000007},
-   {4, 0x0238, 0x00000001},
-   {4, 0x0204, 0x00000001},
-
-   {4, 0x0518, 0x00000001},
-   {4, 0x0500, 0xA30080A3},
-
-   {2, 0x0008, 0x0001},
-   {2, 0x0050, 0x001e},
-   {2, 0x0022, 0x0A00},
-   {2, 0x00e0, 0x8000},
-   {2, 0x00e2, 0x0A00},
-   {2, 0x00e4, 0x058},
-};
-
-MIPI_DATA_TYPE mipi_reg_mipi_output[] = {
-   {2, 0x0002, 0x0001},
-   {2, 0x0002, 0x0000},
-   {2, 0x0016, 0x612c},
-   {2, 0x0018, 0x0613},
-
-   {2, 0x0006, 0x0104},
-   {2, 0x0008, 0x0060},
-   {2, 0x0022, 0x0A00},
-
-   {4, 0x0140, 0x00000000},
-   {4, 0x0144, 0x00000000},
-   {4, 0x0148, 0x00000000},
-   {4, 0x014C, 0x00000001},
-   {4, 0x0150, 0x00000001},
-
-   {4, 0x0210, 0x00000900},
-   {4, 0x0214, 0x00000001},
-   {4, 0x0218, 0x00000400},
-   {4, 0x021C, 0x00000000},
-   {4, 0x0220, 0x00000001},
-   {4, 0x0224, 0x00002800},
-   {4, 0x0228, 0x00000000},
-   {4, 0x022C, 0x00000000},
-   {4, 0x0234, 0x00000007},
-   {4, 0x0238, 0x00000001},
-   {4, 0x0204, 0x00000001},
-
-   {4, 0x0518, 0x00000001},
-   {4, 0x0500, 0xA30080A3},
-
-   {2, 0x0004, 0x0041},
-};
-
-MIPI_DATA_TYPE mipi_reg_parallel_output[] = {
+static MIPI_DATA_TYPE parallel_output[] = {
    {2, 0x0002, 0x0001},
    {2, 0x0002, 0x0000},
    {2, 0x0016, 0x70A2}, // 97.8Mhz
@@ -133,43 +55,9 @@ MIPI_DATA_TYPE mipi_reg_parallel_output[] = {
    {2, 0x0004, 0x8045},
 };
 
-MIPI_DATA_TYPE mipi_reg_mipi_test_for_parallel[] = {
-   {2, 0x00e0, 0x0000},
-   {2, 0x0002, 0x0001},
-   {2, 0x0002, 0x0000},
-
-   {2, 0x0016, 0x30CF},
-   {2, 0x0018, 0x0613},
-
-   {2, 0x0006, 0x0000},
-
-   {4, 0x0140, 0x00000000},
-   {4, 0x0144, 0x00000000},
-   {4, 0x0148, 0x00000000},
-   {4, 0x014C, 0x00000001},
-   {4, 0x0150, 0x00000001},
-
-   {4, 0x0210, 0x00001900},
-   {4, 0x0214, 0x00000003},
-   {4, 0x0218, 0x00001002},
-   {4, 0x021C, 0x00000000},
-   {4, 0x0220, 0x00000002},
-   {4, 0x0224, 0x00003e00},
-   {4, 0x0228, 0x00000007},
-   {4, 0x022C, 0x00000001},
-   {4, 0x0234, 0x00000007},
-   {4, 0x0238, 0x00000001},
-   {4, 0x0204, 0x00000001},
-
-   {4, 0x0518, 0x00000001},
-   {4, 0x0500, 0xA30080A3},
-
-   {2, 0x0008, 0x0001},
-   {2, 0x0050, 0x001e},
-   {2, 0x0022, 0x0A00},
-   {2, 0x00e0, 0x8200},
-   {2, 0x00e2, 0x0A00},
-   {2, 0x00e4, 0x0040},
+static const struct tc_mipi_bridge_platform parallel_output_normal = {
+	.write_test_pattern = false,
+	.regs = parallel_output,
 };
 
 static s32 tc_mipi_bridge_write_reg(u16 reg, u16 val)
@@ -257,7 +145,7 @@ static s32 tc_mipi_bridge_read_reg_4B(u16 reg, u32 val)
 }
 #endif
 
-static void write_color_bar(int mode)
+static void write_color_bar(void)
 {
 	int i,j;
 
@@ -286,17 +174,57 @@ static void write_color_bar(int mode)
 			tc_mipi_bridge_write_reg(0x00e8, 0xff7f);
 			}
    	}
-//	if (mode == 1)
-//		tc_mipi_bridge_write_reg(0x00e0, 0xc1df);
-//	else if (mode == 3)
-		tc_mipi_bridge_write_reg(0x00e0, 0xC2CF);
-
+	tc_mipi_bridge_write_reg(0x00e0, 0xC2CF);
 }
 
-// mode: 0: mipi output, 1: mipi test pattern output, 2: parallel output, 3: mipi test output for parallel
-s32 tc_mipi_bridge_dev_init(int mode)
+void tc_mipi_bridge_reset(void)
 {
-	int i, reg_size;
+	tc_mipi_bridge_write_reg(0x0002,0x0001);
+	tc_mipi_bridge_write_reg(0x0002,0x0000);
+}
+EXPORT_SYMBOL(tc_mipi_bridge_reset);
+
+void tc_mipi_bridge_stop(void)
+{
+	u16 val;
+
+	//Set FrmStop
+	tc_mipi_bridge_read_reg(0x0032, &val);
+	val |= 1 << 15;
+	tc_mipi_bridge_write_reg(0x0032, val);
+	msleep(1000);
+
+	//Clear PP_En
+	tc_mipi_bridge_read_reg(0x0004, &val);
+	val &= ~(1 << 6);
+	tc_mipi_bridge_write_reg(0x0004,val);
+
+	//Set RstPtr
+	tc_mipi_bridge_read_reg(0x0032, &val);
+	val |= 1 << 14;
+	tc_mipi_bridge_write_reg(0x0032, val);
+}
+EXPORT_SYMBOL(tc_mipi_bridge_stop);
+
+void tc_mipi_bridge_start(void)
+{
+	u16 val;
+	//Clear FrmStop and RstPtr
+	tc_mipi_bridge_read_reg(0x0032, &val);
+	val &= ~(1 << 15);
+	val &= ~(1 << 14);
+	tc_mipi_bridge_write_reg(0x0032, val);
+	//Set PP_En
+	tc_mipi_bridge_read_reg(0x0004, &val);
+	val |= (1 << 6);
+	tc_mipi_bridge_write_reg(0x0004, val);
+	msleep(1000);
+}
+EXPORT_SYMBOL(tc_mipi_bridge_start);
+
+// mode: 0: mipi output, 1: mipi test pattern output, 2: parallel output, 3: mipi test output for parallel
+s32 tc_mipi_bridge_dev_init(const struct tc_mipi_bridge_platform* data)
+{
 	u16  val=0;
 	MIPI_DATA_TYPE *mipi_reg_ptr;
 
@@ -310,42 +238,17 @@ s32 tc_mipi_bridge_dev_init(int mode)
 		pr_debug("mipi bridge found = 0x%x\n", val);
 	}
 
-	switch (mode) {
-		case 0:
-			reg_size = sizeof(mipi_reg_mipi_output) / sizeof(MIPI_DATA_TYPE);
-			mipi_reg_ptr = mipi_reg_mipi_output;
-			pr_debug("mipi bridge init as mipi output\n");
-			break;
-		case 1:
-			reg_size = sizeof(mipi_reg_mipi_test) / sizeof(MIPI_DATA_TYPE);
-			mipi_reg_ptr = mipi_reg_mipi_test;
-			pr_debug("mipi bridge init as mipi test pattern output\n");
-			break;
-		case 2:
-			reg_size = sizeof(mipi_reg_parallel_output) / sizeof(MIPI_DATA_TYPE);
-			mipi_reg_ptr = mipi_reg_parallel_output;
-			pr_debug("mipi bridge init as parallel output\n");
-			break;
-		case 3:
-			reg_size = sizeof(mipi_reg_mipi_test_for_parallel) / sizeof(MIPI_DATA_TYPE);
-			mipi_reg_ptr = mipi_reg_mipi_test_for_parallel;
-			pr_debug("mipi bridge init as mipi test pattern for parallel\n");
-			break;
-		default:
-			pr_debug("mipi bridge init mode error : %d\n", mode);
-			return -1;
-			break;
-	}
-
-	for (i=0; i<reg_size ; i++) {
-		if (mipi_reg_ptr[i].data_size == 2)
-			tc_mipi_bridge_write_reg(mipi_reg_ptr[i].reg_addr, mipi_reg_ptr[i].data);
+	mipi_reg_ptr = data->regs;
+	while (mipi_reg_ptr && mipi_reg_ptr->data_size != 0) {
+		if (mipi_reg_ptr->data_size == 2)
+			tc_mipi_bridge_write_reg(mipi_reg_ptr->reg_addr, mipi_reg_ptr->data);
 		else
-			tc_mipi_bridge_write_reg_4B(mipi_reg_ptr[i].reg_addr, mipi_reg_ptr[i].data);
+			tc_mipi_bridge_write_reg_4B(mipi_reg_ptr->reg_addr, mipi_reg_ptr->data);
+		mipi_reg_ptr++;
 	}
 
-	if ( mode == 1 || mode == 3)
-		write_color_bar(mode);
+	if (data->write_test_pattern)
+		write_color_bar();
 
 	pr_debug("mipi bridge init done\n");
 	return 0;
@@ -376,7 +279,7 @@ static int tc_mipi_bridge_probe(struct i2c_client *client,
 
 	// if this device is at position 0, it should be configured as parallel output
 	if (tc_mipi_bridge_pos == 0)
-		tc_mipi_bridge_dev_init(2);
+		tc_mipi_bridge_dev_init(&parallel_output_normal);
 
 	pr_debug("tc_mipi_bridge_probe done: pos = %d\n", tc_mipi_bridge_pos);
 

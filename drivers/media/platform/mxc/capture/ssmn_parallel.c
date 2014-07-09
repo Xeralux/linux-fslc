@@ -18,8 +18,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#define DEBUG
-
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -135,6 +133,91 @@ static struct regulator *analog_regulator;
 static struct regulator *gpo_regulator;
 static struct regmap *gpr;
 
+static MIPI_DATA_TYPE bridge_normal_regs[] = {
+   {2, 0x00e0, 0x0100},
+
+   {2, 0x0016, 0x612c},
+   {2, 0x0018, 0x0613},
+
+   {2, 0x0006, 0x0104},
+   {2, 0x0008, 0x0060},
+   {2, 0x0022, 0x0A00},
+
+   {4, 0x0140, 0x00000000},
+   {4, 0x0144, 0x00000000},
+   {4, 0x0148, 0x00000000},
+   {4, 0x014C, 0x00000001},
+   {4, 0x0150, 0x00000001},
+
+   {4, 0x0210, 0x00000900},
+   {4, 0x0214, 0x00000001},
+   {4, 0x0218, 0x00000400},
+   {4, 0x021C, 0x00000000},
+   {4, 0x0220, 0x00000001},
+   {4, 0x0224, 0x00002800},
+   {4, 0x0228, 0x00000000},
+   {4, 0x022C, 0x00000000},
+   {4, 0x0234, 0x00000007},
+   {4, 0x0238, 0x00000001},
+   {4, 0x0204, 0x00000001},
+
+   {4, 0x0518, 0x00000001},
+   {4, 0x0500, 0xA30080A3},
+
+   {2, 0x0032, 0x0000},
+   {2, 0x0004, 0x0041},
+   {0,0,0},
+};
+static const struct tc_mipi_bridge_platform bridge_normal = {
+	.write_test_pattern = false,
+	.regs = bridge_normal_regs,
+};
+
+static MIPI_DATA_TYPE bridge_test_regs[] = {
+   {2, 0x00e0, 0x0000},
+
+   {2, 0x0016, 0x612c},
+   {2, 0x0018, 0x0613},
+
+   {2, 0x0006, 0x0000},
+
+   {4, 0x0140, 0x00000000},
+   {4, 0x0144, 0x00000000},
+   {4, 0x0148, 0x00000000},
+   {4, 0x014C, 0x00000001},
+   {4, 0x0150, 0x00000001},
+
+   {4, 0x0210, 0x00000900},
+   {4, 0x0214, 0x00000001},
+   {4, 0x0218, 0x00000400},
+   {4, 0x021C, 0x00000000},
+   {4, 0x0220, 0x00000001},
+   {4, 0x0224, 0x00002800},
+   {4, 0x0228, 0x00000000},
+   {4, 0x022C, 0x00000000},
+   {4, 0x0234, 0x00000007},
+   {4, 0x0238, 0x00000001},
+   {4, 0x0204, 0x00000001},
+
+   {4, 0x0518, 0x00000001},
+   {4, 0x0500, 0xA30080A3},
+
+   {2, 0x0008, 0x0001},
+   {2, 0x0050, 0x001e},
+   {2, 0x0022, 0x0A00},
+   {2, 0x00e0, 0x8000},
+   {2, 0x00e2, 0x0A00},
+   {2, 0x00e4, 0x058},
+
+   {2, 0x0032, 0x0000},
+   {0,0,0},
+};
+
+static struct tc_mipi_bridge_platform bridge_test = {
+	.write_test_pattern = true,
+	.regs = bridge_test_regs,
+};
+
 static int ssmn_parallel_probe(struct i2c_client *adapter,
                                const struct i2c_device_id *device_id);
 static int ssmn_parallel_remove(struct i2c_client *client);
@@ -158,7 +241,22 @@ static void ssmn_parallel_powerdown(int powerdown)
 			regmap_update_bits(gpr,IOMUXC_GPR13,
 					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0);
 	}
-	//mdelay(5);
+	msleep(1100);
+}
+
+static void ssmn_csi_powerdown(int powerdown)
+{
+
+	if (powerdown) {
+		if (of_machine_is_compatible("fsl,imx6dl"))
+			regmap_update_bits(gpr,IOMUXC_GPR13,
+					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_MIPI_CSI0);
+	}
+	else {
+		if (of_machine_is_compatible("fsl,imx6dl"))
+			regmap_update_bits(gpr,IOMUXC_GPR13,
+					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0);
+	}
 	msleep(1100);
 }
 
@@ -209,7 +307,7 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 	ssmn_parallel_data.pix.height = ssmn_parallel_mode_info_data[frame_rate][mode].height;
 
 	pca954x_select_channel(I2C_MUX_CHAN);
-	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+	tc_mipi_bridge_stop();
 	// within select channel, we need to call pca954x_release_channel() after I2C use is done
 	if (mode < ssmn_parallel_mode_TEST_1280_720  || mode == ssmn_parallel_mode_SENSOR_TEST_MODE) {
 		init_retry = 0;
@@ -228,9 +326,9 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 			retval = -1;
 		}
 
-		tc_mipi_bridge_dev_init(0); // 0: mipi output
+		tc_mipi_bridge_dev_init(&bridge_normal);
 	} else if ( mode == ssmn_parallel_mode_TEST_1280_720) {
-		tc_mipi_bridge_dev_init(3); // 3: mipi test output for parallel
+		tc_mipi_bridge_dev_init(&bridge_test);
 	}else if ( mode != ssmn_parallel_mode_INIT) { // I2C tests
 		//ap0100_hw_reset();
 
@@ -274,8 +372,7 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 			}
 		}
 
-		tc_mipi_bridge_dev_init(3); // 3: mipi test output for parallel
-
+		tc_mipi_bridge_dev_init(&bridge_test);
 	}
 
 	pca954x_release_channel();
@@ -859,8 +956,6 @@ static int ssmn_parallel_probe(struct i2c_client *client,
 		pr_err("parallel probe: init mode failed after %d retries\n", init_retry);
 		retval = -1;
 	}
-
-	tc_mipi_bridge_dev_init(3); // 3: mipi test pattern for parallel
 
 	pca954x_release_channel();
 
