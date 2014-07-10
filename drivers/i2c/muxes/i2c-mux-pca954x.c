@@ -43,12 +43,12 @@
 #include <linux/i2c-mux.h>
 #include <linux/of.h>
 #include <linux/of_i2c.h>
-
+#include <linux/kernel.h>
 #include <linux/i2c/pca954x.h>
 
 #define PCA954X_MAX_NCHANS 8
 
-struct mutex chan_lock;
+
 
 enum pca_type {
 	pca_9540,
@@ -64,7 +64,8 @@ enum pca_type {
 struct pca954x {
 	enum pca_type type;
 	struct i2c_adapter *virt_adaps[PCA954X_MAX_NCHANS];
-
+	bool deselect_on_exit[PCA954X_MAX_NCHANS];
+	struct mutex lock;
 	u8 last_chan;		/* last register value */
 #ifdef CONFIG_OF
 	struct pca954x_platform_data of_pdata;
@@ -80,9 +81,6 @@ struct chip_desc {
 		pca954x_isswi
 	} muxtype;
 };
-
-static struct i2c_client *client_p = NULL;
-static struct i2c_adapter *adap_p = NULL;
 
 /* Provide specs for the PCA954x types we know about */
 static const struct chip_desc chips[] = {
@@ -234,6 +232,8 @@ static int pca954x_select_chan(struct i2c_adapter *adap,
 	u8 regval;
 	int ret = 0;
 
+	mutex_lock(&data->lock);
+
 	/* we make switches look like muxes, not sure how to be smarter */
 	if (chip->muxtype == pca954x_ismux)
 		regval = chan | chip->enable;
@@ -241,11 +241,11 @@ static int pca954x_select_chan(struct i2c_adapter *adap,
 		regval = 1 << chan;
 
 	/* Only select the channel if its different from the last channel */
-	//if (data->last_chan != regval) {
+	if (data->last_chan != regval) {
 		//printk("pca954x_select_chan: %d\n", regval);
 		ret = pca954x_reg_write(adap, client, regval);
 		data->last_chan = regval;
-	//}
+	}
 
 	return ret;
 }
@@ -253,43 +253,17 @@ static int pca954x_select_chan(struct i2c_adapter *adap,
 static int pca954x_deselect_mux(struct i2c_adapter *adap,
 				void *client, u32 chan)
 {
+	int retval = 0;
 	struct pca954x *data = i2c_get_clientdata(client);
-
-	/* Deselect active channel */
-	data->last_chan = 0;
-	return pca954x_reg_write(adap, client, data->last_chan);
+	int index = (adap - data->virt_adaps[0])/sizeof(struct i2c_adapter);
+	if(data->deselect_on_exit[index]) {
+		/* Deselect active channel */
+		data->last_chan = 0;
+		retval = pca954x_reg_write(adap, client, data->last_chan);
+	}
+	mutex_unlock(&data->lock);
+	return retval;
 }
-
-/*!
- * This function is called to select the i2c mux channel.
- * pca954x_release_channel (void) should be called in pair with this function
- *
- * @param	int channel
- */
-void pca954x_select_channel (int chan)
-{
-	mutex_lock(&chan_lock);
-
-	if (adap_p != NULL && client_p != NULL) {
-		pca954x_select_chan(adap_p, client_p, chan);
-	} else
-		printk("pca954x driver not loaded yet, can't select channel %d\n", chan+1);
-}
-
-EXPORT_SYMBOL(pca954x_select_channel);
-
-/*!
- * This function is to release the lock.
- *
- * @param	void
- */
-void pca954x_release_channel (void)
-{
-	mutex_unlock(&chan_lock);
-}
-
-EXPORT_SYMBOL(pca954x_release_channel);
-
 /*
  * I2C init/probing/exit functions
  */
@@ -302,7 +276,7 @@ static int pca954x_probe(struct i2c_client *client,
 	struct pca954x *data;
 	int ret = -ENODEV;
 
-	printk("%s: probing I2C MUX adapater ...\n", __func__);
+	printk("%s: probing I2C MUX adapter ...\n", __func__);
 
 	if (!i2c_check_functionality(adap, I2C_FUNC_SMBUS_BYTE))
 		goto err;
@@ -341,6 +315,7 @@ static int pca954x_probe(struct i2c_client *client,
 		data->type = id->driver_data;
 
 	data->last_chan = 0;		   /* force the first selection */
+	mutex_init(&data->lock);
 
 	/* Now create an adapter for each channel */
 	for (num = 0; num < chips[data->type].nchans; num++) {
@@ -355,12 +330,11 @@ static int pca954x_probe(struct i2c_client *client,
 				/* discard unconfigured channels */
 				break;
 		}
-
+		data->deselect_on_exit[num] = (pdata && pdata->modes[num].deselect_on_exit);
 		data->virt_adaps[num] =
 			i2c_add_mux_adapter(adap, &client->dev, client,
 				force, num, class, pca954x_select_chan,
-				(pdata && pdata->modes[num].deselect_on_exit)
-					? pca954x_deselect_mux : NULL);
+				pca954x_deselect_mux);
 
 		if (data->virt_adaps[num] == NULL) {
 			ret = -ENODEV;
@@ -376,8 +350,6 @@ static int pca954x_probe(struct i2c_client *client,
 		 num, chips[data->type].muxtype == pca954x_ismux
 				? "mux" : "switch", client->name);
 
-	client_p = client;
-	adap_p = adap;
 	printk("%s: probing done\n", __func__);
 
 	return 0;
@@ -433,7 +405,6 @@ static struct i2c_driver pca954x_driver = {
 
 static int __init pca954x_init(void)
 {
-	mutex_init(&chan_lock);
 	return i2c_add_driver(&pca954x_driver);
 }
 
