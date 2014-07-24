@@ -16,11 +16,6 @@
 #ifndef __max_ap0100_func_h__
 #define __max_ap0100_func_h__
 
-#ifdef pr_debug
-#undef pr_debug
-#define pr_debug(fmt, ...) printk(fmt, ##__VA_ARGS__);
-#endif
-
 #include "max927x.h"
 // times to retry when init failed
 #define INIT_RETRY (5)
@@ -79,7 +74,7 @@ static s32 ap0100_hw_reset(void)
 	retval |= max9271_write_reg(0x0F, val);
 
 	if (retval) {
-		pr_debug("ap0100 hw reset failed \n");
+		pr_err("ap0100 hw reset failed \n");
 		return -1;
 	}
 
@@ -124,9 +119,9 @@ static s32 max927x_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fai
 	reg = 0x0A; // a register for testing
 	for (i=0; i<test_num; i++) {
 		if ( i % (test_num / 100) == 0) {
-			pr_debug("test in progress : %d%%, w_retry_cnt = %d, r_retry_cnt = %d\n", \
+			pr_notice("test in progress : %d%%, w_retry_cnt = %d, r_retry_cnt = %d\n", \
 				i / (test_num / 100) , w_retry_cnt, r_retry_cnt);
-			pr_debug("                         w_fail_cnt = %d,  r_fail_cnt = %d\n",  \
+			pr_notice("                         w_fail_cnt = %d,  r_fail_cnt = %d\n",  \
 				w_fail_cnt, r_fail_cnt);
 		}
 
@@ -160,7 +155,7 @@ static s32 max927x_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fai
 
 		if (retry_cnt == TEST_RETRY_NUM || val != w_val) {
 			r_fail_cnt++;
-			pr_debug("failed: test_num = %d, r_retry_cnt = %d, write = 0x%x, read = 0x%x\n", test_num, retry_cnt, w_val, val);
+			pr_notice("failed: test_num = %d, r_retry_cnt = %d, write = 0x%x, read = 0x%x\n", test_num, retry_cnt, w_val, val);
 		}
 
 		retry_cnt = 0;
@@ -191,7 +186,7 @@ static s32 max927x_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fai
 
 		if (retry_cnt == TEST_RETRY_NUM || val != w_val) {
 			r_fail_cnt++;
-			pr_debug("failed: test_num = %d, r_retry_cnt = %d, write = 0x%x, read = 0x%x\n", test_num, retry_cnt, w_val, val);
+			pr_notice("failed: test_num = %d, r_retry_cnt = %d, write = 0x%x, read = 0x%x\n", test_num, retry_cnt, w_val, val);
 		}
 
 

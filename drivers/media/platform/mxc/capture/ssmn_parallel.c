@@ -43,11 +43,6 @@
 #include <linux/mfd/syscon/imx6q-iomuxc-gpr.h>
 #include <linux/regmap.h>
 
-#ifdef pr_debug
-#undef pr_debug
-#define pr_debug(fmt, ...) printk(fmt, ##__VA_ARGS__);
-#endif
-
 #define SSMN_PARALLEL_VOLTAGE_ANALOG               2800000
 #define SSMN_PARALLEL_VOLTAGE_DIGITAL_CORE         1500000
 #define SSMN_PARALLEL_VOLTAGE_DIGITAL_IO           1800000
@@ -333,12 +328,12 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 		//ap0100_hw_reset();
 
 		// max9272 I2C test
-/*		pr_debug("max9272 i2c test running ...... \n");
+/*		pr_notice("max9272 i2c test running ...... \n");
 		ret = max9272_I2C_test(i2c_test_cycles, &i2c_w_fail_cnt, &i2c_r_fail_cnt);
 		if ( ret == 0) {
-			pr_debug("max9272 i2c test passed !, total test count = %d\n", i2c_test_cycles);
+			pr_notice("max9272 i2c test passed !, total test count = %d\n", i2c_test_cycles);
 		} else {
-			pr_debug("max9272 i2c test FAILED!write failure count = %d, read failure count = %d, total test count = %d\n",
+			pr_notice("max9272 i2c test FAILED!write failure count = %d, read failure count = %d, total test count = %d\n",
 				i2c_w_fail_cnt,  i2c_r_fail_cnt,  i2c_test_cycles);
 			pca954x_release_channel();
 			return -1;
@@ -346,26 +341,26 @@ static int ssmn_parallel_init_mode(enum ssmn_parallel_frame_rate frame_rate,
 */
 		if (mode == ssmn_parallel_mode_I2C_TEST_1) {
 			// max9271 I2C test
-			pr_debug("max9271 i2c test running ...... \n");
+			pr_notice("max9271 i2c test running ...... \n");
 			ret = max9271_I2C_test(i2c_test_cycles, &i2c_w_retry_cnt, & i2c_r_retry_cnt, &i2c_w_fail_cnt, &i2c_r_fail_cnt);
 			if ( ret == 0) {
-				pr_debug("max9271 i2c test passed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
+				pr_notice("max9271 i2c test passed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
 					i2c_test_cycles, i2c_w_retry_cnt, i2c_r_retry_cnt, i2c_w_fail_cnt, i2c_r_fail_cnt);
 			} else {
-				pr_debug("max9271 i2c test failed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
+				pr_notice("max9271 i2c test failed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
 					i2c_test_cycles, i2c_w_retry_cnt, i2c_r_retry_cnt, i2c_w_fail_cnt, i2c_r_fail_cnt);
 				pca954x_release_channel();
 				return -1;
 			}
 		} else if (mode == ssmn_parallel_mode_I2C_TEST_2) {
 			// ap0100 I2C test
-			pr_debug("AP0100  i2c test running ...... \n");
+			pr_notice("AP0100  i2c test running ...... \n");
 			ret = ap0100_m034_I2C_test(i2c_test_cycles, &i2c_w_retry_cnt, & i2c_r_retry_cnt, &i2c_w_fail_cnt, &i2c_r_fail_cnt);
 			if (ret == 0) {
-				pr_debug("ap0100 i2c test passed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
+				pr_notice("ap0100 i2c test passed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
 					i2c_test_cycles, i2c_w_retry_cnt, i2c_r_retry_cnt, i2c_w_fail_cnt, i2c_r_fail_cnt);
 			} else {
-				pr_debug("ap0100 i2c test failed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
+				pr_notice("ap0100 i2c test failed !, total test count = %d, w_retry_cnt = %d, r_retry_cnt = %d, w_failure = %d, r_failure = %d\n", \
 					i2c_test_cycles, i2c_w_retry_cnt, i2c_r_retry_cnt, i2c_w_fail_cnt, i2c_r_fail_cnt);
 				pca954x_release_channel();
 				return -1;
@@ -489,7 +484,7 @@ static int ioctl_g_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 		break;
 
 	default:
-		pr_debug("   type is unknown - %d\n", a->type);
+		pr_err("   type is unknown - %d\n", a->type);
 		ret = -EINVAL;
 		break;
 	}
@@ -563,14 +558,14 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 	case V4L2_BUF_TYPE_VBI_OUTPUT:
 	case V4L2_BUF_TYPE_SLICED_VBI_CAPTURE:
 	case V4L2_BUF_TYPE_SLICED_VBI_OUTPUT:
-		pr_debug("   type is not " \
+		pr_err("   type is not " \
 			"V4L2_BUF_TYPE_VIDEO_CAPTURE but %d\n",
 			a->type);
 		ret = -EINVAL;
 		break;
 
 	default:
-		pr_debug("   type is unknown - %d\n", a->type);
+		pr_err("   type is unknown - %d\n", a->type);
 		ret = -EINVAL;
 		break;
 	}

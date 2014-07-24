@@ -28,11 +28,6 @@
 #include <linux/i2c.h>
 #include "max_ap0100_func.h"
 
-#ifdef pr_debug
-#undef pr_debug
-#define pr_debug(fmt, ...) printk(fmt, ##__VA_ARGS__);
-#endif
-
 // Test mode from Toshiba bridge chip on camera daughter-board
 //#define MIPI_BRIDGE_TEST_MODE
 

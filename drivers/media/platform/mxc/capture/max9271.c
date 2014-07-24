@@ -30,11 +30,6 @@
 
 #define TEST_RETRY_NUM (5)
 
-#ifdef pr_debug
-#undef pr_debug
-#define pr_debug(fmt, ...) printk(fmt, ##__VA_ARGS__);
-#endif
-
 struct i2c_client *max9271_i2cclient = NULL;
 
 s32 max9271_write_reg(u8 reg, u8 val)
@@ -49,14 +44,14 @@ s32 max9271_write_reg(u8 reg, u8 val)
 	au8Buf[1] = val;
 
 	if ((err = i2c_master_send(max9271_i2cclient, au8Buf, 2)) < 0) {
-		pr_debug("%s:write reg error:reg=%x,val=%x,err=%d\n",
+		pr_err("%s:write reg error:reg=%x,val=%x,err=%d\n",
 			__func__, reg, val, err);
 		return -1;
 	}
 	mdelay(10);
 	err = max9271_read_reg(reg,&check);
 	if(err == 0 && check != val) {
-		pr_debug("%s:check error:reg=%x,val=%x,check=%x\n", __func__, reg, val,
+		pr_err("%s:check error:reg=%x,val=%x,check=%x\n", __func__, reg, val,
 					check);
 		return -1;
 	}
@@ -75,13 +70,13 @@ s32 max9271_read_reg(u8 reg, u8 *val)
 	au8RegBuf[0] = reg;
 
 	if (1 != (err = i2c_master_send(max9271_i2cclient, au8RegBuf, 1))) {
-		pr_debug("%s:write reg error:reg=%x,err=%d\n",
+		pr_err("%s:write reg error:reg=%x,err=%d\n",
 				__func__, reg,err);
 		return -1;
 	}
 
 	if (1 != (err = i2c_master_recv(max9271_i2cclient, au8RdBuf, 1))) {
-		pr_debug("%s:read reg error:reg=%x,val=%x,err=%d\n", __func__, reg, au8RdBuf[0], 
+		pr_err("%s:read reg error:reg=%x,val=%x,err=%d\n", __func__, reg, au8RdBuf[0],
 					err);
 		return -1;
 	}
@@ -110,9 +105,9 @@ s32 max9271_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fail, int 
 	reg = 0x0A; // a register for testing
 	for (i=0; i<test_num; i++) {
 		if ( i % (test_num / 100) == 0) {
-			pr_debug("test in progress : %d%%, w_retry_cnt = %d, r_retry_cnt = %d\n", \
+			pr_notice("test in progress : %d%%, w_retry_cnt = %d, r_retry_cnt = %d\n", \
 				i / (test_num / 100) , w_retry_cnt, r_retry_cnt);
-			pr_debug("                         w_fail_cnt = %d,  r_fail_cnt = %d\n",  \
+			pr_notice("                         w_fail_cnt = %d,  r_fail_cnt = %d\n",  \
 				w_fail_cnt, r_fail_cnt);
 		}
 
@@ -145,7 +140,7 @@ s32 max9271_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fail, int 
 
 		if (retry_cnt == TEST_RETRY_NUM || val != w_val) {
 			r_fail_cnt++;
-			pr_debug("failed: test_num = %d, r_retry_cnt = %d, write = 0x%x, read = 0x%x\n", test_num, retry_cnt, w_val, val);
+			pr_notice("failed: test_num = %d, r_retry_cnt = %d, write = 0x%x, read = 0x%x\n", test_num, retry_cnt, w_val, val);
 		}
 	}
 

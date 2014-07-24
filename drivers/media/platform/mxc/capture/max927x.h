@@ -14,12 +14,6 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#ifdef pr_debug
-#undef pr_debug
-#define pr_debug(fmt, ...) printk(fmt, ##__VA_ARGS__);
-#endif
-
-
 extern s32 max9271_read_reg(u8 reg, u8 *val);
 extern s32 max9271_write_reg(u8 reg, u8 val);
 extern s32 max9272_read_reg(u8 reg, u8 *val);
@@ -140,7 +134,7 @@ static s32 max9271_enable(void)
 //	retval = max9271_write_reg(0x04, 0x87);
 
 	if (retval) {
-		pr_debug("max9271 enable failed \n");
+		pr_err("max9271 enable failed \n");
 		return -1;
 	}
 
@@ -206,7 +200,7 @@ static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset)
 	if (pwdn == NULL || tc_reset == NULL)
 		return -1;
 
-	pr_debug("power cycle the camera\n");
+	pr_notice("power cycle the camera\n");
 
 	// reset toshiba chip & max9272
 	tc_reset(1);
@@ -306,11 +300,11 @@ static s32 max927x_init(void (*pwdn)(int powerdown), void (*tc_reset)(int reset)
 	retval |= max9272_write_reg(0x0d, max927x_i2c & ~(1 << MAX927X_REG_0D_I2CLOCACK_SHIFT));
 
 	if (retval) {
-		pr_debug("max927x init failed \n");
+		pr_err("max927x init failed \n");
 		return -1;
 	}
 
-	pr_debug("max927x init done \n");
+	pr_notice("max927x init done \n");
 
 	return retval;
 }

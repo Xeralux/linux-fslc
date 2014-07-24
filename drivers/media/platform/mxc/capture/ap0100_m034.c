@@ -31,11 +31,6 @@
 
 #define INIT_BUF_MAX (256)
 
-#ifdef pr_debug
-#undef pr_debug
-#define pr_debug(fmt, ...) printk(fmt, ##__VA_ARGS__);
-#endif
-
 // Ap0100 program is stored in the on-board flash
 #define PROG_IN_FLASH
 #define I2C_RETRIES (5)
@@ -812,15 +807,15 @@ s32 ap0100_m034_sensor_init(int mode)
 		} else // normal mode
 			val = ap0100_m034_test_mode(0);
 		if (val == 0) {
-			pr_debug("ap0100 init OK, mode = %d\n", mode);
+			pr_notice("ap0100 init OK, mode = %d\n", mode);
 			ap0100_cur_mode = mode;
 			ap0100_in_wdr_mode = 1;
 		} else {
-			pr_debug("ap0100 init failed!!\n");
+			pr_err("ap0100 init failed!!\n");
 			return -1;
 		}
 	} else {
-		pr_debug("ap0100 init failed!!\n");
+		pr_err("ap0100 init failed!!\n");
 		return -1;
 	}
 
@@ -894,7 +889,7 @@ s32 ap0100_m034_sensor_set_cmd(int cmd)
 			break;
 		default:
 			ap0100_cmd_reg[1].data = 1;
-			pr_debug("ap0100 set cmd : cmd not supported \n");
+			pr_err("ap0100 set cmd : cmd not supported \n");
 			return -1;
 			break;
 	}
@@ -918,12 +913,12 @@ s32 ap0100_m034_sensor_set_cmd(int cmd)
 			
 		pr_debug("ap0100 set cmd OK\n");
 	} else {
-		pr_debug("ap0100 set cmd failed!!\n");
+		pr_err("ap0100 set cmd failed!!\n");
 	}
 	
 	return val;
 #else
-	pr_debug("ap0100 host mode doesn't support set cmd !! \n");
+	pr_err("ap0100 host mode doesn't support set cmd !! \n");
 	return -1;
 #endif
 
@@ -981,9 +976,9 @@ s32 ap0100_m034_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fail, 
 	reg = 0xCA90;  // a register for testing
 	for (i=0; i<test_num; i++) {
 		if ( i % (test_num / 100) == 0) {
-			pr_debug("test in progress : %d%%, w_retry_cnt = %d, r_retry_cnt = %d\n", \
+			pr_notice("test in progress : %d%%, w_retry_cnt = %d, r_retry_cnt = %d\n", \
 				i / (test_num / 100) , w_retry_cnt, r_retry_cnt);
-			pr_debug("                         w_fail_cnt = %d,  r_fail_cnt = %d\n",  \
+			pr_notice("                         w_fail_cnt = %d,  r_fail_cnt = %d\n",  \
 				w_fail_cnt, r_fail_cnt);
 		}
 
@@ -1015,7 +1010,7 @@ s32 ap0100_m034_I2C_test(int test_num, int *w_retry, int *r_retry, int *w_fail, 
 		r_retry_cnt += retry_cnt;
 		if (retry_cnt == TEST_RETRY_NUM || val != w_val) {
 			r_fail_cnt++;
-			pr_debug("failed: i = %d, r_retry_cnt = %d, write = 0x%x, read = 0x%x\n", i, retry_cnt, w_val, val);
+			pr_notice("failed: i = %d, r_retry_cnt = %d, write = 0x%x, read = 0x%x\n", i, retry_cnt, w_val, val);
 		}
 	}
 
