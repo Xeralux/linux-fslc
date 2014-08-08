@@ -177,7 +177,10 @@ static int pca954x_get_ofdata(struct i2c_client *client,
 		ret = of_property_read_u32(anode, "reg", &val);
 		if (ret != 0)
 			continue;
+
 		pdata->modes[num].adap_id = 0;	/* get adapter id */
+		of_property_read_u32(anode,"nr", &pdata->modes[num].adap_id);
+
 		pdata->modes[num].class = 0;	/* classs always 0 */
 		pdata->modes[num].deselect_on_exit =
 			of_property_read_bool(anode, "nxp,deselect-on-exit");
