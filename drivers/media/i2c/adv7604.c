@@ -786,6 +786,8 @@ static const struct adv7604_format_info adv7604_formats[] = {
 };
 
 static const struct adv7604_format_info adv7611_formats[] = {
+	{ V4L2_MBUS_FMT_UYVY8_2X8, ADV7604_OP_CH_SEL_RBG, false, false,
+	  ADV7604_OP_MODE_SEL_SDR_422 | ADV7604_OP_FORMAT_SEL_8BIT },
 	{ V4L2_MBUS_FMT_RGB888_1X24, ADV7604_OP_CH_SEL_RGB, true, false,
 	  ADV7604_OP_MODE_SEL_SDR_444 | ADV7604_OP_FORMAT_SEL_8BIT },
 	{ V4L2_MBUS_FMT_YUYV8_2X8, ADV7604_OP_CH_SEL_RGB, false, false,
