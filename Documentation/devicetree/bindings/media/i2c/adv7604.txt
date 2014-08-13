@@ -44,6 +44,16 @@ Optional Properties:
   - reg-test: Register address for the test page.
   - reg-cp: Register address for the cp page.
   - reg-vdp: Register address for the vdp page.
+  - default-input: The inputs are numbered as follows: 
+
+  Input		ADV76XX
+------------------------------------------------------------
+  HDMI A		0
+  HDMI B		1
+  HDMI C		2
+  HDMI D		3
+  VGA RGB		4
+  VGA COMP	5
 
 Optional Endpoint Properties:
 

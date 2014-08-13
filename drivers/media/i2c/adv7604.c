@@ -2870,6 +2870,9 @@ static int adv7604_parse_dt(struct adv7604_state *state)
 	state->pdata.disable_pwrdnb = 0;
 	state->pdata.disable_cable_det_rst = 0;
 	state->pdata.default_input = -1;
+	of_property_read_u32(np,"default-input" ,
+			&state->pdata.default_input);
+
 	state->pdata.blank_data = 1;
 	state->pdata.alt_data_sat = 1;
 	state->pdata.op_format_mode_sel = ADV7604_OP_FORMAT_MODE0;
