@@ -181,6 +181,7 @@ static bool adv7604_has_afe(struct adv7604_state *state)
 
 /* Supported CEA and DMT timings */
 static const struct v4l2_dv_timings adv7604_timings[] = {
+	V4L2_DV_BT_CEA_1280X720P30,
 	V4L2_DV_BT_CEA_720X480P59_94,
 	V4L2_DV_BT_CEA_720X576P50,
 	V4L2_DV_BT_CEA_1280X720P24,
@@ -295,6 +296,7 @@ static const struct adv7604_video_standards adv7604_prim_mode_gr[] = {
 
 /* sorted by number of lines */
 static const struct adv7604_video_standards adv7604_prim_mode_hdmi_comp[] = {
+	{ V4L2_DV_BT_CEA_1280X720P30, 0x13, 0x02 },
 	{ V4L2_DV_BT_CEA_720X480P59_94, 0x0a, 0x00 },
 	{ V4L2_DV_BT_CEA_720X576P50, 0x0b, 0x00 },
 	{ V4L2_DV_BT_CEA_1280X720P50, 0x13, 0x01 },
