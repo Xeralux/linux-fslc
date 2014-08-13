@@ -170,6 +170,11 @@ struct adv7604_state {
 	struct v4l2_ctrl *free_run_color_manual_ctrl;
 	struct v4l2_ctrl *free_run_color_ctrl;
 	struct v4l2_ctrl *rgb_quantization_range_ctrl;
+	struct v4l2_ctrl *hsync_start_shift_ctrl;
+	struct v4l2_ctrl *hsync_end_shift_ctrl;
+	struct v4l2_ctrl *vsync_start_shift_ctrl;
+	struct v4l2_ctrl *vsync_end_shift_ctrl;
+
 };
 
 static bool adv7604_has_afe(struct adv7604_state *state)
@@ -1240,6 +1245,20 @@ static int adv7604_s_ctrl(struct v4l2_ctrl *ctrl)
 		cp_write(sd, 0xc0, (ctrl->val & 0xff0000) >> 16);
 		cp_write(sd, 0xc1, (ctrl->val & 0x00ff00) >> 8);
 		cp_write(sd, 0xc2, (u8)(ctrl->val & 0x0000ff));
+		return 0;
+	case V4L2_CID_ADV_RX_HSYNC_START_SHIFT:
+		cp_write_clr_set(sd, 0x7c, 0x0c, (ctrl->val >> 6) & 0x0c);
+		cp_write(sd, 0x7e, ctrl->val & 0xff);
+		return 0;
+	case V4L2_CID_ADV_RX_HSYNC_END_SHIFT:
+		cp_write_clr_set(sd, 0x7c, 0x03, (ctrl->val >> 8) & 0x03);
+		cp_write(sd, 0x7d, ctrl->val & 0xff);
+		return 0;
+	case V4L2_CID_ADV_RX_VSYNC_START_SHIFT:
+		cp_write_clr_set(sd, 0x7f, 0xf0, (u8)(ctrl->val << 4));
+		return 0;
+	case V4L2_CID_ADV_RX_VSYNC_END_SHIFT:
+		cp_write_clr_set(sd, 0x7f, 0x0f, ctrl->val & 0x0f);
 		return 0;
 	}
 	return -EINVAL;
@@ -2359,6 +2378,50 @@ static const struct v4l2_ctrl_config adv7604_ctrl_free_run_color = {
 	.def = 0x0,
 };
 
+static const struct v4l2_ctrl_config adv7604_ctrl_hsync_start_shift = {
+	.ops = &adv7604_ctrl_ops,
+	.id = V4L2_CID_ADV_RX_HSYNC_START_SHIFT,
+	.name = "HSYNC Start Shift",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.min = -512,
+	.max = 511,
+	.step = 0x1,
+	.def = 0x0,
+};
+
+static const struct v4l2_ctrl_config adv7604_ctrl_hsync_end_shift = {
+	.ops = &adv7604_ctrl_ops,
+	.id = V4L2_CID_ADV_RX_HSYNC_END_SHIFT,
+	.name = "HSYNC End Shift",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.min = -512,
+	.max = 511,
+	.step = 0x1,
+	.def = 0x0,
+};
+
+static const struct v4l2_ctrl_config adv7604_ctrl_vsync_start_shift = {
+	.ops = &adv7604_ctrl_ops,
+	.id = V4L2_CID_ADV_RX_VSYNC_START_SHIFT,
+	.name = "VSYNC Start Shift",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.min = -8,
+	.max = 7,
+	.step = 0x1,
+	.def = 0x0,
+};
+
+static const struct v4l2_ctrl_config adv7604_ctrl_vsync_end_shift = {
+	.ops = &adv7604_ctrl_ops,
+	.id = V4L2_CID_ADV_RX_VSYNC_END_SHIFT,
+	.name = "VSYNC End Shift",
+	.type = V4L2_CTRL_TYPE_INTEGER,
+	.min = -8,
+	.max = 7,
+	.step = 0x1,
+	.def = 0x0,
+};
+
 /* ----------------------------------------------------------------------- */
 
 static int adv7604_core_init(struct v4l2_subdev *sd)
@@ -2833,6 +2896,15 @@ static int adv7604_probe(struct i2c_client *client,
 		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_free_run_color_manual, NULL);
 	state->free_run_color_ctrl =
 		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_free_run_color, NULL);
+
+	state->hsync_start_shift_ctrl =
+		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_hsync_start_shift, NULL);
+	state->hsync_end_shift_ctrl =
+		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_hsync_end_shift, NULL);
+	state->vsync_start_shift_ctrl =
+		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_vsync_start_shift, NULL);
+	state->vsync_end_shift_ctrl =
+		v4l2_ctrl_new_custom(hdl, &adv7604_ctrl_vsync_end_shift, NULL);
 
 	sd->ctrl_handler = hdl;
 	if (hdl->error) {
