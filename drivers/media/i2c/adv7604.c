@@ -28,7 +28,6 @@
  */
 
 #include <linux/delay.h>
-#include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -39,9 +38,12 @@
 #include <media/adv7604.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
-#include <media/v4l2-dv-timings.h>
 #include <media/v4l2-of.h>
 #include <linux/reset.h>
+
+#define v4l2_edid v4l2_subdev_edid
+#define v4l2_match_dv_timings v4l_match_dv_timings
+#define of_graph_get_next_endpoint v4l2_of_get_next_endpoint
 
 static int debug;
 module_param(debug, int, 0644);
@@ -136,9 +138,6 @@ struct adv7604_chip_info {
 struct adv7604_state {
 	const struct adv7604_chip_info *info;
 	struct adv7604_platform_data pdata;
-
-	struct gpio_desc *hpd_gpio[4];
-
 	struct v4l2_subdev sd;
 	struct media_pad pads[ADV7604_INPUT_MAX];
 	unsigned int source_pad;
@@ -603,15 +602,6 @@ static inline int edid_write_block(struct v4l2_subdev *sd,
 
 static void adv7604_set_hpd(struct adv7604_state *state, unsigned int hpd)
 {
-	unsigned int i;
-
-	for (i = 0; i < state->info->num_dv_ports; ++i) {
-		if (IS_ERR(state->hpd_gpio[i]))
-			continue;
-
-		gpiod_set_value_cansleep(state->hpd_gpio[i], hpd & BIT(i));
-	}
-
 	v4l2_subdev_notify(&state->sd, ADV7604_HOTPLUG, &hpd);
 }
 
@@ -1489,46 +1479,6 @@ static int read_stdi(struct v4l2_subdev *sd, struct stdi_readback *stdi)
 	return 0;
 }
 
-static int adv7604_enum_dv_timings(struct v4l2_subdev *sd,
-			struct v4l2_enum_dv_timings *timings)
-{
-	struct adv7604_state *state = to_state(sd);
-
-	if (timings->index >= ARRAY_SIZE(adv7604_timings) - 1)
-		return -EINVAL;
-
-	if (timings->pad >= state->source_pad)
-		return -EINVAL;
-
-	memset(timings->reserved, 0, sizeof(timings->reserved));
-	timings->timings = adv7604_timings[timings->index];
-	return 0;
-}
-
-static int adv7604_dv_timings_cap(struct v4l2_subdev *sd,
-			struct v4l2_dv_timings_cap *cap)
-{
-	struct adv7604_state *state = to_state(sd);
-
-	if (cap->pad >= state->source_pad)
-		return -EINVAL;
-
-	cap->type = V4L2_DV_BT_656_1120;
-	cap->bt.max_width = 1920;
-	cap->bt.max_height = 1200;
-	cap->bt.min_pixelclock = 25000000;
-	if (is_digital_input(sd))
-		cap->bt.max_pixelclock = 225000000;
-	else
-		cap->bt.max_pixelclock = 170000000;
-
-	cap->bt.standards = V4L2_DV_BT_STD_CEA861 | V4L2_DV_BT_STD_DMT |
-			 V4L2_DV_BT_STD_GTF | V4L2_DV_BT_STD_CVT;
-	cap->bt.capabilities = V4L2_DV_BT_CAP_PROGRESSIVE |
-		V4L2_DV_BT_CAP_REDUCED_BLANKING | V4L2_DV_BT_CAP_CUSTOM;
-	return 0;
-}
-
 /* Fill the optional fields .standards and .flags in struct v4l2_dv_timings
    if the format is listed in adv7604_timings[] */
 static void adv7604_fill_optional_dv_timings_fields(struct v4l2_subdev *sd,
@@ -1696,9 +1646,6 @@ found:
 		return -ERANGE;
 	}
 
-	if (debug > 1)
-		v4l2_print_dv_timings(sd->name, "adv7604_query_dv_timings: ",
-				      timings, true);
 
 	return 0;
 }
@@ -1743,9 +1690,6 @@ static int adv7604_s_dv_timings(struct v4l2_subdev *sd,
 
 	set_rgb_quantization_range(sd);
 
-	if (debug > 1)
-		v4l2_print_dv_timings(sd->name, "adv7604_s_dv_timings: ",
-				      timings, true);
 	return 0;
 }
 
@@ -2345,11 +2289,6 @@ static int adv7604_log_status(struct v4l2_subdev *sd)
 				stdi.hs_pol, stdi.vs_pol);
 	if (adv7604_query_dv_timings(sd, &timings))
 		v4l2_info(sd, "No video detected\n");
-	else
-		v4l2_print_dv_timings(sd->name, "Detected format: ",
-				      &timings, true);
-	v4l2_print_dv_timings(sd->name, "Configured format: ",
-			      &state->timings, true);
 
 	if (no_signal(sd))
 		return 0;
@@ -2436,8 +2375,6 @@ static const struct v4l2_subdev_pad_ops adv7604_pad_ops = {
 	.set_fmt = adv7604_set_format,
 	.get_edid = adv7604_get_edid,
 	.set_edid = adv7604_set_edid,
-	.dv_timings_cap = adv7604_dv_timings_cap,
-	.enum_dv_timings = adv7604_enum_dv_timings,
 };
 
 static const struct v4l2_subdev_ops adv7604_ops = {
@@ -2944,18 +2881,6 @@ static int adv7604_probe(struct i2c_client *client,
 		return -ENODEV;
 	}
 
-	/* Request GPIOs. */
-	for (i = 0; i < state->info->num_dv_ports; ++i) {
-		state->hpd_gpio[i] =
-			devm_gpiod_get_index(&client->dev, "hpd", i);
-		if (IS_ERR(state->hpd_gpio[i]))
-			continue;
-
-		gpiod_direction_output(state->hpd_gpio[i], 0);
-
-		v4l_info(client, "Handling HPD %u GPIO\n", i);
-	}
-
 	state->timings = cea1280x720p30;
 	state->format = adv7604_format_info(state, V4L2_MBUS_FMT_UYVY8_2X8);
 
@@ -3087,10 +3012,6 @@ static int adv7604_probe(struct i2c_client *client,
 	v4l2_info(sd, "%s found @ 0x%x (%s)\n", client->name,
 			client->addr << 1, client->adapter->name);
 
-	err = v4l2_async_register_subdev(sd);
-	if (err)
-		goto err_entity;
-
 	return 0;
 
 err_entity:
@@ -3114,7 +3035,6 @@ static int adv7604_remove(struct i2c_client *client)
 
 	cancel_delayed_work(&state->delayed_work_enable_hotplug);
 	destroy_workqueue(state->work_queues);
-	v4l2_async_unregister_subdev(sd);
 	v4l2_device_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
 	adv7604_unregister_clients(to_state(sd));
