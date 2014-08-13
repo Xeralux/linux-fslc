@@ -32,6 +32,18 @@ The digital output port node must contain at least one endpoint.
 Optional Properties:
 
   - reset-gpios: Reference to the GPIO connected to the device's reset pin.
+  - reg-avlink: Register address for the avlink page.
+  - reg-cec: Register address for the cec page.
+  - reg-infoframe: Register address for the infoframe page.
+  - reg-edsp: Register address for the edsp page.
+  - reg-dpp: Register address for the dpp page.
+  - reg-afe: Register address for the afe page.
+  - reg-rep: Register address for the rep page.
+  - reg-edid: Register address for the edid page.
+  - reg-hdmi: Register address for the hdmi page.
+  - reg-test: Register address for the test page.
+  - reg-cp: Register address for the cp page.
+  - reg-vdp: Register address for the vdp page.
 
 Optional Endpoint Properties:
 

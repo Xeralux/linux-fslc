@@ -2773,6 +2773,14 @@ static struct of_device_id adv7604_of_id[] __maybe_unused = {
 };
 MODULE_DEVICE_TABLE(of, adv7604_of_id);
 
+static inline void adv7604_parse_dt_reg(struct device_node *np,
+		const char *name, u8* i2c_address)
+{
+	u32 tmp;
+	if(of_property_read_u32(np, name, &tmp) == 0)
+		*i2c_address = (u8)tmp;
+}
+
 static int adv7604_parse_dt(struct adv7604_state *state)
 {
 	struct v4l2_of_endpoint bus_cfg;
@@ -2811,17 +2819,52 @@ static int adv7604_parse_dt(struct adv7604_state *state)
 
 	/* Use the default I2C addresses. */
 	state->pdata.i2c_addresses[ADV7604_PAGE_AVLINK] = 0x42;
+	adv7604_parse_dt_reg(np,"reg-avlink" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_AVLINK]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_CEC] = 0x40;
+	adv7604_parse_dt_reg(np,"reg-cec" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_CEC]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_INFOFRAME] = 0x3e;
+	adv7604_parse_dt_reg(np,"reg-infoframe" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_INFOFRAME]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_ESDP] = 0x38;
+	adv7604_parse_dt_reg(np,"reg-edsp" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_ESDP]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_DPP] = 0x3c;
+	adv7604_parse_dt_reg(np,"reg-dpp" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_DPP]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_AFE] = 0x26;
+	adv7604_parse_dt_reg(np,"reg-afe" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_AFE]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_REP] = 0x32;
+	adv7604_parse_dt_reg(np,"reg-rep" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_REP]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_EDID] = 0x36;
+	adv7604_parse_dt_reg(np,"reg-edid" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_EDID]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_HDMI] = 0x34;
+	adv7604_parse_dt_reg(np,"reg-hdmi" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_HDMI]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_TEST] = 0x30;
+	adv7604_parse_dt_reg(np,"reg-test" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_TEST]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_CP] = 0x22;
+	adv7604_parse_dt_reg(np,"reg-cp" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_CP]);
+
 	state->pdata.i2c_addresses[ADV7604_PAGE_VDP] = 0x24;
+	adv7604_parse_dt_reg(np,"reg-vdp" ,
+			&state->pdata.i2c_addresses[ADV7604_PAGE_VDP]);
 
 	/* Hardcode the remaining platform data fields. */
 	state->pdata.disable_pwrdnb = 0;
