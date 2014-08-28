@@ -1,0 +1,17 @@
+/*
+ * Definitions specific to the i.MX6D/Q version of the Medianode.
+ *
+ * Copyright (C) 2013 Sensity Systems, Inc.
+ *
+ * CONFIDENTIAL AND PROPRIETARY.
+ */
+
+/dts-v1/;
+
+#include "imx6q.dtsi"
+#include "imx6qdl-sensity_medianode.dtsi"
+
+/ {
+	model = "Sensity Systems Medianode (MX6D/Q)";
+	compatible = "sensity,medianode", "fsl,imx6q";
+};
