@@ -15,3 +15,7 @@
 	model = "Sensity Systems Medianode (MX6D/Q)";
 	compatible = "sensity,medianode", "fsl,imx6q";
 };
+
+&sata {
+	status = "okay";
+};
