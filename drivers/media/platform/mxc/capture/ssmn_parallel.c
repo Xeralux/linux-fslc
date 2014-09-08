@@ -279,6 +279,12 @@ static void ssmn_parallel_sensor_io_init(void)
 			ARRAY_SIZE(mx6dl_medianode_mipi_sensor_pads));
 #endif
 
+	printk("ssmn_parallel_sensor_io_init\n");
+
+	/* Ensure IPU1 mux to parallel. */
+	if (of_machine_is_compatible("fsl,imx6q"))
+		regmap_update_bits(gpr,IOMUXC_GPR1,(1<<19),(1<<19));
+
 	ssmn_parallel_powerdown(1);
 	ssmn_parallel_powerdown(0);
 }
@@ -937,6 +943,7 @@ static int ssmn_parallel_probe(struct i2c_client *client,
 
 	pca954x_select_channel(I2C_MUX_CHAN);
 	max927x_init(ssmn_parallel_powerdown, ssmn_parallel_tc_reset);
+	ssmn_parallel_sensor_io_init();
 
 	init_retry = 0;
 	while (init_retry < INIT_RETRY) {
