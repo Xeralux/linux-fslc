@@ -18,7 +18,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-//#define DEBUG
+#define DEBUG
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -37,6 +37,7 @@ struct mxc_subdev_mipi_cam {
 	struct regmap *gpr;
 	struct v4l2_subdev	subdev;
 	void *mipi_csi2_info;
+	struct clk *sensor_clk;
 };
 
 
@@ -103,9 +104,9 @@ static bool mipi_dphy_receiving_clock(struct mxc_subdev_mipi_cam *cam)
 	return false;
 }
 
-#define IMX6DL_GPR13_IPU_CSI1_MUX (0x07 << 3)
-#define IMX6DL_GPR13_IPU_CSI1_MUX_MIPI_CSI0 0
-#define IMX6DL_GPR13_IPU_CSI1_MUX_IPU_CSI1 4
+#define IMX6DL_GPR13_IPU_CSI0_MUX (0x07 << 0)
+#define IMX6DL_GPR13_IPU_CSI0_MUX_MIPI_CSI0 (0x0 << 0)
+#define IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0 (0x4 << 0)
 
 static void mxc_csi1_mipicsi0_input_enable(struct mxc_subdev_mipi_cam *data, int enable)
 {
@@ -113,17 +114,17 @@ static void mxc_csi1_mipicsi0_input_enable(struct mxc_subdev_mipi_cam *data, int
 
 	if (!enable) {
 		if (of_machine_is_compatible("fsl,imx6q"))
-			regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),1);
+			regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),(1 << 19));
 		if (of_machine_is_compatible("fsl,imx6dl"))
 			regmap_update_bits(data->gpr,IOMUXC_GPR13,
-					IMX6DL_GPR13_IPU_CSI1_MUX, IMX6DL_GPR13_IPU_CSI1_MUX_IPU_CSI1);
+					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0);
 	}
 	else {
 		if (of_machine_is_compatible("fsl,imx6q"))
-			regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),0);
+			regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),(0 << 19));
 		else if (of_machine_is_compatible("fsl,imx6dl"))
 			regmap_update_bits(data->gpr,IOMUXC_GPR13,
-					IMX6DL_GPR13_IPU_CSI1_MUX, IMX6DL_GPR13_IPU_CSI1_MUX_MIPI_CSI0);
+					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_MIPI_CSI0);
 	}
 }
 
@@ -239,21 +240,33 @@ static	int mxc_subdev_mipi_s_mbus_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
+int mxc_subdev_mipi_core_init(struct v4l2_subdev *sd, u32 val)
+{
+	struct mxc_subdev_mipi_cam *data = to_mxc_subdev_mipi_from_v4l2(sd);
+	clk_prepare_enable(data->sensor_clk);
+	mxc_csi1_mipicsi0_input_enable(data, 1);
+	return 0;
+}
+
 static struct v4l2_subdev_video_ops mxc_subdev_mipi_subdev_video_ops = {
 	.s_stream = mxc_subdev_mipi_video_s_stream,
 	.try_mbus_fmt = mxc_subdev_mipi_try_mbus_fmt,
 	.s_mbus_fmt = mxc_subdev_mipi_s_mbus_fmt,
 };
 
+static struct v4l2_subdev_core_ops  mxc_subdev_mipi_subdev_core_ops = {
+		.init =  mxc_subdev_mipi_core_init,
+};
+
 static struct v4l2_subdev_ops mxc_subdev_mipi_subdev_ops = {
 	.video	= &mxc_subdev_mipi_subdev_video_ops,
+	.core = &mxc_subdev_mipi_subdev_core_ops,
 };
 
 
 static int mxc_subdev_mipi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct clk *sensor_clk;
 	struct v4l2_subdev	*subdev;
 	struct mxc_subdev_mipi_cam *data;
 	int retval;
@@ -281,10 +294,10 @@ static int mxc_subdev_mipi_probe(struct platform_device *pdev)
 		return -EPERM;
 	}
 
-	sensor_clk = devm_clk_get(dev, "csi_mclk");
-	if (IS_ERR(sensor_clk)) {
+	data->sensor_clk = devm_clk_get(dev, "csi_mclk");
+	if (IS_ERR(data->sensor_clk)) {
 		dev_err(dev, "clock-frequency missing or invalid\n");
-		return PTR_ERR(sensor_clk);
+		return PTR_ERR(data->sensor_clk);
 	}
 
 	retval = of_property_read_u32(dev->of_node, "csi_id",
@@ -294,8 +307,8 @@ static int mxc_subdev_mipi_probe(struct platform_device *pdev)
 		return retval;
 	}
 
-	if(csi != 1) {
-		dev_err(dev, "csi other than 1 not supported.\n");
+	if(csi != 0) {
+		dev_err(dev, "csi other than 0 not supported.\n");
 		return -EINVAL;
 	}
 
@@ -321,9 +334,6 @@ static int mxc_subdev_mipi_probe(struct platform_device *pdev)
 	snprintf(subdev->name, sizeof(subdev->name), "%s-%d",
 		dev->driver->name,csi);
 	subdev->name[sizeof(subdev->name)-1] = 0;
-
-	clk_prepare_enable(sensor_clk);
-	mxc_csi1_mipicsi0_input_enable(data, 1);
 
 	return retval;
 }

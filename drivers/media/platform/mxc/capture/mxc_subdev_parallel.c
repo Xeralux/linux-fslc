@@ -36,20 +36,32 @@ struct mxc_subdev_parallel_cam {
 	struct device *dev;
 	struct regmap *gpr;
 	struct v4l2_subdev	subdev;
+	struct clk *sensor_clk;
 };
 
+static struct mxc_subdev_parallel_cam *to_mxc_subdev_parallel_from_v4l2(const struct v4l2_subdev *sd)
+{
+	return  container_of(sd, struct mxc_subdev_parallel_cam, subdev);
+}
+
 #define IMX6DL_GPR13_IPU_CSI0_MUX (0x07 << 0)
-#define IMX6DL_GPR13_IPU_CSI0_MUX_MIPI_CSI0 (0x0)
-#define IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0 (0x4)
+#define IMX6DL_GPR13_IPU_CSI0_MUX_MIPI_CSI0 (0x0 << 0)
+#define IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0 (0x4 << 0)
+
 static void mxc_subdev_parallel_powerdown(struct mxc_subdev_parallel_cam *data, int powerdown)
 {
 	pr_debug("ssmn_camera_parallel: powerdown %d\n", powerdown);
 	if (powerdown) {
+       if (of_machine_is_compatible("fsl,imx6q"))
+               regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),(0<<19));
 		if (of_machine_is_compatible("fsl,imx6dl"))
 			regmap_update_bits(data->gpr,IOMUXC_GPR13,
 					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_MIPI_CSI0);
 	}
 	else {
+		if (of_machine_is_compatible("fsl,imx6q"))
+               regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),(1<<19));
+
 		if (of_machine_is_compatible("fsl,imx6dl"))
 			regmap_update_bits(data->gpr,IOMUXC_GPR13,
 					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0);
@@ -57,22 +69,39 @@ static void mxc_subdev_parallel_powerdown(struct mxc_subdev_parallel_cam *data, 
 	msleep(1100);
 }
 
+int mxc_subdev_parallel_core_init(struct v4l2_subdev *sd, u32 val)
+{
+	struct mxc_subdev_parallel_cam *data = to_mxc_subdev_parallel_from_v4l2(sd);
+	clk_prepare_enable(data->sensor_clk);
+	mxc_subdev_parallel_powerdown(data, 0);
+	return 0;
+}
+
+static const struct v4l2_subdev_core_ops mxc_subdev_parallel_subdev_core_ops = {
+		.init =  mxc_subdev_parallel_core_init,
+};
+
 static struct v4l2_subdev_ops mxc_subdev_parallel_subdev_ops = {
+		.core = &mxc_subdev_parallel_subdev_core_ops,
 };
 
 static int mxc_subdev_parallel_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
-	struct clk *sensor_clk;
 	struct v4l2_subdev	*subdev;
 	struct mxc_subdev_parallel_cam *data;
 	int ret;
 	int csi;
 
-	sensor_clk = devm_clk_get(dev, "csi_mclk");
-	if (IS_ERR(sensor_clk)) {
+	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
+	if(!data)
+		return -ENOMEM;
+	data->dev = dev;
+
+	data->sensor_clk = devm_clk_get(dev, "csi_mclk");
+	if (IS_ERR(data->sensor_clk)) {
 		dev_err(dev, "clock-frequency missing or invalid\n");
-		return PTR_ERR(sensor_clk);
+		return PTR_ERR(data->sensor_clk);
 	}
 
 	ret = of_property_read_u32(dev->of_node, "csi_id",
@@ -87,10 +116,6 @@ static int mxc_subdev_parallel_probe(struct platform_device *pdev)
 		return -EINVAL;
 	}
 
-	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
-	if(!data)
-		return -ENOMEM;
-	data->dev = dev;
 
 	data->gpr = syscon_regmap_lookup_by_phandle(dev->of_node,
 				"gpr");
@@ -109,8 +134,6 @@ static int mxc_subdev_parallel_probe(struct platform_device *pdev)
 	subdev->name[sizeof(subdev->name)-1] = 0;
 
 	pr_debug("ssmn_camera_parallel: clk_prepare_enable\n");
-	clk_prepare_enable(sensor_clk);
-	mxc_subdev_parallel_powerdown(data,0);
 	return ret;
 }
 

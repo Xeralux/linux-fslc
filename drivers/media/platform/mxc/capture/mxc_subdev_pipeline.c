@@ -795,7 +795,11 @@ static int _mxc_pipeline_probe(struct mxc_pipeline_data *data)
 	}
 
 	v4l2_device_register_subdev_nodes(&data->v4l2_dev);
-
+	ret = v4l2_device_call_until_err(&data->v4l2_dev, 0, core, init, 0);
+	if(ret < 0) {
+		dev_err(dev,"Cannot initialize devices\n");
+		goto error2;
+	}
 	data->operational = true;
 error2:
 	module_put(mxc_plat->dev.driver->owner);
