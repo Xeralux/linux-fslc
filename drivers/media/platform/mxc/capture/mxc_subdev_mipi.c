@@ -18,7 +18,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#define DEBUG
+//#define DEBUG
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -32,7 +32,7 @@
 #include <linux/regmap.h>
 #include <linux/mipi_csi2.h>
 
-struct mxc_mipi_cam {
+struct mxc_subdev_mipi_cam {
 	struct device *dev;
 	struct regmap *gpr;
 	struct v4l2_subdev	subdev;
@@ -40,22 +40,22 @@ struct mxc_mipi_cam {
 };
 
 
-static struct mxc_mipi_cam *to_mxc_mipi_from_v4l2(const struct v4l2_subdev *sd)
+static struct mxc_subdev_mipi_cam *to_mxc_subdev_mipi_from_v4l2(const struct v4l2_subdev *sd)
 {
-	return  container_of(sd, struct mxc_mipi_cam, subdev);
+	return  container_of(sd, struct mxc_subdev_mipi_cam, subdev);
 }
 
-static struct mxc_mipi_cam *to_mxc_mipi_from_dev(const struct device *dev)
+static struct mxc_subdev_mipi_cam *to_mxc_subdev_mipi_from_dev(const struct device *dev)
 {
 	struct v4l2_subdev *sd = dev_get_drvdata(dev);
-	return container_of(sd, struct mxc_mipi_cam, subdev);
+	return container_of(sd, struct mxc_subdev_mipi_cam, subdev);
 }
 
 
 static ssize_t err1_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
-	struct mxc_mipi_cam *data = to_mxc_mipi_from_dev(dev);
+	struct mxc_subdev_mipi_cam *data = to_mxc_subdev_mipi_from_dev(dev);
 	return snprintf(buf,PAGE_SIZE,"%04x\n",mipi_csi2_get_error1(data->mipi_csi2_info));
 }
 static DEVICE_ATTR(err1, 0444, (void *)err1_show, NULL);
@@ -63,7 +63,7 @@ static DEVICE_ATTR(err1, 0444, (void *)err1_show, NULL);
 static ssize_t err2_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
-	struct mxc_mipi_cam *data = to_mxc_mipi_from_dev(dev);
+	struct mxc_subdev_mipi_cam *data = to_mxc_subdev_mipi_from_dev(dev);
 	return snprintf(buf,PAGE_SIZE,"%04x\n",mipi_csi2_get_error2(data->mipi_csi2_info));
 }
 static DEVICE_ATTR(err2, 0444, (void *)err2_show, NULL);
@@ -87,7 +87,7 @@ static const struct attribute_group attr_group = {
 	 MIPI_CSI2_PHY_STATE_D1_STOP | \
 	 MIPI_CSI2_PHY_STATE_D0_STOP)
 
-static bool mipi_dphy_receiving_clock(struct mxc_mipi_cam *cam)
+static bool mipi_dphy_receiving_clock(struct mxc_subdev_mipi_cam *cam)
 {
 	int i;
 	u32 mipi_reg;
@@ -107,7 +107,7 @@ static bool mipi_dphy_receiving_clock(struct mxc_mipi_cam *cam)
 #define IMX6DL_GPR13_IPU_CSI1_MUX_MIPI_CSI0 0
 #define IMX6DL_GPR13_IPU_CSI1_MUX_IPU_CSI1 4
 
-static void mxc_csi1_mipicsi0_input_enable(struct mxc_mipi_cam *data, int enable)
+static void mxc_csi1_mipicsi0_input_enable(struct mxc_subdev_mipi_cam *data, int enable)
 {
 	dev_dbg(data->dev, "%s: enable %d", __func__, enable);
 
@@ -127,7 +127,7 @@ static void mxc_csi1_mipicsi0_input_enable(struct mxc_mipi_cam *data, int enable
 	}
 }
 
-static int mxc_mipi_s_stream_on(struct mxc_mipi_cam *data)
+static int mxc_subdev_mipi_s_stream_on(struct mxc_subdev_mipi_cam *data)
 {
 	struct device *dev = data->dev;
 	u32 mipi_reg;
@@ -158,18 +158,18 @@ static int mxc_mipi_s_stream_on(struct mxc_mipi_cam *data)
 	return 0;
 }
 
-static int mxc_mipi_s_stream_off(struct mxc_mipi_cam *data);
+static int mxc_subdev_mipi_s_stream_off(struct mxc_subdev_mipi_cam *data);
 
-int mxc_mipi_video_s_stream(struct v4l2_subdev *sd, int enable)
+int mxc_subdev_mipi_video_s_stream(struct v4l2_subdev *sd, int enable)
 {
-	struct mxc_mipi_cam *data = to_mxc_mipi_from_v4l2(sd);
+	struct mxc_subdev_mipi_cam *data = to_mxc_subdev_mipi_from_v4l2(sd);
 	if(enable) {
-		return mxc_mipi_s_stream_on(data);
+		return mxc_subdev_mipi_s_stream_on(data);
 	}
-	return mxc_mipi_s_stream_off(data);
+	return mxc_subdev_mipi_s_stream_off(data);
 }
 
-static int mxc_mipi_s_stream_off(struct mxc_mipi_cam *data)
+static int mxc_subdev_mipi_s_stream_off(struct mxc_subdev_mipi_cam *data)
 {
 	struct device *dev = data->dev;
 	u32 mipi_reg;
@@ -199,35 +199,35 @@ static int mxc_mipi_s_stream_off(struct mxc_mipi_cam *data)
 
 struct mbus_mipi_data_mapping {
 	enum v4l2_mbus_pixelcode code;
-	enum v4l2_colorspace colorspace;
 	int datatype;
 };
 
 static const int mbus_framefmt_to_mipi_data_type(struct v4l2_mbus_framefmt *fmt)
 {
 	static const struct mbus_mipi_data_mapping mapping[] = {
-		{V4L2_MBUS_FMT_UYVY8_2X8, V4L2_COLORSPACE_JPEG, MIPI_DT_YUV422},
+		{V4L2_MBUS_FMT_UYVY8_2X8, MIPI_DT_YUV422},
+
 	};
 	int i;
 	for(i = 0; i < ARRAY_SIZE(mapping); i++) {
-		if(mapping[i].code == fmt->code && mapping[i].colorspace == fmt->colorspace)
+		if(mapping[i].code == fmt->code)
 			return mapping[i].datatype;
 	}
 	return -EINVAL;
 }
 
-static	int mxc_mipi_try_mbus_fmt(struct v4l2_subdev *sd,
+static	int mxc_subdev_mipi_try_mbus_fmt(struct v4l2_subdev *sd,
 			    struct v4l2_mbus_framefmt *fmt)
 {
 	int ret = mbus_framefmt_to_mipi_data_type(fmt);
 	return ret < 0 ? ret : 0;
 }
 
-static	int mxc_mipi_s_mbus_fmt(struct v4l2_subdev *sd,
+static	int mxc_subdev_mipi_s_mbus_fmt(struct v4l2_subdev *sd,
 			    struct v4l2_mbus_framefmt *fmt)
 {
-	struct mxc_mipi_cam *data = to_mxc_mipi_from_v4l2(sd);
-	int ret = mxc_mipi_try_mbus_fmt(sd, fmt);
+	struct mxc_subdev_mipi_cam *data = to_mxc_subdev_mipi_from_v4l2(sd);
+	int ret = mxc_subdev_mipi_try_mbus_fmt(sd, fmt);
 	int datatype;
 	if(ret < 0)
 		return ret;
@@ -239,23 +239,23 @@ static	int mxc_mipi_s_mbus_fmt(struct v4l2_subdev *sd,
 	return 0;
 }
 
-static struct v4l2_subdev_video_ops mxc_mipi_subdev_video_ops = {
-	.s_stream = mxc_mipi_video_s_stream,
-	.try_mbus_fmt = mxc_mipi_try_mbus_fmt,
-	.s_mbus_fmt = mxc_mipi_s_mbus_fmt,
+static struct v4l2_subdev_video_ops mxc_subdev_mipi_subdev_video_ops = {
+	.s_stream = mxc_subdev_mipi_video_s_stream,
+	.try_mbus_fmt = mxc_subdev_mipi_try_mbus_fmt,
+	.s_mbus_fmt = mxc_subdev_mipi_s_mbus_fmt,
 };
 
-static struct v4l2_subdev_ops mxc_mipi_subdev_ops = {
-	.video	= &mxc_mipi_subdev_video_ops,
+static struct v4l2_subdev_ops mxc_subdev_mipi_subdev_ops = {
+	.video	= &mxc_subdev_mipi_subdev_video_ops,
 };
 
 
-static int mxc_mipi_probe(struct platform_device *pdev)
+static int mxc_subdev_mipi_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct clk *sensor_clk;
 	struct v4l2_subdev	*subdev;
-	struct mxc_mipi_cam *data;
+	struct mxc_subdev_mipi_cam *data;
 	int retval;
 	int csi;
 
@@ -314,7 +314,7 @@ static int mxc_mipi_probe(struct platform_device *pdev)
    }
 
 	subdev = &data->subdev;
-	v4l2_subdev_init(subdev, &mxc_mipi_subdev_ops);
+	v4l2_subdev_init(subdev, &mxc_subdev_mipi_subdev_ops);
 	subdev->owner = pdev->dev.driver->owner;
 	v4l2_set_subdevdata(subdev, data);
 	platform_set_drvdata(pdev, subdev);
@@ -328,10 +328,10 @@ static int mxc_mipi_probe(struct platform_device *pdev)
 	return retval;
 }
 
-static int mxc_mipi_remove(struct platform_device *pdev)
+static int mxc_subdev_mipi_remove(struct platform_device *pdev)
 {
 	struct v4l2_subdev	*sd = platform_get_drvdata(pdev);
-	struct mxc_mipi_cam *data = to_mxc_mipi_from_v4l2(sd);
+	struct mxc_subdev_mipi_cam *data = to_mxc_subdev_mipi_from_v4l2(sd);
 
 	if(data->subdev.v4l2_dev != NULL) {
 		dev_err(&pdev->dev,"v4l2 subdev still in use; please shut down %s.\n",
@@ -346,24 +346,24 @@ static int mxc_mipi_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct of_device_id mxc_mipi_dt_ids[] = {
-	{ .compatible = "fsl,mxc_mipi_cam" },
+static struct of_device_id mxc_subdev_mipi_dt_ids[] = {
+	{ .compatible = "fsl,mxc-subdev-mipi" },
 	{ /* sentinel */ }
 };
-MODULE_DEVICE_TABLE(of, mxc_mipi_dt_ids);
+MODULE_DEVICE_TABLE(of, mxc_subdev_mipi_dt_ids);
 
 
-static struct platform_driver mxc_mipi_driver = {
+static struct platform_driver mxc_subdev_mipi_driver = {
 	.driver = {
-		   .name = "mxc_mipi",
+		   .name = "mxc_subdev_mipi",
 		   .owner = THIS_MODULE,
-		   .of_match_table = of_match_ptr(mxc_mipi_dt_ids),
+		   .of_match_table = of_match_ptr(mxc_subdev_mipi_dt_ids),
 		   },
-	.probe = mxc_mipi_probe,
-	.remove = mxc_mipi_remove,
+	.probe = mxc_subdev_mipi_probe,
+	.remove = mxc_subdev_mipi_remove,
 };
 
-module_platform_driver(mxc_mipi_driver);
+module_platform_driver(mxc_subdev_mipi_driver);
 
 MODULE_AUTHOR("Sarah Newman <sarah.newman@computer.org>");
 MODULE_DESCRIPTION("mxc mipi v4l2_subdev driver");

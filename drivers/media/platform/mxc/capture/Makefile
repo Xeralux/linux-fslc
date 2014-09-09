@@ -20,16 +20,11 @@ obj-$(CONFIG_MXC_CAMERA_OV5642) += ov5642_camera.o
 ov5640_camera_mipi-objs := ov5640_mipi.o
 obj-$(CONFIG_MXC_CAMERA_OV5640_MIPI) += ov5640_camera_mipi.o
 
-ssmn_camera_mipi-objs := ssmn_mipi.o
-obj-$(CONFIG_MXC_CAMERA_SSMN_MIPI) += ssmn_camera_mipi.o
-
-ssmn_camera_parallel-objs := ssmn_parallel.o
-obj-$(CONFIG_MXC_CAMERA_SSMN_PARALLEL) += ssmn_camera_parallel.o
+obj-$(CONFIG_MXC_CAMERA_SUBDEV_PIPELINE) += mxc_subdev_pipeline.o
+obj-$(CONFIG_MXC_CAMERA_SUBDEV_MIPI) += mxc_subdev_mipi.o
+obj-$(CONFIG_MXC_CAMERA_SUBDEV_PARALLEL) += mxc_subdev_parallel.o
 
 adv7180_tvin-objs := adv7180.o
 obj-$(CONFIG_MXC_TVIN_ADV7180) += adv7180_tvin.o
 
-obj-$(CONFIG_MXC_CAMERA_SUBDEV_PIPELINE) += mxc_v4l_subdev_pipeline.o
-obj-$(CONFIG_MAX927X) += max927x.o
-obj-$(CONFIG_AP0100_M034) += ap0100_m034.o
-obj-$(CONFIG_TC_MIPI_BRIDGE) += tc_mipi_bridge.o
+obj-$(CONFIG_SSMN_AP0100_M034) += ap0100_m034.o

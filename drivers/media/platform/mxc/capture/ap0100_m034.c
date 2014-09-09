@@ -18,7 +18,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#define DEBUG
+//#define DEBUG
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -52,11 +52,31 @@ enum AP0100_CMD {
   CMD_FLASH_QUERY_DEV	= 0x8508,
   CMD_FLASH_STATUS	= 0x8509,
   CMD_FLASH_CONFIG_DEV	= 0x850a,
+  CMD_SEQUENCER_REFRESH = 0x8606,
   CMD_CCMGR_GET_LOCK		= 0X8D00,
   CMD_CCMGR_LOCK_STATUS	= 0X8D01,
   CMD_CCMGR_RELEASE_LOCK	= 0X8D02,
   CMD_CCMGR_READ		= 0X8D05,
   CMD_CCMGR_STATUS		= 0X8D08,
+};
+
+enum AP0100_STORED_CMDS {
+	STORED_CMD_WDR_START = 0,
+	STORED_CMD_720P_84MHz_yuv8_WDR = 0,
+	STORED_CMD_960P_84MHz_yuv8_WDR = 1,
+	STORED_CMD_VGA_84MHz_yuv8_WDR = 2,
+	STORED_CMD_960P_84MHz_yuv8_WDR_LDC = 3,
+	STORED_CMD_SDR_START = 4,
+	STORED_CMD_720P_84MHz_yuv8_SDR = 4,
+	STORED_CMD_960P_84MHz_yuv8_SDR = 5,
+	STORED_CMD_VGA_84MHz_yuv8_SDR = 6,
+	STORED_CMD_960P_84MHz_yuv8_SDR_LDC = 7,
+	STORED_CMD_Test_Pattern_ColorBar_need_to_start_streaming_first = 8,
+	STORED_CMD_Recover_from_test_pattern = 9,
+	STORED_CMD_Image_Orientation_original = 0xa,
+	STORED_CMD_Flip = 0xb,
+	STORED_CMD_Mirror = 0xc,
+	STORED_CMD_Flip_And_Mirror = 0xd,
 };
 
 enum AP0100_REG {
@@ -69,6 +89,18 @@ enum AP0100_REG {
   REG_CAM_MODE_TEST_PATTERN_RED = 0xC890,
   REG_CAM_MODE_TEST_PATTERN_GREEN = 0xC894,
   REG_CAM_MODE_TEST_PATTERN_BLUE = 0xC898,
+  REG_CAM_AET_AEMODE = 0xC8BC, //1, changes from change-config and refresh
+  REG_CAM_AET_EXPOSURE_TIME_MS = 0xC8C0, //2, changes during vertical blanking
+  REG_CAM_SENSOR_CONTROL_REQUEST = 0xC842, //1, changes during vertical blanking
+  //Register document says bits 5-4, 2-0 are reserved and set to 1
+  REG_AE_TRACK_ALGO = 0xA804, //2, changes during vertical blanking
+  //pertinent if luma calc algo. is disabled with bit 3 of REG_AE_TRACK_ALGO = 0
+  REG_AE_TRACK_AVG_LOG_Y_TARGET = 0xA806, //2, updates during vertical blanking
+  REG_CAM_AWB_MODE = 0xC97D, //1, b3 changes during vertical blanking and  b2-0change-config
+  REG_CAM_AWB_COLOR_TEMPERATURE = 0xC928, //2, changes during vertical blanking
+  REG_CAM_AET_FLICKER_FREQ_HZ = 0xC8D1, //1, changes after change-config
+  REG_CAM_PGA_PGA_CONTROL = 0xCA80, //bit 1 needs change-config, bit 0 needs vertical blanking
+  REG_RULE_AE_WEIGHT_TABLE_0_0 = 0xA40A, //1, changes during vertical blanking
   REG_CAM_TEMP_CUR = 0xCAAF,
   REG_CAM_TEMP_MIN = 0xCAB0,
   REG_CAM_TEMP_MAX = 0xCAB1,
@@ -122,8 +154,6 @@ static const u32 FLASH_HEADER_ADDR = (32*1024);
 
 #define INIT_BUF_MAX (256)
 enum SENSOR_SYSFS_STATUS {
-	SSS_UPDATE = 0,
-	SSS_SENSOR_READ,
 	SSS_SENSOR_SET_CMD,
 	SSS_IDLE,
 };
@@ -132,10 +162,18 @@ enum ap0100_m034_frame_mode {
 	MODE_720P_30 = 0,
 	MODE_960P_22_5 = 1,
 };
+
+
+typedef struct __attribute__((__packed__)) cam_param {
+	u32 exp_time;
+	u32 luma_target;
+	u32 color_temperature;
+	u32 ae_weight_table[25];
+} cam_param_t;
+
 struct ap0100_m034_data {
 	struct i2c_client *client;
 	struct device *dev;
-    int ap0100_cur_mode;
     int ap0100_in_wdr_mode;
     unsigned char mode_init_buf[INIT_BUF_MAX];
     int mode_init_buf_count; // how many modes to do in sequence
@@ -153,6 +191,7 @@ struct ap0100_m034_data {
 	bool bricked;
 	struct fw_header flash_header;
 	int fw_status;
+	cam_param_t cam_param_s;
 };
 
 static int _ap0100_m034_probe(struct ap0100_m034_data* data);
@@ -177,10 +216,6 @@ static struct ap0100_m034_data *to_ap0100_m034_from_dev(const struct device *dev
 	return container_of(sd, struct ap0100_m034_data, subdev);
 }
 
-static int _ap0100_m034_reset(struct ap0100_m034_data *data);
-
-#define SENSOR_UPDATE_UUID 		"2c3fc110-ab3c-11e3-a5e2-0800200c9a66"
-#define SENSOR_READ_UUID		"941b5580-b21a-11e3-a5e2-0800200c9a66"
 #define SENSOR_SET_CMD_UUID		"23917fa2-bc3a-11e3-a5e2-0800200c9a66"
 
 enum ap0100_set_mode {
@@ -190,15 +225,31 @@ enum ap0100_set_mode {
 	MODE_FLIP_N_MIRROR	= 3,
 	MODE_WDR_MODE		= 4,
 	MODE_SDR_MODE		= 5,
-	MODE_CNT 		= 6,
+	MODE_AE_OFF			= 6,
+	MODE_AE_ON			= 7,
+	MODE_SET_EXP_TIME	= 8,
+	MODE_SET_TARGET_LUMA = 9,
+	MODE_AUTO_TARGET_LUMA = 10,
+	MODE_SET_COLOR_TEMPERATURE = 11,
+	MODE_SET_AE_WEIGHT_TABLE = 12,
+	MODE_INDOOR_MODE_ON = 13,
+	MODE_INDOOR_MODE_OFF = 14,
+	MODE_FLICKER_50HZ = 15,
+	MODE_FLICKER_60HZ = 16,
+	MODE_PGA_ON = 17,
+	MODE_PGA_OFF = 18,
+	MODE_CNT 		= 19,
+	MODE_INIT_PARAM_BUF = 0xFE,
 	MODE_INIT_MODE_BUF	= 0xFF,
 };
 
+#define WRITE_IS_CMD 		(1 << 0)
+#define WRITE_IS_UNCHECKED (1 << 1)
 struct ap0100_m034_reg_data {
     unsigned data_size;
     u16 reg_addr;
     unsigned data;
-	bool is_command;
+	unsigned flags;
 };
 
 struct ap0100_m034_frame_data {
@@ -337,6 +388,25 @@ static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf
 	return err;
 }
 
+static int _AM_write_unchecked_reg(struct i2c_client * client, u16 reg, const u8 val, unsigned *error_count)
+{
+	int err;
+	u8 write_buf[3];
+
+	write_buf[0] = reg >> 8;
+	write_buf[1] = reg & 0xff;
+	write_buf[2] = val;
+
+	err =  i2c_master_send(client, write_buf, sizeof(write_buf));
+	if (err < 0) {
+		dev_err(&client->dev, "%s:write reg err:reg=%x, err=%d\n",
+			__func__, reg, err);
+		if(error_count)
+			*error_count += 1;
+	}
+	return err;
+}
+
 static void _AM_format_reg(u8* buf, unsigned val, int data_size)
 {
 	switch(data_size){
@@ -467,39 +537,6 @@ static int _ap0100_m034_cmd_status(struct i2c_client * client, unsigned *error_c
 	return -EBUSY;
 }
 
-static int _ap0100_m034_cmd_write(struct i2c_client * client, const char *buf, int size, unsigned *error_count)
-{
-	int err;
-	if(size <= 2) {
-		dev_err(&client->dev, "%s: size=%x\n", __func__, size);
-		return -EINVAL;
-
-	}
-	err = i2c_master_send(client, buf, size);
-	if(err < 0) {
-		dev_err(&client->dev, "%s:write reg error:reg=%x\n,err=%d",
-			__func__, (u16)buf[0] << 8 | buf[1], err);
-		if(error_count)
-			*error_count += 1;
-		return err;
-	}
-	return 0;
-}
-
-static int _ap0100_m034_cmd_read(struct i2c_client * client, u16 reg, char *read_buf, int sensor_read_len, unsigned *error_count)
-{
-	int err;
-
-	err = _AM_try_read_data(client, reg, read_buf, sensor_read_len);
-
-	if (err < 0) {
-		dev_err(&client->dev,"%s:read reg error:reg=%x,err=%d\n", __func__, reg,  err);
-		if(error_count)
-			*error_count += 1;
-	}
-	return err;
-}
-
 static int _ap0100_handle_adjacent_registers(struct i2c_client * client,
 		const struct ap0100_m034_reg_data *ap0100_reg, const ssize_t reg_size, unsigned *error_count)
 {
@@ -516,8 +553,8 @@ static int _ap0100_handle_adjacent_registers(struct i2c_client * client,
 	cur_addr = start_addr;
 
 	for (i=0; i < reg_size; i++) {
-		if(ap0100_reg[i].is_command) {
-				dev_err(&client->dev, "%s:no commands in adjacent regs\n",
+		if(ap0100_reg[i].flags) {
+				dev_err(&client->dev, "%s:no flags in adjacent regs\n",
 						__func__);
 				return -EINVAL;
 		} else {
@@ -549,12 +586,20 @@ static int _ap0100_handle_registers(struct i2c_client * client,
 	int i;
 	int err;
 	for (i=0; i < reg_size; i++) {
-		if(ap0100_reg[i].is_command) {
+		if(ap0100_reg[i].flags & WRITE_IS_CMD) {
 			err = _AM_send_command(client, ap0100_reg[i].data, error_count);
 			if(err < 0) {
 				dev_err(&client->dev, "%s:command error: err=%d\n",
 						__func__, err);
 			}
+		} else if (ap0100_reg[i].flags & WRITE_IS_UNCHECKED) {
+			if(ap0100_reg[i].data_size != 1) {
+				dev_err(&client->dev, "Only data_size = 1 is handled for "
+						"unchecked writes");
+				return -EINVAL;
+			}
+			err =_AM_write_unchecked_reg(client,ap0100_reg[i].reg_addr,
+						ap0100_reg[i].data, error_count);
 		} else {
 			err = _AM_write_reg(client, ap0100_reg[i].reg_addr,
 					ap0100_reg[i].data, ap0100_reg[i].data_size, error_count);
@@ -574,7 +619,7 @@ static int _ap0100_m034_test_mode(struct ap0100_m034_data* data)
 			{2, REG_LOGICAL_ADDR_ACCESS, 0xC88C},
 			{1, REG_CAM_MODE_SELECT, 0x00},
 			{2, REG_CMD_PARAMS_POOL_0, 0x2800},
-			{0xC2, REG_CMD, CMD_SYS_SET_STATE, true},
+			{0xC2, REG_CMD, CMD_SYS_SET_STATE, WRITE_IS_CMD},
 	};
 
 	static const struct ap0100_m034_reg_data ap0100_test_mode_reg[] = {
@@ -585,7 +630,7 @@ static int _ap0100_m034_test_mode(struct ap0100_m034_data* data)
 			{4, REG_CAM_MODE_TEST_PATTERN_GREEN, 0x000000},
 			{4, REG_CAM_MODE_TEST_PATTERN_BLUE, 0x000000},
 			{2, REG_CMD_PARAMS_POOL_0, 0x2800},
-			{0xC2, REG_CMD, CMD_SYS_SET_STATE, true},
+			{0xC2, REG_CMD, CMD_SYS_SET_STATE, WRITE_IS_CMD},
 	};
 
 	int err;
@@ -607,7 +652,7 @@ static int _ap0100_m034_test_mode(struct ap0100_m034_data* data)
 	return _ap0100_m034_cmd_status(client, &data->error_count);
 }
 
-static int _ap0100_m034_sensor_init(struct ap0100_m034_data* data)
+static int _ap0100_m034_sensor_init(struct ap0100_m034_data* data, enum ap0100_m034_frame_mode new_mode)
 {
 	struct i2c_client *client = data->client;
 	struct device *dev = &client->dev;
@@ -616,20 +661,20 @@ static int _ap0100_m034_sensor_init(struct ap0100_m034_data* data)
 	struct ap0100_m034_reg_data ap0100_cmd_reg[] = {
 			{0x02, REG_LOGICAL_ADDR_ACCESS, 0x7C00 	},// LOGICAL_ADDRESS_ACCESS [CAM_SYSCTL_PLL_CONTROL]
 			{0x02, REG_CMD_PARAMS_POOL_0, 0x0000 	},// CMD_HANDLER_PARAMS_POOL_0
-			{0xC2, REG_CMD, CMD_INVOKE_CMD_SEQ, true},// COMMAND_REGISTER
+			{0xC2, REG_CMD, CMD_INVOKE_CMD_SEQ, WRITE_IS_CMD},// COMMAND_REGISTER
 	};
 
 	ret = _ap0100_m034_cmd_status(client, &data->error_count);
 	if(ret < 0)
 		return ret;
 
-	switch (data->mode) {
+	switch (new_mode) {
 		case MODE_720P_30:
-			ap0100_cmd_reg[1].data = 0;
+			ap0100_cmd_reg[1].data = STORED_CMD_720P_84MHz_yuv8_WDR;
 			dev_dbg(dev, "1280x720 mode");
 			break;
 		case MODE_960P_22_5:
-			ap0100_cmd_reg[1].data = 1;
+			ap0100_cmd_reg[1].data = STORED_CMD_960P_84MHz_yuv8_WDR;
 			dev_dbg(dev, "1280x960 mode");
 			break;
 		default:
@@ -651,7 +696,7 @@ static int _ap0100_m034_sensor_init(struct ap0100_m034_data* data)
 	ret = _ap0100_m034_test_mode(data);
 	if (ret >= 0) {
 		dev_dbg(dev, "init OK, mode = %d", data->mode);
-		data->ap0100_cur_mode = data->mode;
+		data->mode = new_mode;
 		data->ap0100_in_wdr_mode = 1;
 	} else {
 		dev_err(dev, "init failed!!");
@@ -752,7 +797,7 @@ static int _ap0100_validate_flash_inner(struct ap0100_m034_data *data, unsigned 
 static int _ap0100_validate_flash(struct ap0100_m034_data *data, unsigned addr, unsigned length, const u8 *buf)
 {
 	static const unsigned READ_FLASH_BLOCK = 8;
-	int ret = 0, tmpret;
+	int ret;
 
 	const unsigned total_to_read = length;
 	const unsigned start_addr = addr;
@@ -768,21 +813,17 @@ static int _ap0100_validate_flash(struct ap0100_m034_data *data, unsigned addr, 
 			dev_err(data->dev,"Validate %u(%u):%u%%\n", start_addr, total_to_read, percent_done);
 		}
 
-		tmpret = _ap0100_validate_flash_inner(data, addr, READ_FLASH_BLOCK, buf);
-		if(tmpret < 0) {
+		ret = _ap0100_validate_flash_inner(data, addr, READ_FLASH_BLOCK, buf);
+		if(ret < 0) {
 			return ret;
 		}
 		addr += READ_FLASH_BLOCK;
 		buf += READ_FLASH_BLOCK;
 	}
 	if(length == 0)
-		return ret;
+		return 0;
 
-	tmpret = _ap0100_validate_flash_inner(data, addr, length, buf);
-	if(tmpret < 0) {
-		ret = tmpret;
-	}
-	return ret;
+	return _ap0100_validate_flash_inner(data, addr, length, buf);
 }
 
 /*Validates writes to registers were correct but does not validate flash.  Flash validation is performed
@@ -870,7 +911,7 @@ static int _ap0100_write_flash(struct ap0100_m034_data *data, unsigned addr, uns
 		unsigned current_complete = (total_to_write - length)*100;
 		if(current_complete/total_to_write > percent_done) {
 			percent_done = current_complete/total_to_write;
-			dev_err(data->dev,"Validate %u(%u):%u%%\n", start_addr, total_to_write, percent_done);
+			dev_err(data->dev,"Write %u(%u):%u%%\n", start_addr, total_to_write, percent_done);
 		}
 
 		to_write = (length > MAX_BYTES_PER_WRITE) ? MAX_BYTES_PER_WRITE : length;
@@ -1063,7 +1104,7 @@ static int _ap0100_erase_flash_block(struct ap0100_m034_data *data, u32 addr)
 	u8 ff[16];
 	struct ap0100_m034_reg_data erase_flash_regs[] = {
 			{4, REG_CMD_PARAMS_POOL_0, },
-			{0xC2, REG_CMD, CMD_FLASH_ERASE_BLOCK, true },
+			{0xC2, REG_CMD, CMD_FLASH_ERASE_BLOCK, WRITE_IS_CMD },
 	};
 
 	erase_flash_regs[0].data = addr;
@@ -1333,30 +1374,52 @@ release_fw:
 	return ret;
 }
 
-/* update the mode val between WDR & SDR */
-/* mode 0 - 3 are WDR, mode 4 - 7 are SDR correspondingly */
-static int _ap0100_update_mode_val(struct ap0100_m034_data *data, int wdr)
-{
-	if (wdr) {
-		if ( data->ap0100_cur_mode >= 4 && data->ap0100_cur_mode <= 7)
-			return data->ap0100_cur_mode - 4;
-	} else {
-		if ( data->ap0100_cur_mode <  4 && data->ap0100_cur_mode >= 0)
-			return data->ap0100_cur_mode + 4;
-	}
-	
-	return data->ap0100_cur_mode;
-}
-
 static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap0100_set_mode mode)
 {
 	struct i2c_client *client = data->client;
 	struct device *dev = &client->dev;
-	int err;
+	int err, i;
+#define HANDLE_REGS(_x_) do { \
+		err = _ap0100_handle_registers(client, _x_, ARRAY_SIZE(_x_), &data->error_count); \
+}while(0)
+
 	struct ap0100_m034_reg_data ap0100_cmd_reg[] = {
 			{0x02, REG_LOGICAL_ADDR_ACCESS, 0x7C00 	},// LOGICAL_ADDRESS_ACCESS [CAM_SYSCTL_PLL_CONTROL]
 			{0x02, REG_CMD_PARAMS_POOL_0, 0x0000 	},// CMD_HANDLER_PARAMS_POOL_0
-			{0xC2, REG_CMD, CMD_INVOKE_CMD_SEQ, true},// COMMAND_REGISTER
+			{0xC2, REG_CMD, CMD_INVOKE_CMD_SEQ, WRITE_IS_CMD},// COMMAND_REGISTER
+	};
+	struct ap0100_m034_reg_data ae_reg[] = {
+			{0x1, REG_CAM_AET_AEMODE, },
+			{0x1, REG_CAM_AWB_MODE, },
+			{0xC2, REG_CMD, CMD_SEQUENCER_REFRESH, WRITE_IS_CMD},
+	};
+	struct ap0100_m034_reg_data set_exposure_time_reg[] = {
+			{0x2, REG_CAM_AET_EXPOSURE_TIME_MS},
+			{0x1, REG_CAM_SENSOR_CONTROL_REQUEST, 0x01, WRITE_IS_UNCHECKED},
+	};
+	struct ap0100_m034_reg_data set_target_luma_reg[] = {
+			{0x2, REG_AE_TRACK_ALGO, 0x0035},
+			{0x2, REG_AE_TRACK_AVG_LOG_Y_TARGET},
+	};
+	struct ap0100_m034_reg_data auto_target_luma_reg[] = {
+			{0x2, REG_AE_TRACK_ALGO, 0x003D},
+	};
+	struct ap0100_m034_reg_data set_color_temperature_reg[] = {
+			{0x02, REG_CAM_AWB_COLOR_TEMPERATURE},
+			{0x1, REG_CAM_SENSOR_CONTROL_REQUEST, 0x02, WRITE_IS_UNCHECKED},
+	};
+	struct ap0100_m034_reg_data indoor_mode_reg[] = {
+			{0x1, REG_CAM_AET_AEMODE},
+			{2, REG_CMD_PARAMS_POOL_0, 0x2800},
+			{0xC2, REG_CMD, CMD_SYS_SET_STATE, WRITE_IS_CMD},
+	};
+	struct ap0100_m034_reg_data flicker_reg[] = {
+			{0x1, REG_CAM_AET_FLICKER_FREQ_HZ},
+			{2, REG_CMD_PARAMS_POOL_0, 0x2800},
+			{0xC2, REG_CMD, CMD_SYS_SET_STATE, WRITE_IS_CMD},
+	};
+	struct ap0100_m034_reg_data pga_reg[] = {
+			{0x02, REG_CAM_PGA_PGA_CONTROL},
 	};
 
 	err = _ap0100_m034_cmd_status(client, &data->error_count);
@@ -1366,34 +1429,111 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 	switch (mode) {
 		case MODE_NO_FLIP_NO_MIRROR:
 			dev_dbg(dev, "ap0100 set cmd : MODE_NO_FLIP_NO_MIRROR");
-			ap0100_cmd_reg[1].data = 0x0a;
+			ap0100_cmd_reg[1].data = STORED_CMD_Image_Orientation_original;
+			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_FLIP_IMAGE:
-			ap0100_cmd_reg[1].data = 0x0b;
+			ap0100_cmd_reg[1].data = STORED_CMD_Flip;
 			dev_dbg(dev, "ap0100 set cmd : MODE_FLIP_IMAGE");
+			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_MIRROR_IMAGE:
-			ap0100_cmd_reg[1].data = 0x0c;
+			ap0100_cmd_reg[1].data = STORED_CMD_Mirror;
 			dev_dbg(dev, "ap0100 set cmd : MODE_MIRROR_IMAGE");
+			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_FLIP_N_MIRROR:
-			ap0100_cmd_reg[1].data = 0x0d;
+			ap0100_cmd_reg[1].data = STORED_CMD_Flip_And_Mirror;
 			dev_dbg(dev, "ap0100 set cmd : MODE_FLIP_N_MIRROR");
+			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_WDR_MODE:
-			ap0100_cmd_reg[1].data = _ap0100_update_mode_val(data, 1);
+			ap0100_cmd_reg[1].data = data->mode + STORED_CMD_WDR_START;
 			dev_dbg(dev, "ap0100 set cmd : MODE_WDR_MODE");
+			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_SDR_MODE:
-			ap0100_cmd_reg[1].data = _ap0100_update_mode_val(data, 0);
+			ap0100_cmd_reg[1].data = data->mode + STORED_CMD_SDR_START;
 			dev_dbg(dev, "ap0100 set cmd : MODE_SDR_MODE");
+			HANDLE_REGS(ap0100_cmd_reg);
+			break;
+		case MODE_AE_OFF:
+			ae_reg[0].data = 0xA0;
+			ae_reg[1].data = 0x02;
+			dev_dbg(dev,"ap0100 set cmd : CMD_AE_OFF\n");
+			HANDLE_REGS(ae_reg);
+			break;
+		case MODE_AE_ON:
+			ae_reg[0].data = 0x00;
+			ae_reg[1].data = 0x00;
+			dev_dbg(dev,"ap0100 set cmd : CMD_AE_ON\n");
+			HANDLE_REGS(ae_reg);
+			break;
+		case MODE_SET_EXP_TIME:
+			set_exposure_time_reg[0].data = data->cam_param_s.exp_time;
+			dev_dbg(dev, "ap0100 set cmd : CMD_SET_EXP_TIME\n");
+			HANDLE_REGS(set_exposure_time_reg);
+			break;
+		case MODE_SET_TARGET_LUMA:
+			set_target_luma_reg[1].data = data->cam_param_s.luma_target;
+			dev_dbg(dev, "ap0100 set cmd : CMD_SET_TARGET_LUMA\n");
+			HANDLE_REGS(set_target_luma_reg);
+		break;
+		case MODE_AUTO_TARGET_LUMA:
+			HANDLE_REGS(auto_target_luma_reg);
+			break;
+		case MODE_SET_COLOR_TEMPERATURE:
+			set_color_temperature_reg[0].data = data->cam_param_s.color_temperature;
+			dev_dbg(dev, "ap0100 set cmd : CMD_SET_COLOR_TEMPERATURE\n");
+			HANDLE_REGS(set_color_temperature_reg);
+			break;
+		case MODE_SET_AE_WEIGHT_TABLE:
+			/*TODO: if this could be converted to an enum of different weights then
+			 * the v4l2 subdev control interface would work here (see v4l2-controls.txt and
+			 * sub-device drivers)
+			 */
+			err = 0;
+			dev_dbg(dev, "ap0100 set cmd : CMD_SET_AE_WEIGHT_TABLE\n");
+			for(i = 0; i < 25 && err >= 0; i++) {
+				err = _AM_write_reg(client, REG_RULE_AE_WEIGHT_TABLE_0_0 + i,
+						data->cam_param_s.ae_weight_table[i], 1, &data->error_count);
+			}
+			break;
+		case MODE_INDOOR_MODE_ON:
+			indoor_mode_reg[0].data = 0x1;
+			dev_dbg(dev, "ap0100 set cmd : CMD_INDOOR_MODE_ON\n");
+			HANDLE_REGS(indoor_mode_reg);
+			break;
+		case MODE_INDOOR_MODE_OFF:
+			indoor_mode_reg[0].data = 0x0;
+			dev_dbg(dev, "ap0100 set cmd : CMD_INDOOR_MODE_OFF\n");
+			HANDLE_REGS(indoor_mode_reg);
+			break;
+		case MODE_FLICKER_50HZ:
+			flicker_reg[0].data = 0x32;
+			dev_dbg(dev, "ap0100 set cmd : CMD_FLICKER_50HZ\n");
+			HANDLE_REGS(flicker_reg);
+			break;
+		case MODE_FLICKER_60HZ:
+			flicker_reg[0].data = 0x3C;
+			dev_dbg(dev, "ap0100 set cmd : CMD_FLICKER_60HZ\n");
+			HANDLE_REGS(flicker_reg);
+			break;
+		case MODE_PGA_ON:
+			pga_reg[0].data = 0x0001;
+			dev_dbg(dev, "ap0100 set cmd : CMD_PGA_ON\n");
+			HANDLE_REGS(pga_reg);
+			break;
+		case MODE_PGA_OFF:
+			pga_reg[0].data = 0x0000;
+			dev_dbg(dev, "ap0100 set cmd : CMD_PGA_OFF\n");
+			HANDLE_REGS(pga_reg);
 			break;
 		default:
 			dev_dbg(dev, "ap0100 set cmd : cmd not supported ");
 			return -EINVAL;
 	}
 
-	err = _ap0100_handle_registers(client, ap0100_cmd_reg, ARRAY_SIZE(ap0100_cmd_reg), &data->error_count);
 	if(err < 0)
 		return err;
 
@@ -1405,16 +1545,15 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 	} else {
 		dev_info(dev, "ap0100 set cmd OK");
 		// update mode based on WDR or SDR
-		if ( mode == 4) { // MODE_WDR_MODE
-			data->ap0100_cur_mode = _ap0100_update_mode_val(data, 1);
+		if ( mode == MODE_WDR_MODE) { // MODE_WDR_MODE
 			data->ap0100_in_wdr_mode = 1;
-		} else if ( mode == 5) {
-			data->ap0100_cur_mode = _ap0100_update_mode_val(data, 0);
+		} else if ( mode == MODE_SDR_MODE) {
 			data->ap0100_in_wdr_mode = 0;
 		}
 	}
-	
+
 	return err;
+#undef HANDLE_REGS
 }
 
 static int _ap0100_m034_sensor_mode_init(struct ap0100_m034_data* data)
@@ -1441,9 +1580,8 @@ static int _ap0100_m034_sensor_mode_init(struct ap0100_m034_data* data)
 	return 0;
 }
 
-static void _ap0100_m034_I2C_test(struct i2c_client * client)
+static void _ap0100_m034_I2C_test(struct i2c_client * client, unsigned cycles)
 {
-	static const int TEST_CYCLES = 10000;
 	struct device *dev = &client->dev;
 	static const u16 reg = 0xCA90;  // a register for testing
 	unsigned val, w_val;
@@ -1460,10 +1598,10 @@ static void _ap0100_m034_I2C_test(struct i2c_client * client)
 	r_retry_cnt = 0;
 	check_cnt = 0;
 	fail_cnt = 0;
-	for (i=0; i< TEST_CYCLES; i++) {
-		if ( i % (TEST_CYCLES / 100) == 0) {
+	for (i=0; i< cycles; i++) {
+		if ( i % (cycles / 100) == 0) {
 			dev_err(dev, "test in progress : %d%%, w_retry_cnt = %d, r_retry_cnt = %d, check_cnt=%d", \
-				i / (TEST_CYCLES / 100) , w_retry_cnt, r_retry_cnt, check_cnt);
+				i / (cycles / 100) , w_retry_cnt, r_retry_cnt, check_cnt);
 			dev_err(dev, "                         fail_cnt = %d",  \
 				fail_cnt);
 		}
@@ -1515,7 +1653,7 @@ static void _ap0100_m034_I2C_test(struct i2c_client * client)
 
 	dev_err(dev, "ap0100 i2c test %s !, total test count = %d, fail_cnt=%d, w_retry_cnt = %d, "
 			"r_retry_cnt = %d, check_cnt = %d, max retries=%d, total transactions=%d\n",
-				fail_cnt == 0 ? "passed" : "failed", TEST_CYCLES, fail_cnt, w_retry_cnt,
+				fail_cnt == 0 ? "passed" : "failed", cycles, fail_cnt, w_retry_cnt,
 						r_retry_cnt, check_cnt, max_retry_cnt,total_transactions);
 }
 
@@ -1523,8 +1661,13 @@ static ssize_t ap0100_m034_i2c_test(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
 {
 	struct ap0100_m034_data* data = to_ap0100_m034_from_dev(dev);
+	unsigned val;
+	if(kstrtouint(buf, 10, &val) || val < 100) {
+		dev_err(dev,"Must supply test cycles > 100 in decimal.");
+		return count;
+	}
 	mutex_lock(&data->lock);
-	_ap0100_m034_I2C_test(data->client);
+	_ap0100_m034_I2C_test(data->client, val);
 	mutex_unlock(&data->lock);
 	return count;
 }
@@ -1555,27 +1698,6 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 
 	mutex_lock(&data->lock);
 	switch (data->cur_sss_status) {
-		case SSS_UPDATE:
-			for(i=0; i < RETRIES; i++) {
-				cmd_status = _ap0100_m034_cmd_status(client, &data->error_count);
-				if (cmd_status >= 0)
-					break;
-				dev_dbg(dev, "%s, cmd retry", __func__);
-			}
-			ret = snprintf(buf, PAGE_SIZE, "%d\n", cmd_status);
-			break;
-
-		case SSS_SENSOR_READ:
-			if (data->sensor_read_len <= 0) {
-				ret = 0;
-				goto out;
-			}
-
-			memcpy(buf, data->read_buf, data->sensor_read_len);
-			ret = data->sensor_read_len;
-			data->sensor_read_len = 0;
-			break;
-
 		case SSS_SENSOR_SET_CMD:
 			dev_dbg(dev, "%s, SSS_SENSOR_SET_CMD ", __func__);
 			for(i = 0; i < RETRIES; i++) {
@@ -1594,17 +1716,12 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 			dev_err(dev, "%s: unknown cur_sss_status %d", __func__, data->cur_sss_status);
 			break;
 	}
-out:
 	mutex_unlock(&data->lock);
 	return ret;
 }
 
 static enum SENSOR_SYSFS_STATUS _check_buf_command(const char * buf)
 {
-	if(strncmp(buf,SENSOR_UPDATE_UUID,sizeof(SENSOR_UPDATE_UUID)-1) == 0)
-		return SSS_UPDATE;
-	if(strncmp(buf,SENSOR_READ_UUID,sizeof(SENSOR_READ_UUID)-1) == 0)
-		return SSS_SENSOR_READ;
 	if(strncmp(buf,SENSOR_SET_CMD_UUID,sizeof(SENSOR_SET_CMD_UUID)-1) == 0)
 		return SSS_SENSOR_SET_CMD;
 	return SSS_IDLE;
@@ -1614,9 +1731,7 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
-	struct i2c_client *client = data->client;
 	static const int RETRIES=5;
-	u16 reg_addr;
 	unsigned char sensor_mode;
 	int i;
 	int err = 0;
@@ -1626,54 +1741,20 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 	data->cur_sss_status = _check_buf_command(buf);
 
 	switch (data->cur_sss_status  ) {
-		case SSS_UPDATE :
-			if (!data->already_reset) {
-				err = _ap0100_m034_reset(data);
-				if(err < 0)
-					goto out;
-				data->already_reset = true;
-			}
-			for(i=0; i < RETRIES; i++) {
-				err = _ap0100_m034_cmd_write(client, (char*)(buf + sizeof(SENSOR_UPDATE_UUID) -1),
-						count-sizeof(SENSOR_UPDATE_UUID)+1, &data->error_count);
-				if(err >= 0)
-					break;
-				dev_warn(dev, "%s, cmd write err:%d", __func__, err);
-			}
-			break;
-
-		case SSS_SENSOR_READ:
-			data->sensor_read_len = (buf[sizeof(SENSOR_READ_UUID)-1]) & 0x00ff;
-			reg_addr = ((buf[sizeof(SENSOR_READ_UUID)-1 + 1] << 8) & 0xff00) \
-				| (buf[sizeof(SENSOR_READ_UUID)-1 + 2] & 0x00ff);
-
-			if (!data->already_reset) {
-				err = _ap0100_m034_reset(data);
-				if(err < 0)
-					goto out;
-				data->already_reset = true;
-			}
-			for(i = 0; i < RETRIES; i++) {
-				err = _ap0100_m034_cmd_read(client, reg_addr,
-						data->read_buf, data->sensor_read_len, &data->error_count);
-				if(err >= 0)
-					break;
-				dev_warn(dev, "%s, cmd read err:%d", __func__, err);
-			}
-			break;
-
 		case SSS_SENSOR_SET_CMD:
-			if (count < sizeof(SENSOR_READ_UUID))
+			if (count < sizeof(SENSOR_SET_CMD_UUID))
 				break;
 
-			sensor_mode = (buf[sizeof(SENSOR_READ_UUID)-1 + 1]);
+			sensor_mode = (buf[sizeof(SENSOR_SET_CMD_UUID)-1 + 1]);
 
 			dev_dbg(dev, "%s, SSS_SENSOR_SET_CMD, read cmd %d", __func__, sensor_mode );
 
 			if (sensor_mode == MODE_INIT_MODE_BUF) {
 				_ap0100_m034_sensor_update_init_buf(data,
-						(unsigned char *)buf + sizeof(SENSOR_READ_UUID) + 1,
-						count - sizeof(SENSOR_READ_UUID)-1);
+						(unsigned char *)buf + sizeof(SENSOR_SET_CMD_UUID) + 1,
+						count - sizeof(SENSOR_SET_CMD_UUID)-1);
+			} else if (sensor_mode == MODE_INIT_PARAM_BUF) {
+				memcpy(&data->cam_param_s, (unsigned char *)buf + sizeof(SENSOR_SET_CMD_UUID) + 1, sizeof(data->cam_param_s));
 			} else if(sensor_mode >= MODE_CNT) {
 					dev_err(dev, "Bad sensor cmd %d", sensor_mode);
 					break;
@@ -1693,7 +1774,6 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 			dev_dbg(dev, "sensor sysfs command idle!");
 			break;
 	}
-out:
 	mutex_unlock(&data->lock);
 	return count;
 }
@@ -2087,8 +2167,7 @@ static	int ap0100_m034_s_mbus_fmt(struct v4l2_subdev *sd,
 		ret = -ENODEV;
 		goto out;
 	}
-	data->mode = mode;
-	ret = _ap0100_m034_sensor_init(data);
+	ret = _ap0100_m034_sensor_init(data, mode);
 	if(ret < 0)
 		goto out;
 
@@ -2104,6 +2183,7 @@ static int _ap0100_reset(struct ap0100_m034_data* data)
 	struct i2c_client *client = data->client;
 	unsigned  val;
 	int ret;
+	int i;
 
 	ret = device_reset(dev);
 	if (ret == -ENODEV)
@@ -2117,7 +2197,11 @@ static int _ap0100_reset(struct ap0100_m034_data* data)
 		dev_err(dev, "ap0100 found=0x%x", val);
 	}
 
-	ret = _AM_send_command(client, CMD_SYS_GET_STATE, &data->error_count);
+	ret = -EBUSY;
+	for(i=0;i < i2c_retries && ret == -EBUSY;i++) {
+		ret = _AM_send_command(client, CMD_SYS_GET_STATE, &data->error_count);
+		msleep(5);
+	}
 
 	if(ret < 0) {
 		dev_err(dev, "Get state returned %d", ret);
@@ -2141,7 +2225,7 @@ static int _ap0100_m034_probe(struct ap0100_m034_data* data)
 		goto error;
 	}
 
-	ret = _ap0100_m034_sensor_init(data);
+	ret = _ap0100_m034_sensor_init(data, MODE_720P_30);
 	if(ret < 0) {
 		goto error;
 	}
@@ -2183,6 +2267,8 @@ static ssize_t ap0100_m034_operational_store(struct device *dev,
 	}
 
 	mutex_lock(&data->lock);
+	if(!!val == data->operational)
+		goto out;
 
 	if(data->subdev.v4l2_dev != NULL) {
 		dev_err(dev,"v4l2 subdev still in use; please shut down %s.\n",
@@ -2233,17 +2319,6 @@ static struct attribute *init_attributes[] = {
 static const struct attribute_group init_attr_group = {
 	.attrs	= init_attributes,
 };
-
-static int _ap0100_m034_reset(struct ap0100_m034_data *data)
-{
-	int ret;
-	if(data->operational)
-		ret = _ap0100_m034_remove(data);
-	if(ret < 0)
-		return ret;
-
-	return _ap0100_m034_probe(data);
-}
 
 static struct v4l2_subdev_video_ops ap0100_m034_subdev_video_ops = {
 	.g_mbus_fmt	= ap0100_m034_g_mbus_fmt,
@@ -2307,14 +2382,17 @@ static int ap0100_m034_probe(struct i2c_client *client,
 	v4l2_set_subdevdata(subdev, client);
 	i2c_set_clientdata(client, subdev);
 
+	mutex_lock(&data->lock);
 	ret = sysfs_create_group(&dev->kobj, &init_attr_group);
 	if(ret < 0) {
 	   dev_err(dev,"Could not create sysfs file.\n");
-	   return ret;
+	   goto out;
 	}
 
 	_ap0100_m034_probe(data);
-	return 0;
+out:
+	mutex_unlock(&data->lock);
+	return ret;
 }
 
 static int ap0100_m034_remove(struct i2c_client *client)
@@ -2360,6 +2438,7 @@ static struct i2c_driver ap0100_m034_driver = {
 module_i2c_driver(ap0100_m034_driver);
 
 MODULE_AUTHOR("Leopard Imaging, Inc.");
+MODULE_AUTHOR("Sarah Newman <sarah.newman@computer.org>");
 MODULE_DESCRIPTION("ap0100_m034 Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");

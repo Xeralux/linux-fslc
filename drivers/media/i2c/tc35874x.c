@@ -335,10 +335,10 @@ static ssize_t tc35874x_csi_err(struct device *dev,
 {
 	struct tc35874x_data* data = to_tc35874x_from_dev(dev);
 	unsigned val;
-	int ret =tc35874x_read_reg(data->client,0x044C, &val, 4);
+	int ret =tc35874x_read_reg(data->client,0x044C, &val, 2);
 	if(ret < 0)
 		dev_err(&data->client->dev,"reg read error");
-	return sprintf(buf, "%08x\n", val);
+	return sprintf(buf, "%04x\n", val);
 }
 static DEVICE_ATTR(csi_err, 0444, (void *)tc35874x_csi_err, (void *)NULL);
 
@@ -347,10 +347,10 @@ static ssize_t tc35874x_csi_status(struct device *dev,
 {
 	struct tc35874x_data* data = to_tc35874x_from_dev(dev);
 	unsigned val;
-	int ret =tc35874x_read_reg(data->client,0x0410, &val, 4);
+	int ret =tc35874x_read_reg(data->client,0x0410, &val, 2);
 	if(ret < 0)
 		dev_err(&data->client->dev,"reg read error");
-	return sprintf(buf, "%08x\n", val);
+	return sprintf(buf, "%04x\n", val);
 }
 static DEVICE_ATTR(csi_status, 0444, (void *)tc35874x_csi_status, (void *)NULL);
 
@@ -359,10 +359,10 @@ static ssize_t tc35874x_csi_control(struct device *dev,
 {
 	struct tc35874x_data* data = to_tc35874x_from_dev(dev);
 	unsigned val;
-	int ret =tc35874x_read_reg(data->client,0x040c, &val, 4);
+	int ret =tc35874x_read_reg(data->client,0x040c, &val, 2);
 	if(ret < 0)
 		dev_err(&data->client->dev,"reg read error");
-	return sprintf(buf, "%08x\n", val);
+	return sprintf(buf, "%04x\n", val);
 }
 static DEVICE_ATTR(csi_control, 0444, (void *)tc35874x_csi_control, (void *)NULL);
 
@@ -371,10 +371,10 @@ static ssize_t tc35874x_csi_int(struct device *dev,
 {
 	struct tc35874x_data* data = to_tc35874x_from_dev(dev);
 	unsigned val;
-	int ret =tc35874x_read_reg(data->client,0x0414, &val, 2);
+	int ret =tc35874x_read_reg(data->client,0x0414, &val, 4);
 	if(ret < 0)
 		dev_err(&data->client->dev,"reg read error");
-	return sprintf(buf, "%04x\n", val);
+	return sprintf(buf, "%08x\n", val);
 }
 static DEVICE_ATTR(csi_int, 0444, (void *)tc35874x_csi_int, (void *)NULL);
 
@@ -572,6 +572,7 @@ static struct i2c_driver tc35874x_driver = {
 module_i2c_driver(tc35874x_driver);
 
 MODULE_AUTHOR("Leopard Imaging, Inc.");
+MODULE_AUTHOR("Sarah Newman <sarah.newman@computer.org>");
 MODULE_DESCRIPTION("tc35874x Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");

@@ -18,7 +18,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#define DEBUG
+//#define DEBUG
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -32,7 +32,7 @@
 #include <linux/regmap.h>
 
 
-struct mxc_parallel_cam {
+struct mxc_subdev_parallel_cam {
 	struct device *dev;
 	struct regmap *gpr;
 	struct v4l2_subdev	subdev;
@@ -41,7 +41,7 @@ struct mxc_parallel_cam {
 #define IMX6DL_GPR13_IPU_CSI0_MUX (0x07 << 0)
 #define IMX6DL_GPR13_IPU_CSI0_MUX_MIPI_CSI0 (0x0)
 #define IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0 (0x4)
-static void mxc_parallel_powerdown(struct mxc_parallel_cam *data, int powerdown)
+static void mxc_subdev_parallel_powerdown(struct mxc_subdev_parallel_cam *data, int powerdown)
 {
 	pr_debug("ssmn_camera_parallel: powerdown %d\n", powerdown);
 	if (powerdown) {
@@ -57,15 +57,15 @@ static void mxc_parallel_powerdown(struct mxc_parallel_cam *data, int powerdown)
 	msleep(1100);
 }
 
-static struct v4l2_subdev_ops mxc_parallel_subdev_ops = {
+static struct v4l2_subdev_ops mxc_subdev_parallel_subdev_ops = {
 };
 
-static int mxc_parallel_probe(struct platform_device *pdev)
+static int mxc_subdev_parallel_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct clk *sensor_clk;
 	struct v4l2_subdev	*subdev;
-	struct mxc_parallel_cam *data;
+	struct mxc_subdev_parallel_cam *data;
 	int ret;
 	int csi;
 
@@ -100,7 +100,7 @@ static int mxc_parallel_probe(struct platform_device *pdev)
 	}
 
 	subdev = &data->subdev;
-	v4l2_subdev_init(subdev, &mxc_parallel_subdev_ops);
+	v4l2_subdev_init(subdev, &mxc_subdev_parallel_subdev_ops);
 	subdev->owner = pdev->dev.driver->owner;
 	v4l2_set_subdevdata(subdev, data);
 	platform_set_drvdata(pdev, subdev);
@@ -110,41 +110,41 @@ static int mxc_parallel_probe(struct platform_device *pdev)
 
 	pr_debug("ssmn_camera_parallel: clk_prepare_enable\n");
 	clk_prepare_enable(sensor_clk);
-	mxc_parallel_powerdown(data,0);
+	mxc_subdev_parallel_powerdown(data,0);
 	return ret;
 }
 
-static int mxc_parallel_remove(struct platform_device *pdev)
+static int mxc_subdev_parallel_remove(struct platform_device *pdev)
 {
 	struct v4l2_subdev	*sd = platform_get_drvdata(pdev);
-	struct mxc_parallel_cam *data = container_of(sd, struct mxc_parallel_cam, subdev);
+	struct mxc_subdev_parallel_cam *data = container_of(sd, struct mxc_subdev_parallel_cam, subdev);
 
 	if(data->subdev.v4l2_dev != NULL) {
 		dev_err(&pdev->dev,"v4l2 subdev still in use; please shut down %s.\n",
 				data->subdev.v4l2_dev->name);
 	}
-	mxc_parallel_powerdown(data,1);
+	mxc_subdev_parallel_powerdown(data,1);
 	return 0;
 }
 
 
-static struct of_device_id mxc_parallel_dt_ids[] = {
-	{ .compatible = "fsl,mxc_parallel_cam" },
+static struct of_device_id mxc_subdev_parallel_dt_ids[] = {
+	{ .compatible = "fsl,mxc-subdev-parallel" },
 	{ /* sentinel */ }
 };
-MODULE_DEVICE_TABLE(of, mxc_parallel_dt_ids);
+MODULE_DEVICE_TABLE(of, mxc_subdev_parallel_dt_ids);
 
-static struct platform_driver mxc_parallel_driver = {
+static struct platform_driver mxc_subdev_parallel_driver = {
 	.driver = {
-		   .name = "mxc_parallel",
+		   .name = "mxc_subdev_parallel",
 		   .owner = THIS_MODULE,
-		   .of_match_table = of_match_ptr(mxc_parallel_dt_ids),
+		   .of_match_table = of_match_ptr(mxc_subdev_parallel_dt_ids),
 		   },
-	.probe = mxc_parallel_probe,
-	.remove = mxc_parallel_remove,
+	.probe = mxc_subdev_parallel_probe,
+	.remove = mxc_subdev_parallel_remove,
 };
 
-module_platform_driver(mxc_parallel_driver);
+module_platform_driver(mxc_subdev_parallel_driver);
 
 MODULE_AUTHOR("Sarah Newman <sarah.newman@computer.org>");
 MODULE_DESCRIPTION("mxc parallel v4l2_subdev driver");

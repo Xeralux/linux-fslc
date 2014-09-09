@@ -797,9 +797,8 @@ static ssize_t max9272_show_detected_link_errors(struct device *dev,
 }
 static DEVICE_ATTR(detected_link_errors, 0444, (void *)max9272_show_detected_link_errors, NULL);
 
-static void _max927x_i2c_test(struct i2c_client * client, const char *name, unsigned cycles)
+static void _max927x_i2c_test(struct i2c_client * client, struct device *dev, const char *name, unsigned cycles)
 {
-	struct device *dev = &client->dev;
 	static const u8 reg =  0x0A; // a register for testing
 	u8 val, w_val;
 	int w_retry_cnt, r_retry_cnt, check_cnt;
@@ -879,12 +878,12 @@ static ssize_t max9272_i2c_test(struct device *dev,
 {
 	struct max927x_data* data = to_max927x_from_dev(dev);
 	unsigned val;
-	if(kstrtouint(buf, 10, &val)) {
-		dev_err(dev,"Must supply test cycles in decimal.");
+	if(kstrtouint(buf, 10, &val) || val < 100) {
+		dev_err(dev,"Must supply test cycles > 100 in decimal.");
 		return count;
 	}
 	mutex_lock(&data->data_lock);
-	_max927x_i2c_test(data->deserializer_master ? data->master : data->slave, "max9272", val);
+	_max927x_i2c_test(data->deserializer_master ? data->master : data->slave, dev, "max9272", val);
 	mutex_unlock(&data->data_lock);
 	return count;
 }
@@ -895,12 +894,12 @@ static ssize_t max9271_i2c_test(struct device *dev,
 {
 	struct max927x_data* data = to_max927x_from_dev(dev);
 	unsigned val;
-	if(kstrtouint(buf, 10, &val)) {
-		dev_err(dev,"Must supply test cycles in decimal.");
+	if(kstrtouint(buf, 10, &val) || val < 100) {
+		dev_err(dev,"Must supply test cycles > 100 in decimal.");
 		return count;
 	}
 	mutex_lock(&data->data_lock);
-	_max927x_i2c_test(data->deserializer_master ? data->slave : data->master, "max9271", val);
+	_max927x_i2c_test(data->deserializer_master ? data->slave : data->master, dev, "max9271", val);
 	mutex_unlock(&data->data_lock);
 	return count;
 }
@@ -965,31 +964,31 @@ static int i2c_max927x_xfer(struct i2c_adapter *adap,
 			       struct i2c_msg msgs[], int num)
 {
 	struct max927x_data *data = adap->algo_data;
-	int i, j, ret = 0;
-	for(i = 0; i < num; i++) {
-		for(j = 0; j < i2c_retries; j++) {
-			/*this is delay rather than sleep so that it is more
-			 * predictable, meaning it is easier to guarantee that
-			 * what works under one workload will continue to work
-			 * under a different workload.
-			 */
-			unsigned delay = i2c_udelay;
-			while(delay > 1000) {
-				udelay(delay);
-				delay -= 1000;
-			}
-			udelay(delay);
-			ret = data->parent->algo->master_xfer(data->parent, &msgs[i], 1);
-			if(ret >= 0)
-				break;
-		}
-		if(j < I2C_RETRY_CNT_HIST)
-			data->i2c_retry_counts[j]++;
-		else
-			data->i2c_retry_counts[I2C_RETRY_CNT_HIST-1]++;
-		if(j == i2c_retries)
-			return ret;
+	int j, ret = 0;
+	unsigned delay = i2c_udelay;
+	/*this is delay rather than sleep so that it is more
+	 * predictable, meaning it is easier to guarantee that
+	 * what works under one workload will continue to work
+	 * under a different workload.
+    */
+	while(delay > 1000) {
+		udelay(delay);
+		delay -= 1000;
 	}
+	udelay(delay);
+	/*The messages must be sent all at once so that there is a repeated
+	 * start condition instead of start/stop in between the messages.  This
+	 * is required by one of the drivers using this adapter.
+	 */
+	for(j = 0; j < i2c_retries; j++) {
+		ret = data->parent->algo->master_xfer(data->parent, msgs,num);
+		if(ret >= 0)
+			break;
+	}
+	if(j < I2C_RETRY_CNT_HIST)
+		data->i2c_retry_counts[j]++;
+	else
+		data->i2c_retry_counts[I2C_RETRY_CNT_HIST-1]++;
 	return ret;
 }
 
@@ -1179,6 +1178,8 @@ static ssize_t max927x_operational_store(struct device *dev,
 	}
 
 	mutex_lock(&data->data_lock);
+	if(!!val == data->operational)
+		goto out;
 
 	if(data->subdev.v4l2_dev != NULL) {
 		dev_err(dev,"v4l2 subdev still in use; please shut down %s.\n",
@@ -1325,11 +1326,12 @@ static int max927x_probe(struct i2c_client *client,
 
 	data->deserializer_master = deserializer_master;
 
+	mutex_lock(&data->data_lock);
 
 	ret = sysfs_create_group(&dev->kobj, &init_attr_group);
 	if(ret < 0) {
 	   dev_err(dev,"Could not create sysfs file.\n");
-	   return ret;
+	  goto error1;
    }
 
 	ret = _max927x_slave_power_on(data);
@@ -1345,11 +1347,14 @@ static int max927x_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, subdev);
 
 	_max927x_probe(data);
+	mutex_unlock(&data->data_lock);
 	return 0;
 
 error2:
 	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
-	 return ret;
+error1:
+	mutex_unlock(&data->data_lock);
+	return ret;
 }
 
 static int max927x_remove(struct i2c_client *client)
@@ -1406,6 +1411,7 @@ static struct i2c_driver max927x_driver = {
 module_i2c_driver(max927x_driver);
 
 MODULE_AUTHOR("Leopard Imaging, Inc.");
+MODULE_AUTHOR("Sarah Newman <sarah.newman@computer.org>");
 MODULE_DESCRIPTION("max927x Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");

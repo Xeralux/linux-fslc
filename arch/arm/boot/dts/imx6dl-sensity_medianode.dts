@@ -79,13 +79,13 @@
 	};
 	
 	camera_ch1 {
-		compatible = "fsl,v4l-subdev-pipeline";
+		compatible = "fsl,v4l2-subdev-pipeline";
 		mxc-node = <&ssmn_mipi>;
 	};
 
 	/* Camera driver on MIPI interface */
 	ssmn_mipi: mxc_mipi_ch1 {
-		compatible = "fsl,mxc_mipi_cam";
+		compatible = "fsl,mxc-subdev-mipi";
 		clocks = <&clks 201>;
 		clock-names = "csi_mclk";
 		csi_id = <1>;
@@ -103,12 +103,12 @@
 	};
 
 	camera_ch0 {
-		compatible = "fsl,v4l-subdev-pipeline";
+		compatible = "fsl,v4l2-subdev-pipeline";
 		mxc-node = <&ssmn_parallel>;
 	};
 
 	ssmn_parallel: mxc_parallel_ch0 {
-		compatible = "fsl,mxc_parallel_cam";
+		compatible = "fsl,mxc-subdev-parallel";
 		pinctrl-names = "default";
 		pinctrl-0 = <&pinctrl_ipu1_2_mn>;
 		clocks = <&clks 201>;
@@ -124,9 +124,9 @@
 			remote-endpoint = <&tc35874x_mn_parallel>;
 				bus-width = <10>; /*technically true but only 8 are used now*/
 				data-shift = <0>;
-				/*hsyc-active = <1>; ?*/
-				/*vsync-active = <1>; ?*/
-				/*pclk-sample = <1>; ?*/
+				/*hsync-active = <0>; ?*/
+				/*vsync-active = <0>; ?*/
+				/*pclk-sample = <0>; ?*/
 			};
 		};
 	};
@@ -148,9 +148,9 @@
 					remote-endpoint = <&mxc_parallel_0_endpoint>;
 					bus-width = <10>; /*technically true but only 8 are used now*/
 					data-shift = <0>;
-					/*hsyc-active = <1>; ?*/
-					/*vsync-active = <1>; ?*/
-					/*pclk-sample = <1>; ?*/
+					/*hsync-active = <0>; ?*/
+					/*vsync-active = <0>; ?*/
+					/*pclk-sample = <0>; ?*/
 				};
 			};
 			port@1 {
@@ -270,9 +270,9 @@
 					remote-endpoint = <&tc35874x_ch0_parallel>;
 					bus-width = <10>; /*technically true but only 8 are used now*/
 					data-shift = <0>;
-					/*hsyc-active = <1>; ?*/
-					/*vsync-active = <1>; ?*/
-					/*pclk-sample = <1>; ?*/
+					/*hsync-active = <0>; ?*/
+					/*vsync-active = <0>; ?*/
+					/*pclk-sample = <0>; ?*/
 				};
 			};
 
@@ -281,9 +281,9 @@
 					remote-endpoint = <&ap0100_ch0_endpoint>;
 					bus-width = <10>; /*technically true but only 8 are used now*/
 					data-shift = <0>;
-					hsyc-active = <1>;
-					vsync-active = <1>;
-					pclk-sample = <1>;
+					hsync-active = <0>;
+					vsync-active = <0>;
+					pclk-sample = <0>;
 				};
 			};
 
@@ -292,9 +292,9 @@
 					remote-endpoint = <&adv7611_ch0_endpoint>;
 					bus-width = <8>;
 					data-shift = <0>;
-					hsyc-active = <1>;
-					vsync-active = <1>;
-					pclk-sample = <1>;
+					hsync-active = <0>;
+					vsync-active = <0>;
+					pclk-sample = <0>;
 				};
 			};
 		};
@@ -314,9 +314,9 @@
 						remote-endpoint = <&max927x_ch0_serializer_1>;
 						bus-width = <10>; /*technically true but only 8 are used now*/
 						data-shift = <0>;
-						/*hsyc-active = <1>; ?*/
-						/*vsync-active = <1>; ?*/
-						/*pclk-sample = <1>; ?*/
+						/*hsync-active = <0>; ?*/
+						/*vsync-active = <0>; ?*/
+						/*pclk-sample = <0>; ?*/
 					};
 				};
 			};
@@ -352,9 +352,9 @@
 							remote-endpoint = <&max927x_ch0_serializer_2>;
 							bus-width = <8>;
 							data-shift = <0>;
-							hsyc-active = <1>;
-							vsync-active = <1>;
-							pclk-sample = <1>;
+							hsync-active = <0>;
+							vsync-active = <0>;
+							pclk-sample = <0>;
 						};
 					};
 				};
@@ -383,9 +383,9 @@
 							remote-endpoint = <&max927x_ch0_deserializer>;
 							bus-width = <10>; /*technically true but only 8 are used now*/
 							data-shift = <0>;
-							/*hsyc-active = <1>; ?*/
-							/*vsync-active = <1>; ?*/
-							/*pclk-sample = <1>; ?*/
+							/*hsync-active = <0>; ?*/
+							/*vsync-active = <0>; ?*/
+							/*pclk-sample = <0>; ?*/
 						};
 					};
 				};
@@ -425,9 +425,9 @@
 					remote-endpoint = <&tc35874x_ch1_parallel>;
 					bus-width = <10>; /*technically true but only 8 are used now*/
 					data-shift = <0>;
-					/*hsyc-active = <1>; ?*/
-					/*vsync-active = <1>; ?*/
-					/*pclk-sample = <1>; ?*/
+					/*hsync-active = <0>; ?*/
+					/*vsync-active = <0>; ?*/
+					/*pclk-sample = <0>; ?*/
 				};
 			};
 
@@ -436,9 +436,9 @@
 					remote-endpoint = <&ap0100_ch1_endpoint>;
 					bus-width = <10>; /*technically true but only 8 are used now*/
 					data-shift = <0>;
-					/*hsyc-active = <1>; ?*/
-					/*vsync-active = <1>; ?*/
-					/*pclk-sample = <1>; ?*/
+					/*hsync-active = <0>; ?*/
+					/*vsync-active = <0>; ?*/
+					/*pclk-sample = <0>; ?*/
 				};
 			};
 
@@ -447,9 +447,9 @@
 					remote-endpoint = <&adv7611_ch1_endpoint>;
 					bus-width = <8>; /*technically true but only 8 are used now*/
 					data-shift = <0>;
-					/*hsyc-active = <1>; ?*/
-					/*vsync-active = <1>; ?*/
-					/*pclk-sample = <1>; ?*/
+					/*hsync-active = <0>; ?*/
+					/*vsync-active = <0>; ?*/
+					/*pclk-sample = <0>; ?*/
 				};
 			};
 		};
@@ -469,9 +469,9 @@
 						remote-endpoint = <&max927x_ch1_serializer_1>;
 						bus-width = <10>; /*technically true but only 8 are used now*/
 						data-shift = <0>;
-						/*hsyc-active = <1>; ?*/
-						/*vsync-active = <1>; ?*/
-						/*pclk-sample = <1>; ?*/
+						/*hsync-active = <0>; ?*/
+						/*vsync-active = <0>; ?*/
+						/*pclk-sample = <0>; ?*/
 					};
 				};
 			};
@@ -507,9 +507,9 @@
 							remote-endpoint = <&max927x_ch1_serializer_2>;
 							bus-width = <8>;
 							data-shift = <0>;
-							hsyc-active = <1>;
-							vsync-active = <1>;
-							pclk-sample = <1>;
+							hsync-active = <0>;
+							vsync-active = <0>;
+							pclk-sample = <0>;
 						};
 					};
 				};
@@ -537,9 +537,9 @@
 							remote-endpoint = <&max927x_ch1_deserializer>;
 							bus-width = <10>; /*technically true but only 8 are used now*/
 							data-shift = <0>;
-							/*hsyc-active = <1>; ?*/
-							/*vsync-active = <1>; ?*/
-							/*pclk-sample = <1>; ?*/
+							/*hsync-active = <0>; ?*/
+							/*vsync-active = <0>; ?*/
+							/*pclk-sample = <0>; ?*/
 						};
 					};
 				};

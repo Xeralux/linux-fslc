@@ -18,7 +18,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#define DEBUG
+//#define DEBUG
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -81,15 +81,8 @@ struct pixelcode_map {
 static const struct pixelcode_map pixelcode_mappings[] =
 {
 		{V4L2_MBUS_FMT_UYVY8_2X8, V4L2_PIX_FMT_UYVY},
+		{V4L2_MBUS_FMT_YUYV8_2X8, V4L2_PIX_FMT_YUYV},
 };
-
-#define V4L2_DV_CUSTOM_1280X720P30 { \
-	.type = V4L2_DV_BT_656_1120, \
-	V4L2_INIT_BT_TIMINGS(1280, 720, 0, \
-		V4L2_DV_HSYNC_POS_POL | V4L2_DV_VSYNC_POS_POL, \
-		47000000, 1, 10, 1, 1, 28, 1, 0, 0, 0, \
-		V4L2_DV_BT_STD_CEA861, V4L2_DV_FL_CAN_REDUCE_FPS) \
-}
 
 struct mxc_pipeline_mode_info {
 	u32 mode;
@@ -103,6 +96,12 @@ struct mxc_timings_map {
 	struct v4l2_fract fi;
 };
 
+#define V4L2_DV_CUSTOM_1280X720P30 {.type = V4L2_DV_BT_656_1120, \
+			.bt = {.width = 1280, .height = 720, .interlaced = 0, \
+				.polarities = V4L2_DV_HSYNC_POS_POL | V4L2_DV_VSYNC_POS_POL, \
+				.pixelclock = 29909520, .hfrontporch = 1, .hsync = 80, \
+				.hbackporch = 1, .vfrontporch = 3, .vsync = 5, .vbackporch = 4}}
+
 /*Mode is defined by frame size.  The timings are for setting only.
 */
 #define MODE_TEST_START 10
@@ -110,6 +109,7 @@ static struct mxc_pipeline_mode_info mxc_pipeline_mode_info[] =
 {
 		{0, 1280, 720, V4L2_DV_CUSTOM_1280X720P30},
 		{1, 1280, 960, V4L2_DV_BT_DMT_1280X960P60},
+		{2, 640, 480, V4L2_DV_BT_CEA_640X480P59_94},
 		/*2 is  input device default*/
 		/*MODE_TEST_START is reserved for test input*/
 };
@@ -118,6 +118,8 @@ static struct mxc_pipeline_mode_info mxc_pipeline_mode_info[] =
 static struct mxc_timings_map mxc_timings_map[] = {
 		{ V4L2_DV_CUSTOM_1280X720P30, { .denominator = 30, .numerator = 1,}},
 		{ V4L2_DV_BT_CEA_1280X720P30, { .denominator = 30, .numerator = 1,}},
+		{ V4L2_DV_BT_DMT_1280X960P60, { .denominator = 60, .numerator = 1}},
+		{ V4L2_DV_BT_CEA_640X480P59_94, { .denominator = 5994, .numerator = 100,}},
 };
 
 static int _run_from_sink(struct mxc_pipeline_data *data,
@@ -125,9 +127,10 @@ static int _run_from_sink(struct mxc_pipeline_data *data,
 							int (*undofunc)(struct v4l2_subdev *sd))
 {
 	int i, ret = 0;
+	int tmpret;
 	for(i=data->max_subdev; i >= 0; i--) {
 		struct v4l2_subdev *sd = data->subdevs[i];
-		int tmpret = dofunc(sd);
+		tmpret = dofunc(sd);
 		if(tmpret == -ENOIOCTLCMD || tmpret >= 0)
 			continue;
 		if(undofunc != NULL)
@@ -137,8 +140,7 @@ static int _run_from_sink(struct mxc_pipeline_data *data,
 	}
 	return ret;
 unwind:
-	if(undofunc == NULL)
-		return ret;
+	ret = tmpret;
 	for(; i <= data->max_subdev; i++ ) {
 		struct v4l2_subdev *sd = data->subdevs[i];
 		undofunc(sd);
@@ -152,9 +154,10 @@ static int _run_from_source(struct mxc_pipeline_data *data,
 							int (*undofunc)(struct v4l2_subdev *sd))
 {
 	int i, ret = 0;
+	int tmpret;
 	for(i=0; i <= data->max_subdev; i++) {
 		struct v4l2_subdev *sd = data->subdevs[i];
-		int tmpret = dofunc(sd);
+		tmpret = dofunc(sd);
 		if(tmpret == -ENOIOCTLCMD || tmpret >= 0)
 			continue;
 		if(undofunc != NULL)
@@ -164,8 +167,7 @@ static int _run_from_source(struct mxc_pipeline_data *data,
 	}
 	return ret;
 unwind:
-	if(undofunc == NULL)
-		return ret;
+	ret = tmpret;
 	for(; i >= 0; i--) {
 		struct v4l2_subdev *sd = data->subdevs[i];
 		undofunc(sd);
@@ -233,7 +235,7 @@ static int _parse_mbus_framefmt(struct v4l2_mbus_framefmt *mf, struct mxc_pipeli
 			break;
 	}
 	if(i == ARRAY_SIZE(pixelcode_mappings)) {
-		dev_err(data->dev,"%s:no mapping for code %d",__func__, mf->code);
+		dev_err(data->dev,"%s:no mapping for code %x",__func__, mf->code);
 		return -EINVAL;
 	}
 	sensor->pix.pixelformat = pixelcode_mappings[i].pixelformat;
@@ -462,13 +464,15 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 
 	ret = v4l2_device_call_until_err(&data->v4l2_dev, 0,  video, try_mbus_fmt, &format.format);
 	if(ret < 0) {
-		dev_err(dev,"Incompatible mode %d\n", capturemode);
+		dev_err(dev,"Incompatible mode %d %dx%d, clrspc %x code %x \n", capturemode,
+			format.format.width, format.format.height, format.format.colorspace, format.format.code);
 		return -EINVAL;
 	}
 
 	ret = v4l2_device_call_until_err(&data->v4l2_dev, 0,  video, s_mbus_fmt, &format.format);
 	if(ret < 0) {
-		dev_err(dev,"Failed to set mode %d\n", capturemode);
+		dev_err(dev,"Failed to set mode %d %d x %d, clrspc %x code %x \n", capturemode,
+			format.format.width, format.format.height, format.format.colorspace, format.format.code);
 		return -EINVAL;
 	}
 
@@ -573,7 +577,11 @@ static int walk_mxc_pipeline(struct mxc_pipeline_data *data,
 		ret = -EPROBE_DEFER;
 		goto of_put;
 	}
-	device_lock(&client->dev);
+	if(!device_trylock(&client->dev)) {
+		ret = -EPROBE_DEFER;
+		goto of_put;
+	}
+
 	if (!client->driver ||
 	    !try_module_get(client->driver->driver.owner)) {
 		ret = -EPROBE_DEFER;
@@ -828,6 +836,8 @@ static ssize_t mxc_pipeline_operational_store(struct device *dev,
 
 	mutex_lock(&data->config_lock);
 	mutex_lock(&data->lock);
+	if(!!val == data->operational)
+		goto out;
 	if(data->running) {
 		dev_err(dev, "Cannot change operational state while running");
 		goto out;
@@ -903,23 +913,23 @@ static int mxc_pipeline_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id mxc_v4l2_pipeline_of_match[] = {
-	{ .compatible = "fsl,v4l-subdev-pipeline" },
+static const struct of_device_id mxc_pipeline_of_match[] = {
+	{ .compatible = "fsl,v4l2-subdev-pipeline" },
 	{ },
 };
-MODULE_DEVICE_TABLE(of, mxc_v4l2_pipeline_of_match);
+MODULE_DEVICE_TABLE(of, mxc_pipeline_of_match);
 
-static struct platform_driver mxc_v4l2_pipeline_driver = {
+static struct platform_driver mxc_pipeline_driver = {
 	.probe		= mxc_pipeline_probe,
 	.remove		= mxc_pipeline_remove,
 	.driver = {
-		.of_match_table = of_match_ptr(mxc_v4l2_pipeline_of_match),
-		.name		= "mxc-v4l-pipeline",
+		.of_match_table = of_match_ptr(mxc_pipeline_of_match),
+		.name		= "mxc_v4l2_subdev_pipeline",
 		.owner		= THIS_MODULE,
 	}
 };
 
-module_platform_driver(mxc_v4l2_pipeline_driver);
+module_platform_driver(mxc_pipeline_driver);
 
 MODULE_AUTHOR("Sarah Newman <sarah.newman@computer.org>");
 MODULE_DESCRIPTION("V4L2 subdevice pipeline for mxc cameras");

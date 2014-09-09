@@ -31,49 +31,35 @@ config MXC_CAMERA_OV5640_MIPI
 	  If you plan to use the ov5640 Camera with mipi interface in your MXC system, say Y here.
 
 config MXC_CAMERA_SUBDEV_PIPELINE
-	tristate "Camera support for video data pipelines"
-	depends on SOC_IMX6Q
-	
+	tristate "Camera support for video data pipelines of v4l2 subdevices"
+	depends on SOC_IMX6Q && VIDEO_V4L2_INT_DEVICE
+	select VIDEO_V4L2_SUBDEV_API
 
-config MXC_CAMERA_SSMN_MIPI
-	tristate "Camera support using MIPI CSI-2 interface on Sensity MediaNode"
+config MXC_CAMERA_SUBDEV_MIPI
+	tristate "Camera v4l2 subdevice using MIPI CSI-2 interface on CSI1"
 	depends on !VIDEO_MXC_EMMA_CAMERA
 	depends on SOC_IMX6Q
+	depends on MXC_CAMERA_SUBDEV_PIPELINE
 	select MXC_MIPI_CSI2 if SOC_IMX6Q
 	select MXC_CAMERA_SENSOR_CLK
-	select MAX9271
-	select MAX9272
-	select TC_MIPI_BRIDGE
-	select AP0100_M034
 	---help---
-	  If you plan to use the camera with MIPI CSI-2 interface on Sensity MediaNode, say Y here.
+	  If you plan to use the camera with MIPI CSI-2 interface on CSI 1, say Y here.
 
-config MXC_CAMERA_SSMN_PARALLEL
-	tristate "Camera support using parallel interface on Sensity MediaNode"
+config MXC_CAMERA_SUBDEV_PARALLEL
+	tristate "Camera support using parallel interface on CSI0"
 	depends on !VIDEO_MXC_EMMA_CAMERA
 	depends on SOC_IMX6Q
+	depends on MXC_CAMERA_SUBDEV_PIPELINE
 	select MXC_CAMERA_SENSOR_CLK
-	select MAX927X
-	select TC_MIPI_BRIDGE
-	select AP0100_M034
 	default n
 	---help---
-	  If you plan to use the camera with parallel interface on Sensity MediaNode, say Y here.
+  If you plan to use the subdevice pipeline with a parallel interface on CSI 0, say Y here.
 
-config MAX927X
-	tristate "Maxim max927x cable serdes"
+config SSMN_AP0100_M034
+	tristate "Sensity Medianode Aptina Ap0100 + M034 driver"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
 	---help---
-	If you plan to use max927x, say Y here.
-
-config TC_MIPI_BRIDGE
-	tristate "Toshiba MIPI bridge TC358748"
-	---help---
-	If you plan to use TC358748 say Y here.
-
-config AP0100_M034
-	tristate "Aptina Ap0100 + M034 driver"
-	---help---
-	If you plan to use ap0100 + m034, say Y here.
+	If you plan to use ap0100 + m034 configured for sensity's medianode, say Y here.
 
 config MXC_TVIN_ADV7180
 	tristate "Analog Device adv7180 TV Decoder Input support"
