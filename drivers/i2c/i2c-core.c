@@ -25,6 +25,8 @@
    Mux support by Rodolfo Giometti <giometti@enneenne.com> and
    Michael Lawnick <michael.lawnick.ext@nsn.com> */
 
+//#define DEBUG
+
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
@@ -1523,7 +1525,9 @@ EXPORT_SYMBOL(__i2c_transfer);
 int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 {
 	int ret;
-
+#ifdef DEBUG
+	int i;
+#endif
 	/* REVISIT the fault reporting model here is weak:
 	 *
 	 *  - When we get an error after receiving N bytes from a slave,
@@ -1542,14 +1546,7 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 	 */
 
 	if (adap->algo->master_xfer) {
-#ifdef DEBUG
-		for (ret = 0; ret < num; ret++) {
-			dev_dbg(&adap->dev, "master_xfer[%d] %c, addr=0x%02x, "
-				"len=%d%s\n", ret, (msgs[ret].flags & I2C_M_RD)
-				? 'R' : 'W', msgs[ret].addr, msgs[ret].len,
-				(msgs[ret].flags & I2C_M_RECV_LEN) ? "+" : "");
-		}
-#endif
+
 
 		if (in_atomic() || irqs_disabled()) {
 			ret = i2c_trylock_adapter(adap);
@@ -1562,7 +1559,22 @@ int i2c_transfer(struct i2c_adapter *adap, struct i2c_msg *msgs, int num)
 
 		ret = __i2c_transfer(adap, msgs, num);
 		i2c_unlock_adapter(adap);
+#ifdef DEBUG
+		for (i = 0; i < num; i++) {
+			char pp[256] = {0};
+			int ppoffset = 0;
+			int bufoffset;
+			for(bufoffset = 0; bufoffset < msgs[i].len && ppoffset < 256; bufoffset++) {
+				ppoffset += snprintf(&pp[ppoffset],256-ppoffset,"%02x ", msgs[i].buf[bufoffset]);
+			}
 
+			pp[256-1] = 0;
+			dev_dbg(&adap->dev, "master_xfer[%d] %c, addr=0x%02x, "
+				"len=%d%s, buf=%s\n", ret, (msgs[i].flags & I2C_M_RD)
+				? 'R' : 'W', msgs[i].addr, msgs[i].len,
+				(msgs[i].flags & I2C_M_RECV_LEN) ? "+" : "", pp);
+		}
+#endif
 		return ret;
 	} else {
 		dev_dbg(&adap->dev, "I2C level transfers not supported\n");
