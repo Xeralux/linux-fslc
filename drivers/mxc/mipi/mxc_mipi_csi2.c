@@ -526,6 +526,7 @@ static int mipi_csi2_probe(struct platform_device *pdev)
 
 err:
 	kfree(gmipi_csi2);
+	gmipi_csi2 = NULL;
 alloc_failed:
 	dev_err(&pdev->dev, "i.MX MIPI CSI2 driver probed -  error\n");
 	return ret;
