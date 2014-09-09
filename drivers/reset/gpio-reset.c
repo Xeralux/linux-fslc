@@ -132,6 +132,9 @@ static int gpio_reset_probe(struct platform_device *pdev)
 	else
 		gpio_flags = GPIOF_OUT_INIT_LOW;
 
+	if (of_find_property(np, "gpio-open-drain", NULL))
+		gpio_flags |= GPIOF_OPEN_DRAIN;
+
 	ret = devm_gpio_request_one(&pdev->dev, drvdata->gpio, gpio_flags, NULL);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "failed to request gpio %d: %d\n",
