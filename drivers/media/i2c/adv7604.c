@@ -40,6 +40,7 @@
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-of.h>
+#include <linux/reset.h>
 
 #define v4l2_edid v4l2_subdev_edid
 #define v4l2_match_dv_timings v4l_match_dv_timings
@@ -2800,6 +2801,10 @@ static int adv7604_probe(struct i2c_client *client,
 		return -EIO;
 	v4l_dbg(1, debug, client, "detecting adv7604 client on address 0x%x\n",
 			client->addr << 1);
+
+	err = device_reset(&client->dev);
+	if (err == -ENODEV)
+		return -EPROBE_DEFER;
 
 	state = devm_kzalloc(&client->dev, sizeof(*state), GFP_KERNEL);
 	if (!state) {
