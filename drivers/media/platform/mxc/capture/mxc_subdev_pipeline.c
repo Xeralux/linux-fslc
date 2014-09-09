@@ -794,7 +794,11 @@ static int _mxc_pipeline_probe(struct mxc_pipeline_data *data)
 		goto error2;
 	}
 
-	v4l2_device_register_subdev_nodes(&data->v4l2_dev);
+	ret = v4l2_device_register_subdev_nodes(&data->v4l2_dev);
+	if(ret < 0) {
+		dev_err(dev,"Cannot register subdev nodes\n");
+		goto error2;
+	}
 	data->operational = true;
 error2:
 	module_put(mxc_plat->dev.driver->owner);
