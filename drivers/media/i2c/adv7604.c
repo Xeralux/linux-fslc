@@ -1964,7 +1964,7 @@ static int adv7604_set_format(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh,
 
 	info = adv7604_format_info(state, format->format.code);
 	if (info == NULL)
-		info = adv7604_format_info(state, V4L2_MBUS_FMT_YUYV8_2X8);
+		info = adv7604_format_info(state, V4L2_MBUS_FMT_UYVY8_2X8);
 
 	adv7604_fill_format(state, &format->format);
 	format->format.code = info->code;
@@ -2891,6 +2891,9 @@ static int adv7604_probe(struct i2c_client *client,
 {
 	static const struct v4l2_dv_timings cea640x480 =
 		V4L2_DV_BT_CEA_640X480P59_94;
+	static const struct v4l2_dv_timings cea1280x720p30 =
+		V4L2_DV_BT_CEA_1280X720P30;
+
 	struct adv7604_state *state;
 	struct v4l2_ctrl_handler *hdl;
 	struct v4l2_subdev *sd;
@@ -2953,8 +2956,8 @@ static int adv7604_probe(struct i2c_client *client,
 		v4l_info(client, "Handling HPD %u GPIO\n", i);
 	}
 
-	state->timings = cea640x480;
-	state->format = adv7604_format_info(state, V4L2_MBUS_FMT_YUYV8_2X8);
+	state->timings = cea1280x720p30;
+	state->format = adv7604_format_info(state, V4L2_MBUS_FMT_UYVY8_2X8);
 
 	sd = &state->sd;
 	v4l2_i2c_subdev_init(sd, client, &adv7604_ops);
