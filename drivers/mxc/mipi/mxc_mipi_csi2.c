@@ -16,6 +16,8 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
+#define DEBUG
+
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/interrupt.h>
@@ -283,9 +285,9 @@ void mipi_csi2_dump_reg(struct mipi_csi2_info *info)
 
 	mipi_dbg("mipi_csi2_dump_reg: \n");
 	_mipi_csi2_lock(info);
-	for (i=0;  i<0x34; i+=4) {
-		reg_val = mipi_csi2_read(info, i/4);
-		mipi_dbg("mipi_csi2 reg: 0x%04X = 0x%04X\n", i, reg_val);
+	for (i=0;  i <= 0x34; i+=4) {
+		reg_val = mipi_csi2_read(info, i);
+		mipi_dbg("mipi_csi2 reg: 0x%04X = 0x%08x\n", i, reg_val);
 	}
 	_mipi_csi2_unlock(info);
 
@@ -303,14 +305,11 @@ EXPORT_SYMBOL(mipi_csi2_dump_reg);
 void mipi_csi2_status_reg(struct mipi_csi2_info *info)
 {
 	unsigned int reg_val;
-	int i;
 
 	_mipi_csi2_lock(info);
-	i = 0x14;
-	reg_val = mipi_csi2_read(info, i/4);
-	mipi_dbg("mipi_csi status reg: 0x%x = 0x%x\n", i, reg_val);
+	reg_val = mipi_csi2_read(info, MIPI_CSI2_PHY_STATE);
+	mipi_dbg("mipi_csi status reg: 0x%x = 0x%x\n", MIPI_CSI2_PHY_STATE, reg_val);
 	_mipi_csi2_unlock(info);
-
 	return;
 }
 
