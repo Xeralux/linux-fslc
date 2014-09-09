@@ -29,7 +29,7 @@ obj-$(CONFIG_MXC_CAMERA_SSMN_PARALLEL) += ssmn_camera_parallel.o
 adv7180_tvin-objs := adv7180.o
 obj-$(CONFIG_MXC_TVIN_ADV7180) += adv7180_tvin.o
 
-obj-$(CONFIG_MAX9271) += max9271.o
-obj-$(CONFIG_MAX9272) += max9272.o
+obj-$(CONFIG_MXC_CAMERA_SUBDEV_PIPELINE) += mxc_v4l_subdev_pipeline.o
+obj-$(CONFIG_MAX927X) += max927x.o
 obj-$(CONFIG_AP0100_M034) += ap0100_m034.o
 obj-$(CONFIG_TC_MIPI_BRIDGE) += tc_mipi_bridge.o

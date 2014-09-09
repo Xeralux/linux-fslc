@@ -245,13 +245,6 @@
 	scl-gpio = <&gpio5 27 0>;
 	status = "okay";
 
-	/*  Toshiba MIPI bridge 0 on parallel interface: CPLBTX->CPLBRX(MIPI-Rx Parallel-Tx) */
-	tc_mipi_bridge_0: tc_mipi_bridge@0e {
-		compatible = "toshiba,tc_mipi_bridge";
-		reg = <0x0e>;
-		tc_mipi_bridge = <0>;
-	};
-
 	mma8451@1c {
 		compatible = "fsl,mma8451";
 		reg = <0x1c>;
@@ -296,92 +289,6 @@
 	scl-gpio = <&gpio4 12 0>;
 	sda-gpio = <&gpio4 13 0>;
 	status = "okay";
-
-	/* PCA9546 I2C multiplexer */
-	i2cmux@70 {
-		#address-cells = <1>;
-		#size-cells = <0>;
-		compatible = "nxp,pca9546";
-		reg = <0x70>;
-	        i2c@0 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			compatible = "nxp,pca954x-bus";
-			reg = <0>;
-		};
-		i2c@1 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			compatible = "nxp,pca954x-bus";
-			reg = <1>;
-		};
-		i2c@2 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			compatible = "nxp,pca954x-bus";
-			reg = <2>;
-		};
-		i2c@3 {
-			#address-cells = <1>;
-			#size-cells = <0>;
-			compatible = "nxp,pca954x-bus";
-			reg = <3>;
-		};
-	};
-
-	/* PCA9557 I/O expander */
-	io_expander@18 {
-		compatible = "nxp,pca9557";
-		gpio-controller;
-		#gpio-cells = <2>;
-		gpio_base = <248>;	/* /sys/kernel/debug/gpio */
-		reg = <0x18>;
-	};
-
-	/*  Toshiba MIPI bridge 1 on MIPI interface/channel: Parallel-Rx MIPI-Tx */
-	tc_mipi_bridge_1: tc_mipi_bridge@0e {
-		compatible = "toshiba,tc_mipi_bridge";
-		reg = <0x0e>;
-		tc_mipi_bridge = <1>;
-	};
-
-	/* MAX9271 serializer */
-	max9271@40 {
-		compatible = "maxim,max9271";
-		reg = <0x40>;
-	};
-
-	/* MAX9272 deserializer */
-	max9272@48 {
-		compatible = "maxim,max9272";
-		reg = <0x48>;
-	};
-
-	/* Drive HDMI via I2C */
-	mxc_hdmi_i2c@50 {
-		compatible = "fsl,mxc_hdmi_i2c";
-		reg = <0x50>;
-	};
-
-	/* Aptina 0100 camera sensor */
-	ap0100_m034@5d {
-		compatible = "aptina,ap0100_m034";
-		reg = <0x5d>;
-	};
-
-	/* Camera driver on parallel interface */
-	ssmn_parallel@7e {
-		compatible = "sensity,ssmn_parallel";
-		reg = <0x7e>; /* A dummy I2C slave address */
-		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_ipu1_2_mn>;
-		clocks = <&clks 201>;
-		clock-names = "csi_mclk";
-		csi_id = <0>;
-		mclk = <24000000>;
-		mclk_source = <0>;
-		gpr = <&gpr>;
-	};
 };
 
 &i2c3 {

@@ -30,6 +30,11 @@ config MXC_CAMERA_OV5640_MIPI
 	---help---
 	  If you plan to use the ov5640 Camera with mipi interface in your MXC system, say Y here.
 
+config MXC_CAMERA_SUBDEV_PIPELINE
+	tristate "Camera support for video data pipelines"
+	depends on SOC_IMX6Q
+	
+
 config MXC_CAMERA_SSMN_MIPI
 	tristate "Camera support using MIPI CSI-2 interface on Sensity MediaNode"
 	depends on !VIDEO_MXC_EMMA_CAMERA
@@ -48,23 +53,17 @@ config MXC_CAMERA_SSMN_PARALLEL
 	depends on !VIDEO_MXC_EMMA_CAMERA
 	depends on SOC_IMX6Q
 	select MXC_CAMERA_SENSOR_CLK
-	select MAX9271
-	select MAX9272
+	select MAX927X
 	select TC_MIPI_BRIDGE
 	select AP0100_M034
 	default n
 	---help---
 	  If you plan to use the camera with parallel interface on Sensity MediaNode, say Y here.
 
-config MAX9271
-	tristate "Maxim max9271 cable serializer"
+config MAX927X
+	tristate "Maxim max927x cable serdes"
 	---help---
-	If you plan to use max9271, say Y here.
-
-config MAX9272
-	tristate "Maxim max9272 cable deserializer"
-	---help---
-	If you plan to use max9272, say Y here.
+	If you plan to use max927x, say Y here.
 
 config TC_MIPI_BRIDGE
 	tristate "Toshiba MIPI bridge TC358748"
