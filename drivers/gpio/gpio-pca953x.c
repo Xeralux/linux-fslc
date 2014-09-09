@@ -11,7 +11,7 @@
  *  the Free Software Foundation; version 2 of the License.
  */
 
-#define DEBUG
+//#define DEBUG
 
 #include <linux/module.h>
 #include <linux/init.h>
