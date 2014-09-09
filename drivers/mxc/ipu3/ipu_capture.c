@@ -18,6 +18,7 @@
  *
  * @ingroup IPU
  */
+#define DEBUG
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/errno.h>
@@ -82,6 +83,7 @@ ipu_csi_init_interface(struct ipu_soc *ipu, uint16_t width, uint16_t height,
 	uint32_t data = 0;
 	uint32_t csi = cfg_param.csi;
 
+
 	/* Set SENS_DATA_FORMAT bits (8, 9 and 10)
 	   RGB or YUV444 is 0 which is current value in data so not set
 	   explicitly
@@ -124,6 +126,12 @@ ipu_csi_init_interface(struct ipu_soc *ipu, uint16_t width, uint16_t height,
 		cfg_param.pack_tight << CSI_SENS_CONF_PACK_TIGHT_SHIFT |
 		cfg_param.force_eof << CSI_SENS_CONF_FORCE_EOF_SHIFT |
 		cfg_param.data_en_pol << CSI_SENS_CONF_DATA_EN_POL_SHIFT;
+
+	pr_debug("dw %u cm %u ev %u vp %u hp %u pp %u dp %u sc %u pt %u feof %u dep %u df %x csi %u mclk %u\n",
+			cfg_param.data_width, cfg_param.clk_mode, cfg_param.ext_vsync, cfg_param.Vsync_pol,
+			cfg_param.Hsync_pol, cfg_param.pixclk_pol, cfg_param.data_pol, cfg_param.sens_clksrc,
+			cfg_param.pack_tight, cfg_param.force_eof, cfg_param.data_en_pol, cfg_param.data_fmt,
+			cfg_param.csi, cfg_param.mclk);
 
 	_ipu_get(ipu);
 

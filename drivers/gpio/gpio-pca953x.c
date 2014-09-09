@@ -11,6 +11,8 @@
  *  the Free Software Foundation; version 2 of the License.
  */
 
+#define DEBUG
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/gpio.h>
@@ -205,6 +207,7 @@ static int pca953x_gpio_direction_input(struct gpio_chip *gc, unsigned off)
 	u8 reg_val;
 	int ret, offset = 0;
 
+	dev_dbg(gc->dev,"gpio %d in\n",gc->base + off);
 	chip = container_of(gc, struct pca953x_chip, gpio_chip);
 
 	mutex_lock(&chip->i2c_lock);
@@ -237,6 +240,7 @@ static int pca953x_gpio_direction_output(struct gpio_chip *gc,
 	int ret, offset = 0;
 
 	chip = container_of(gc, struct pca953x_chip, gpio_chip);
+	dev_dbg(gc->dev,"gpio %d out %d\n",gc->base + off, !!val);
 
 	mutex_lock(&chip->i2c_lock);
 	/* set output level */
