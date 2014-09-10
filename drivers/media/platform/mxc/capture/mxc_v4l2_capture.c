@@ -73,6 +73,11 @@ MODULE_DEVICE_TABLE(of, mxc_v4l2_dt_ids);
 
 static int video_nr = -1;
 
+
+#define NUM_IPU 2
+#define NUM_CSI 2
+static struct mutex ipu_csi_lock[NUM_IPU][NUM_CSI];
+
 /*! This data is used for the output to the display. */
 #define MXC_V4L2_CAPTURE_NUM_OUTPUTS	6
 #define MXC_V4L2_CAPTURE_NUM_INPUTS	2
@@ -1610,6 +1615,14 @@ static int mxc_v4l_open(struct file *file)
 		goto oops;
 
 	if (cam->open_count++ == 0) {
+		err = mutex_trylock(&ipu_csi_lock[cam->ipu_id][cam->csi]);
+		if(!err) {
+			--cam->open_count;
+			pr_err("ERROR: v4l2 capture %d: requested interface already in use!\n", dev->num);
+			err = -EBUSY;
+			goto oops;
+		}
+
 		wait_event_interruptible(cam->power_queue,
 					 cam->low_power == false);
 
@@ -1785,6 +1798,7 @@ static int mxc_v4l_close(struct file *file)
 		wake_up_interruptible(&cam->enc_queue);
 		mxc_free_frames(cam);
 		cam->enc_counter++;
+		mutex_unlock(&ipu_csi_lock[cam->ipu_id][cam->csi]);
 	}
 
 	up(&cam->busy_lock);
@@ -2605,7 +2619,7 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 	const struct of_device_id *of_id =
 			of_match_device(mxc_v4l2_dt_ids, &pdev->dev);
 	struct device_node *np = pdev->dev.of_node;
-	int ipu_id, csi_id, mclk_source;
+	unsigned int ipu_id, csi_id, mclk_source;
 	unsigned vdev;
 	int ret = 0;
 
@@ -2618,13 +2632,13 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 	}
 
 	ret = of_property_read_u32(np, "ipu_id", &ipu_id);
-	if (ret) {
+	if (ret || ipu_id >= NUM_IPU) {
 		dev_err(&pdev->dev, "ipu_id missing or invalid\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "csi_id", &csi_id);
-	if (ret) {
+	if (ret || csi_id >= NUM_CSI) {
 		dev_err(&pdev->dev, "csi_id missing or invalid\n");
 		return ret;
 	}
@@ -3072,7 +3086,7 @@ static void mxc_v4l2_master_detach(struct v4l2_int_device *slave)
 static __init int camera_init(void)
 {
 	u8 err = 0;
-
+	int i, j;
 	pr_debug("In MVC:camera_init\n");
 
 	/* Register the device driver structure. */
@@ -3082,7 +3096,11 @@ static __init int camera_init(void)
 			"platform_driver_register failed.\n");
 		return err;
 	}
-
+	for(i = 0; i < NUM_IPU; i++) {
+		for(j = 0; j < NUM_CSI; j++) {
+			mutex_init(&ipu_csi_lock[i][j]);
+		}
+	}
 	return err;
 }
 
