@@ -226,6 +226,8 @@ typedef struct _cam_data {
 	struct dma_async_tx_descriptor *txd;
 	dma_cookie_t cookie;
 	struct scatterlist sg[2];
+
+	unsigned vdev;
 } cam_data;
 
 struct sensor_data {
@@ -251,6 +253,7 @@ struct sensor_data {
 	struct clk *sensor_clk;
 	int csi;
 
+	unsigned vdev;
 	void (*io_init)(void);
 };
 
