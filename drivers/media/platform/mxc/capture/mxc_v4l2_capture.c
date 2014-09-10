@@ -2623,10 +2623,17 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 			of_match_device(mxc_v4l2_dt_ids, &pdev->dev);
 	struct device_node *np = pdev->dev.of_node;
 	int ipu_id, csi_id, mclk_source;
+	unsigned vdev;
 	int ret = 0;
 	struct v4l2_device *v4l2_dev;
 
 	pr_debug("In MVC: init_camera_struct\n");
+
+	ret = of_property_read_u32(np, "vdev", &vdev);
+	if (ret) {
+		dev_err(&pdev->dev, "vdev missing or invalid\n");
+		return ret;
+	}
 
 	ret = of_property_read_u32(np, "ipu_id", &ipu_id);
 	if (ret) {
@@ -2734,6 +2741,7 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 
 	cam->ipu_id = ipu_id;
 	cam->csi = csi_id;
+	cam->vdev = vdev;
 	cam->mclk_source = mclk_source;
 	cam->mclk_on[cam->mclk_source] = false;
 
@@ -3013,8 +3021,8 @@ static int mxc_v4l2_master_attach(struct v4l2_int_device *slave)
 		return -1;
 	}
 
-	if (sdata->csi != cam->csi) {
-		pr_debug("%s: csi doesn't match\n", __func__);
+	if (sdata->vdev != cam->vdev) {
+		pr_debug("%s: vdev doesn't match\n", __func__);
 		return -1;
 	}
 
