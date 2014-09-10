@@ -366,6 +366,24 @@ unsigned int mipi_csi2_get_virtual_channel(struct mipi_csi2_info *info)
 }
 EXPORT_SYMBOL(mipi_csi2_get_virtual_channel);
 
+/*!
+ * This function is called to get mipi csi2 video device
+ *
+ * @return      Returns mipi csi2 video device
+ */
+unsigned int mipi_csi2_get_vdev(struct mipi_csi2_info *info)
+{
+	unsigned int vdev;
+
+	_mipi_csi2_lock(info);
+	vdev = info->vdev;
+	_mipi_csi2_unlock(info);
+
+	return vdev;
+}
+EXPORT_SYMBOL(mipi_csi2_get_vdev);
+
+
 /**
  * This function is called by the driver framework to initialize the MIPI CSI2
  * device.
@@ -404,6 +422,12 @@ static int mipi_csi2_probe(struct platform_device *pdev)
 	ret = of_property_read_u32(np, "v_channel", &(gmipi_csi2->v_channel));
 	if (ret) {
 		dev_err(&pdev->dev, "v_channel missing or invalid\n");
+		goto err;
+	}
+
+	ret = of_property_read_u32(np, "vdev", &(gmipi_csi2->vdev));
+	if (ret) {
+		dev_err(&pdev->dev, "vdev missing or invalid\n");
 		goto err;
 	}
 
