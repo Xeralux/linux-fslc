@@ -77,11 +77,27 @@ int mxc_subdev_parallel_core_init(struct v4l2_subdev *sd, u32 val)
 	return 0;
 }
 
+int mxc_subdev_parallel_video_s_stream(struct v4l2_subdev *sd, int enable)
+{
+	struct mxc_subdev_parallel_cam *data = to_mxc_subdev_parallel_from_v4l2(sd);
+	if(!enable) {
+		return 0;
+	}
+	clk_prepare_enable(data->sensor_clk);
+	mxc_subdev_parallel_powerdown(data, 0);
+	return 0;
+}
+
 static const struct v4l2_subdev_core_ops mxc_subdev_parallel_subdev_core_ops = {
 		.init =  mxc_subdev_parallel_core_init,
 };
 
+static struct v4l2_subdev_video_ops mxc_subdev_parallel_subdev_video_ops = {
+	.s_stream = mxc_subdev_parallel_video_s_stream,
+};
+
 static struct v4l2_subdev_ops mxc_subdev_parallel_subdev_ops = {
+		.video = &mxc_subdev_parallel_subdev_video_ops,
 		.core = &mxc_subdev_parallel_subdev_core_ops,
 };
 

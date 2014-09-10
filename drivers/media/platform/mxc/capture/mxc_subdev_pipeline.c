@@ -755,6 +755,12 @@ static int _mxc_pipeline_probe(struct mxc_pipeline_data *data)
 		goto error2;
 	}
 
+	ret = of_property_read_u32(mxc_node, "vdev", &sensor->vdev);
+	if (ret) {
+		dev_err(dev, "vdev missing or invalid\n");
+		return ret;
+	}
+
 	ret = _run_from_source(data, subdev_init, NULL);
 	if (ret < 0) {
 		dev_err(dev, "unable to initialize subdevices: %d", ret);
