@@ -134,6 +134,8 @@ static int mxc_subdev_mipi_s_stream_on(struct mxc_subdev_mipi_cam *data)
 	u32 mipi_reg;
 	unsigned int i;
 
+	clk_prepare_enable(data->sensor_clk);
+	mxc_csi1_mipicsi0_input_enable(data, 1);
 
 	/* wait for mipi sensor ready */
 

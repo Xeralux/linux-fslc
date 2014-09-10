@@ -80,6 +80,7 @@
 		compatible = "fsl,imx6q-v4l2-capture";
 		ipu_id = <0>;
 		csi_id = <0>;
+		vdev = <0>;
 		mclk_source = <0>;
 		status = "okay";
 	};
@@ -87,7 +88,8 @@
 	v4l2_cap_1 {
 		compatible = "fsl,imx6q-v4l2-capture";
 		ipu_id = <0>;
-		csi_id = <1>;
+		csi_id = <0>;
+		vdev = <1>;
 		mclk_source = <0>;
 		status = "okay";
 	};
@@ -207,6 +209,7 @@
 		clocks = <&clks 201>;
 		clock-names = "csi_mclk";
 		csi_id = <0>;
+		vdev = <1>;
 		mclk = <24000000>;
 		mclk_source = <0>;
 		gpr = <&gpr>;
@@ -232,6 +235,7 @@
 		clocks = <&clks 201>;
 		clock-names = "csi_mclk";
 		csi_id = <0>;
+		vdev = <0>;
 		mclk = <24000000>;
 		mclk_source = <0>;
 		gpr = <&gpr>;
@@ -1104,4 +1108,5 @@
 	csi_id = <0>;
 	v_channel = <0>;
 	lanes = <2>;
+	vdev = <1>;
 };
