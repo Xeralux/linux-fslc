@@ -846,7 +846,11 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_enet_4>;
 	phy-mode = "rgmii";
-	phy-reset-gpios = <&gpio1 25 0>;
+	/* KR - phy does not appear to work properly when the reset is enabled
+	   u-boot resets the phy once at reboot, I hope that is enough.
+	   Before the HW change, phy had link problems (link on, no packets,
+	   tx queue timeout). */
+	/*phy-reset-gpios = <&gpio1 25 0>;*/
 	status = "okay";
 };
 
