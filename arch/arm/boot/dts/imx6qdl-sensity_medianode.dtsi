@@ -826,18 +826,16 @@
 };
 
 &usdhc3 {
-	/*  FIXME: Reconfigure for 100MHz operation.  */
 	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_usdhc3_2>;
+	pinctrl-0 = <&pinctrl_usdhc3_mn>;
 	cd-gpios = <&gpio6 11 0>;
 	no-1-8-v;
 	status = "okay";
 };
 
 &usdhc4 {
-	/*  FIXME: Reconfigure for 100MHz operation.  */
 	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_usdhc4_1>;
+	pinctrl-0 = <&pinctrl_usdhc4_mn>;
 	no-1-8-v;
 	status = "okay";
 };
@@ -1049,6 +1047,39 @@
 			>;
 		};
 	};
+
+/*  SION disabled:HYS Enabled:100KOhm PU:PUE Enabled:PKE Enabled:ODE disabled:100MHz:40Ohm:SLOW  */
+#define PADCTL_EMMC	0x0001B0B0
+	usdhc3 {
+		pinctrl_usdhc3_mn: usdhc3grp-mn {
+			fsl,pins = <
+				MX6QDL_PAD_SD3_CMD__SD3_CMD     PADCTL_EMMC
+				MX6QDL_PAD_SD3_CLK__SD3_CLK     PADCTL_EMMC
+				MX6QDL_PAD_SD3_DAT0__SD3_DATA0  PADCTL_EMMC
+				MX6QDL_PAD_SD3_DAT1__SD3_DATA1  PADCTL_EMMC
+				MX6QDL_PAD_SD3_DAT2__SD3_DATA2  PADCTL_EMMC
+				MX6QDL_PAD_SD3_DAT3__SD3_DATA3  PADCTL_EMMC
+			>;
+		};
+	};
+
+	usdhc4 {
+		pinctrl_usdhc4_mn: usdhc4grp-mn {
+			fsl,pins = <
+				MX6QDL_PAD_SD4_CMD__SD4_CMD     PADCTL_EMMC
+				MX6QDL_PAD_SD4_CLK__SD4_CLK     PADCTL_EMMC
+				MX6QDL_PAD_SD4_DAT0__SD4_DATA0  PADCTL_EMMC
+				MX6QDL_PAD_SD4_DAT1__SD4_DATA1  PADCTL_EMMC
+				MX6QDL_PAD_SD4_DAT2__SD4_DATA2  PADCTL_EMMC
+				MX6QDL_PAD_SD4_DAT3__SD4_DATA3  PADCTL_EMMC
+				MX6QDL_PAD_SD4_DAT4__SD4_DATA4  PADCTL_EMMC
+				MX6QDL_PAD_SD4_DAT5__SD4_DATA5  PADCTL_EMMC
+				MX6QDL_PAD_SD4_DAT6__SD4_DATA6  PADCTL_EMMC
+				MX6QDL_PAD_SD4_DAT7__SD4_DATA7  PADCTL_EMMC
+			>;
+		};
+	};
+
 #define SION_HYS_PKDIS_ODDIS_100MHZ_40Z_FSLEW 0x400100b1
 #define SION_HYS_PKDIS_ODEN_100MHZ_40Z_FSLEW 0x400108b1
 #define HYS_PU100K_ODDIS_100MHZ_40Z_FSLEW     0x0001b0b1
