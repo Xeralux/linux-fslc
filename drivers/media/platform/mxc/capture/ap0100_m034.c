@@ -893,7 +893,7 @@ static int _ap0100_write_flash(struct ap0100_m034_data *data, unsigned addr, uns
 	unsigned to_write;
 	unsigned end_addr;
 
-	int ret = 0, tmpret;
+	int ret = 0;
 
 	if(length == 0)
 		return -EINVAL;
@@ -913,9 +913,9 @@ static int _ap0100_write_flash(struct ap0100_m034_data *data, unsigned addr, uns
 			to_write = FLASH_PAGE_SIZE - (addr & (FLASH_PAGE_SIZE-1));
 		}
 
-		tmpret = _ap0100_write_flash_inner(data, addr, to_write, buf);
-		if(tmpret < 0)
-			ret = tmpret;
+		ret = _ap0100_write_flash_inner(data, addr, to_write, buf);
+		if(ret < 0)
+			return ret;
 		addr += to_write;
 		buf += to_write;
 		length -= to_write;
