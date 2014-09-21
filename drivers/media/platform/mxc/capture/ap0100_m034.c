@@ -81,6 +81,8 @@ enum AP0100_STORED_CMDS {
 
 enum AP0100_REG {
   REG_CHIP_VERSION = 0x0000,
+  REG_RST_MISC_CTL = 0x001A, //2 bytes
+  REG_MCU_BOOT_OPT = 0x0020, //2 bytes
   REG_CMD = 0x0040,
   REG_XDMA_ACCESS_CTL_STAT = 0x0982,
   REG_LOGICAL_ADDR_ACCESS = 0x098E,
@@ -188,7 +190,7 @@ struct ap0100_m034_data {
 	bool operational;
 	unsigned error_count;
 	struct mutex lock;
-	bool bricked;
+	bool unavailable;
 	struct fw_header flash_header;
 	int fw_status;
 	cam_param_t cam_param_s;
@@ -1808,19 +1810,19 @@ static ssize_t ap0100_show_serial(struct device *dev,
 }
 static DEVICE_ATTR(serial, 0444, (void *)ap0100_show_serial, (void *)NULL);
 
-static ssize_t ap0100_show_bricked(struct device *dev,
+static ssize_t ap0100_show_unavailable(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
-	bool bricked;
+	bool unavailable;
 
 	mutex_lock(&data->lock);
-	bricked = data->bricked;
+	unavailable = data->unavailable;
 	mutex_unlock(&data->lock);
 
-	return snprintf(buf, PAGE_SIZE,"%d\n", bricked);
+	return snprintf(buf, PAGE_SIZE,"%d\n", unavailable);
 }
-static DEVICE_ATTR(bricked, 0644, (void *)ap0100_show_bricked, (void *)NULL);
+static DEVICE_ATTR(unavailable, 0644, (void *)ap0100_show_unavailable, (void *)NULL);
 
 static ssize_t ap0100_show_max_temp(struct device *dev,
 				   struct device_attribute *attr, char *buf)
@@ -2166,6 +2168,43 @@ out:
 	mutex_unlock(&data->lock);
 	return ret;
 }
+
+#define REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_SHIFT 5
+#define REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_MASK (1 << REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_SHIFT)
+
+static int _ap0100_host_config_mode(struct ap0100_m034_data* data)
+{
+	struct i2c_client *client = data->client;
+	unsigned  val;
+	int ret;
+
+	ret = _AM_read_reg(client, REG_MCU_BOOT_OPT, &val, 2, &data->error_count);
+	if(ret < 0)
+		return ret;
+	val |= REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_MASK;
+	ret = _AM_write_reg(client, REG_MCU_BOOT_OPT, val, 2,  &data->error_count);
+	if(ret < 0)
+		return ret;
+
+	ret = _AM_write_reg_unchecked(client, REG_RST_MISC_CTL, 0x0015, 2, &data->error_count);
+	if(ret < 0)
+		return ret;
+
+	msleep(500);
+	ret = _AM_write_reg_unchecked(client, REG_RST_MISC_CTL, 0x0E14, 2, &data->error_count);
+	if(ret < 0)
+		return ret;
+	msleep(500);
+
+	ret = _AM_read_reg(client, REG_MCU_BOOT_OPT, &val, 2, &data->error_count);
+	if(ret < 0)
+		return ret;
+	val &= ~REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_MASK;
+	ret = _AM_write_reg(client, REG_MCU_BOOT_OPT, val, 2,  &data->error_count);
+
+	return ret;
+}
+
 static int _ap0100_reset(struct ap0100_m034_data* data)
 {
 	struct device *dev = data->dev;
@@ -2195,7 +2234,6 @@ static int _ap0100_reset(struct ap0100_m034_data* data)
 	if(ret < 0) {
 		dev_err(dev, "Get state returned %d", ret);
 	}
-	data->bricked = ret < 0;
 	return ret;
 }
 
@@ -2203,7 +2241,7 @@ static void _ap0100_subdev_init(struct ap0100_m034_data* data);
 static int _ap0100_m034_probe(struct ap0100_m034_data* data)
 {
 	struct device *dev = data->dev;
-	int ret;
+	int ret, tmpret;
 	dev_info(dev, __func__);
 
 	if(data->operational)
@@ -2230,7 +2268,9 @@ static int _ap0100_m034_probe(struct ap0100_m034_data* data)
 	_ap0100_subdev_init(data);
 	return ret;
 error:
-	_ap0100_reset(data);
+	tmpret = _ap0100_host_config_mode(data);
+	data->unavailable = tmpret < 0;
+	dev_err(dev, "Switch to host mode %s\n", tmpret < 0 ? "failed" : "succeeded");
 	return ret;
 }
 
@@ -2301,7 +2341,7 @@ static struct attribute *init_attributes[] = {
 	&dev_attr_validate_flash.attr,
 	&dev_attr_fw_metadata.attr,
 	&dev_attr_serial.attr,
-	&dev_attr_bricked.attr,
+	&dev_attr_unavailable.attr,
 	NULL,
 };
 
