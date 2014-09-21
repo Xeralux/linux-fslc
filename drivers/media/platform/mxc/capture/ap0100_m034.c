@@ -364,7 +364,7 @@ static int _AM_read_reg(struct i2c_client * client, u16 reg, unsigned *val, int 
 	return ret;
 }
 
-static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf, unsigned buf_len)
+static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf, unsigned buf_len, bool unchecked)
 {
 	int err;
 	u8 write_buf[2 + buf_len];
@@ -380,29 +380,13 @@ static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf
 			__func__, reg, err);
 		return err;
 	}
+	if(unchecked)
+		return err;
+
 	if((err = _AM_read_data(client, reg, check, buf_len, NULL)) == 0 && memcmp(buf, check, buf_len)) {
 		dev_warn(&client->dev,"%s:check reg warn:reg=%x\n",
 			__func__, reg);
 		return -EIO;
-	}
-	return err;
-}
-
-static int _AM_write_unchecked_reg(struct i2c_client * client, u16 reg, const u8 val, unsigned *error_count)
-{
-	int err;
-	u8 write_buf[3];
-
-	write_buf[0] = reg >> 8;
-	write_buf[1] = reg & 0xff;
-	write_buf[2] = val;
-
-	err =  i2c_master_send(client, write_buf, sizeof(write_buf));
-	if (err < 0) {
-		dev_err(&client->dev, "%s:write reg err:reg=%x, err=%d\n",
-			__func__, reg, err);
-		if(error_count)
-			*error_count += 1;
 	}
 	return err;
 }
@@ -426,14 +410,14 @@ static void _AM_format_reg(u8* buf, unsigned val, int data_size)
 	};
 }
 
-static int _AM_try_write_reg(struct i2c_client * client, u16 reg, unsigned val, int data_size)
+static int _AM_try_write_reg(struct i2c_client * client, u16 reg, unsigned val, int data_size, bool unchecked)
 {
 	u8 buf[4];
 	_AM_format_reg(buf, val, data_size);
-	return _AM_try_write_data(client, reg, buf, data_size);
+	return _AM_try_write_data(client, reg, buf, data_size, unchecked);
 }
 
-static int _AM_write_reg(struct i2c_client * client, u16 reg, unsigned val, int data_size, unsigned *error_count)
+static int _AM_write_reg_maybe_unchecked(struct i2c_client * client, u16 reg, unsigned val, int data_size, unsigned *error_count, bool unchecked)
 {
 	int i=0;
 	int ret;
@@ -444,7 +428,7 @@ static int _AM_write_reg(struct i2c_client * client, u16 reg, unsigned val, int 
 	}
 
 	for(i = 0; i <= i2c_retries; i++) {
-		ret = _AM_try_write_reg(client, reg, val, data_size);
+		ret = _AM_try_write_reg(client, reg, val, data_size, unchecked);
 		if(ret >= 0)
 			return ret;
 	}
@@ -454,13 +438,23 @@ static int _AM_write_reg(struct i2c_client * client, u16 reg, unsigned val, int 
 	return ret;
 }
 
+static int _AM_write_reg(struct i2c_client * client, u16 reg, unsigned val, int data_size, unsigned *error_count)
+{
+	return _AM_write_reg_maybe_unchecked(client, reg, val, data_size, error_count, !WRITE_IS_UNCHECKED);
+}
+
+static int _AM_write_reg_unchecked(struct i2c_client * client, u16 reg, unsigned val, int data_size, unsigned *error_count)
+{
+	return _AM_write_reg_maybe_unchecked(client, reg, val, data_size, error_count, WRITE_IS_UNCHECKED);
+}
+
 static int _AM_write_data(struct i2c_client * client, u16 reg, const u8 *buf, ssize_t buf_len, unsigned *error_count)
 {
 	int i=0;
 	int ret;
 
 	for(i = 0; i <= i2c_retries; i++) {
-		ret = _AM_try_write_data(client, reg, buf, buf_len);
+		ret = _AM_try_write_data(client, reg, buf, buf_len, !WRITE_IS_UNCHECKED);
 		if(ret >= 0)
 			return ret;
 	}
@@ -593,13 +587,8 @@ static int _ap0100_handle_registers(struct i2c_client * client,
 						__func__, err);
 			}
 		} else if (ap0100_reg[i].flags & WRITE_IS_UNCHECKED) {
-			if(ap0100_reg[i].data_size != 1) {
-				dev_err(&client->dev, "Only data_size = 1 is handled for "
-						"unchecked writes");
-				return -EINVAL;
-			}
-			err =_AM_write_unchecked_reg(client,ap0100_reg[i].reg_addr,
-						ap0100_reg[i].data, error_count);
+			err =_AM_write_reg_unchecked(client,ap0100_reg[i].reg_addr,
+						ap0100_reg[i].data, ap0100_reg[i].data_size, error_count);
 		} else {
 			err = _AM_write_reg(client, ap0100_reg[i].reg_addr,
 					ap0100_reg[i].data, ap0100_reg[i].data_size, error_count);
