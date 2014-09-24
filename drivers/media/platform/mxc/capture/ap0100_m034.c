@@ -450,13 +450,13 @@ static int _AM_write_reg_unchecked(struct i2c_client * client, u16 reg, unsigned
 	return _AM_write_reg_maybe_unchecked(client, reg, val, data_size, error_count, WRITE_IS_UNCHECKED);
 }
 
-static int _AM_write_data(struct i2c_client * client, u16 reg, const u8 *buf, ssize_t buf_len, unsigned *error_count)
+static int _AM_write_data_maybe_unchecked(struct i2c_client * client, u16 reg, const u8 *buf, ssize_t buf_len, unsigned *error_count, bool unchecked)
 {
 	int i=0;
 	int ret;
 
 	for(i = 0; i <= i2c_retries; i++) {
-		ret = _AM_try_write_data(client, reg, buf, buf_len, !WRITE_IS_UNCHECKED);
+		ret = _AM_try_write_data(client, reg, buf, buf_len, unchecked);
 		if(ret >= 0)
 			return ret;
 	}
@@ -537,6 +537,7 @@ static int _ap0100_handle_adjacent_registers(struct i2c_client * client,
 		const struct ap0100_m034_reg_data *ap0100_reg, const ssize_t reg_size, unsigned *error_count)
 {
 	int i;
+	u8 flags;
 	u8 buf[4*reg_size];
 	u8 *buf_ptr = buf;
 	unsigned start_addr;
@@ -548,8 +549,9 @@ static int _ap0100_handle_adjacent_registers(struct i2c_client * client,
 	start_addr = ap0100_reg[0].reg_addr;
 	cur_addr = start_addr;
 
+	flags = ap0100_reg[0].flags & WRITE_IS_UNCHECKED;
 	for (i=0; i < reg_size; i++) {
-		if(ap0100_reg[i].flags) {
+		if(ap0100_reg[i].flags != flags) {
 				dev_err(&client->dev, "%s:no flags in adjacent regs\n",
 						__func__);
 				return -EINVAL;
@@ -573,7 +575,8 @@ static int _ap0100_handle_adjacent_registers(struct i2c_client * client,
 			cur_addr +=  ap0100_reg[i].data_size;
 		}
 	}
-	return _AM_write_data(client, start_addr, buf, (cur_addr - start_addr), error_count);
+
+	return _AM_write_data_maybe_unchecked(client, start_addr, buf, (cur_addr - start_addr), error_count, flags);
 }
 
 static int _ap0100_handle_registers(struct i2c_client * client,
@@ -822,19 +825,19 @@ static int _ap0100_validate_flash(struct ap0100_m034_data *data, unsigned addr, 
 static int _ap0100_write_flash_inner(struct ap0100_m034_data *data, unsigned addr, unsigned length, const u8 *buf)
 {
 	struct ap0100_m034_reg_data write_flash_regs[] = {
-			{4, REG_CMD_PARAMS_POOL_0, },
-			{1, REG_CMD_PARAMS_POOL_2, },
-			{1, REG_CMD_PARAMS_POOL_2+1, },
-			{1, REG_CMD_PARAMS_POOL_3, },
-			{1, REG_CMD_PARAMS_POOL_3+1, },
-			{1, REG_CMD_PARAMS_POOL_4, },
-			{1, REG_CMD_PARAMS_POOL_4+1, },
-			{1, REG_CMD_PARAMS_POOL_5, },
-			{1, REG_CMD_PARAMS_POOL_5+1, },
-			{1, REG_CMD_PARAMS_POOL_6, },
-			{1, REG_CMD_PARAMS_POOL_6+1, },
-			{1, REG_CMD_PARAMS_POOL_7, },
-			{1, REG_CMD_PARAMS_POOL_7+1, },
+			{4, REG_CMD_PARAMS_POOL_0, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_2, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_2+1, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_3, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_3+1, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_4, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_4+1, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_5, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_5+1, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_6, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_6+1, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_7, 0, WRITE_IS_UNCHECKED},
+			{1, REG_CMD_PARAMS_POOL_7+1, 0, WRITE_IS_UNCHECKED},
 	};
 	static const int MAX_DATA_LENGTH = 16 - 5;
 	int i;
