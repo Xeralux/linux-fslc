@@ -2023,10 +2023,6 @@ static DEVICE_ATTR(validate_flash, 0200, (void *)ap0100_show_fw_status, (void *)
 
 static struct attribute *attributes[] = {
 	&dev_attr_ap0100_param.attr,
-	&dev_attr_min_temp.attr,
-	&dev_attr_max_temp.attr,
-	&dev_attr_cur_temp.attr,
-	&dev_attr_ap0100_m034_i2c_test.attr,
 	NULL,
 };
 
@@ -2342,6 +2338,10 @@ static struct attribute *init_attributes[] = {
 	&dev_attr_fw_metadata.attr,
 	&dev_attr_serial.attr,
 	&dev_attr_unavailable.attr,
+	&dev_attr_min_temp.attr,
+	&dev_attr_max_temp.attr,
+	&dev_attr_cur_temp.attr,
+	&dev_attr_ap0100_m034_i2c_test.attr,
 	NULL,
 };
 
