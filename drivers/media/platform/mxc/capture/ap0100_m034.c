@@ -2204,6 +2204,10 @@ static int _ap0100_host_config_mode(struct ap0100_m034_data* data)
 	unsigned  val;
 	int ret;
 
+	ret = device_reset(data->dev);
+	if (ret == -ENODEV)
+		return -EPROBE_DEFER;
+
 	ret = _AM_read_reg(client, REG_MCU_BOOT_OPT, &val, 2, &data->error_count);
 	if(ret < 0)
 		return ret;
