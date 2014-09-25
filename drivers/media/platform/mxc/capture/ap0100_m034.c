@@ -710,16 +710,15 @@ static int _ap0100_m034_sensor_init(struct ap0100_m034_data* data, enum ap0100_m
 	return ret;
 }
 
-static int _ap0100_wait_for_flash(struct ap0100_m034_data *data)
+static int _ap0100_wait_for_flash(struct ap0100_m034_data *data, int wait_time_ms)
 {
-	int i;
 	int ret = -EINVAL;
-	const unsigned RETRIES = i2c_retries;
-	for(i = 0; i < RETRIES; i++) {
+	const int WAIT_MS = 10;
+	for(; wait_time_ms > 0; wait_time_ms -= WAIT_MS) {
 		ret  =_AM_send_command(data->client, CMD_FLASH_STATUS, &data->error_count);
 		if(ret == 0)
 			return 0;
-		msleep(100);
+		msleep(WAIT_MS);
 	}
 	return ret;
 }
@@ -754,7 +753,7 @@ static int _ap0100_read_flash_inner(struct ap0100_m034_data *data, unsigned addr
 		ret =  _AM_send_command(data->client, CMD_FLASH_READ, &data->error_count);
 		if(ret < 0)
 			continue;
-		ret = _ap0100_wait_for_flash(data);
+		ret = _ap0100_wait_for_flash(data, 100);
 	}
 	if(ret < 0) {
 		dev_err(data->dev, "%s: could not read flash:%d\n", __func__, ret);
@@ -881,7 +880,7 @@ static int _ap0100_write_flash_inner(struct ap0100_m034_data *data, unsigned add
 			continue;
 		}
 
-		ret = _ap0100_wait_for_flash(data);
+		ret = _ap0100_wait_for_flash(data, 100);
 		if(ret == 0) {
 			return 0;
 		}
@@ -1018,7 +1017,7 @@ static int _ap0100_lock_flash(struct ap0100_m034_data *data)
 		ret = _AM_send_command(data->client, CMD_FLASH_QUERY_DEV, &data->error_count);
 		if(ret < 0)
 			continue;
-		ret = _ap0100_wait_for_flash(data);
+		ret = _ap0100_wait_for_flash(data, 100);
 
 		memset(&query_resp, 0, sizeof(query_resp));
 		for(j = 0; j < i2c_retries && query_resp.deviceSizeKb != 64; i++) {
@@ -1127,7 +1126,8 @@ static int _ap0100_erase_flash_block(struct ap0100_m034_data *data, u32 addr)
 		ret = _ap0100_handle_registers(data->client, erase_flash_regs, ARRAY_SIZE(erase_flash_regs), &data->error_count);
 		if(ret < 0)
 			continue;
-		ret = _ap0100_wait_for_flash(data);
+		/*Erasing takes a really long time.*/
+		ret = _ap0100_wait_for_flash(data, 10000);
 		if(ret < 0)
 			continue;
 		/*Verify first 16 bytes are really blank*/
