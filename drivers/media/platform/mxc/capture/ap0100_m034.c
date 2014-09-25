@@ -877,7 +877,7 @@ static int _ap0100_write_flash_inner(struct ap0100_m034_data *data, unsigned add
 		}
 		ret =  _AM_send_command(data->client, CMD_FLASH_WRITE, &data->error_count);
 		if(ret < 0) {
-			msleep(5);
+			msleep(50);
 			continue;
 		}
 
