@@ -247,6 +247,7 @@ enum ap0100_set_mode {
 
 #define WRITE_IS_CMD 		(1 << 0)
 #define WRITE_IS_UNCHECKED (1 << 1)
+#define READ_IS_UNCHECKED true
 struct ap0100_m034_reg_data {
     unsigned data_size;
     u16 reg_addr;
@@ -266,7 +267,7 @@ struct ap0100_m034_frame_data ap0100_m034_frame_data[] =
 	{.width = 1280, .height = 960, .fi = { .denominator = 45, .numerator = 2,}},
 };
 
-static int _AM_try_read_data(struct i2c_client * client, u16 reg, u8* buf, int buf_len)
+static int _AM_try_read_data(struct i2c_client * client, u16 reg, u8* buf, int buf_len, bool unchecked)
 {
 	int err;
 	u8 au8RegBuf[2] = {0};
@@ -287,8 +288,9 @@ static int _AM_try_read_data(struct i2c_client * client, u16 reg, u8* buf, int b
 	msgs[1].buf = buf;
 
 	err = i2c_transfer(client->adapter, msgs, 2);
-	if(err < 0)
+	if(err < 0 || unchecked)
 		return err;
+
 	msgs[1].buf = check;
 	err = i2c_transfer(client->adapter, msgs, 2);
 	if(err < 0)
@@ -298,12 +300,12 @@ static int _AM_try_read_data(struct i2c_client * client, u16 reg, u8* buf, int b
 	return -EAGAIN;
 }
 
-static int _AM_try_read_reg(struct i2c_client * client, u16 reg, unsigned *val, int data_size)
+static int _AM_try_read_reg(struct i2c_client * client, u16 reg, unsigned *val, int data_size, bool unchecked)
 {
 	int err;
 
 	u8 buf[4] = {0};
-	err = _AM_try_read_data(client, reg, buf, data_size);
+	err = _AM_try_read_data(client, reg, buf, data_size, unchecked);
 
 	switch(data_size){
 	case 1:
@@ -332,7 +334,7 @@ static int _AM_read_data(struct i2c_client * client, u16 reg, u8* buf, int buf_l
 	int i;
 
 	for(i = 0; i <= i2c_retries; i++) {
-		ret = _AM_try_read_data(client, reg, buf, buf_len);
+		ret = _AM_try_read_data(client, reg, buf, buf_len, !READ_IS_UNCHECKED);
 		if(ret >= 0)
 			return ret;
 	}
@@ -344,7 +346,7 @@ static int _AM_read_data(struct i2c_client * client, u16 reg, u8* buf, int buf_l
 }
 
 
-static int _AM_read_reg(struct i2c_client * client, u16 reg, unsigned *val, int data_size, unsigned *error_count)
+static int _AM_read_reg_maybe_unchecked(struct i2c_client * client, u16 reg, unsigned *val, int data_size, unsigned *error_count, bool unchecked)
 {
 	int ret;
 	int i;
@@ -355,7 +357,7 @@ static int _AM_read_reg(struct i2c_client * client, u16 reg, unsigned *val, int 
 	}
 
 	for(i = 0; i <= i2c_retries; i++) {
-		ret = _AM_try_read_reg(client, reg, val, data_size);
+		ret = _AM_try_read_reg(client, reg, val, data_size, unchecked);
 		if(ret >= 0)
 			return ret;
 	}
@@ -364,6 +366,16 @@ static int _AM_read_reg(struct i2c_client * client, u16 reg, unsigned *val, int 
 		*error_count +=1;
 
 	return ret;
+}
+
+static int _AM_read_reg(struct i2c_client * client, u16 reg, unsigned *val, int data_size, unsigned *error_count)
+{
+	return _AM_read_reg_maybe_unchecked(client, reg, val, data_size, error_count, !READ_IS_UNCHECKED);
+}
+
+static int _AM_read_reg_unchecked(struct i2c_client * client, u16 reg, unsigned *val, int data_size, unsigned *error_count)
+{
+	return _AM_read_reg_maybe_unchecked(client, reg, val, data_size, error_count, READ_IS_UNCHECKED);
 }
 
 static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf, unsigned buf_len, bool unchecked)
@@ -494,7 +506,7 @@ static int _AM_send_command(struct i2c_client * client, u16 val, unsigned *error
 		return err;
 	}
 	for(i = 0; i < DOORBELL_RETRIES; i++) {
-		err = _AM_read_reg(client, REG_CMD, &ap0100_err, 2, NULL);
+		err = _AM_read_reg_unchecked(client, REG_CMD, &ap0100_err, 2, NULL);
 		if(err >= 0 && !(ap0100_err & REG_CMD_DOORBELL_MASK))
 			break;
 		msleep(5);
@@ -1621,7 +1633,7 @@ static void _ap0100_m034_I2C_test(struct i2c_client * client, unsigned cycles)
 
 			ret = -1;
 			for(k = 0; k < i2c_retries && ret < 0; k++) {
-				ret = _AM_try_read_reg(client, reg, &val, 2);
+				ret = _AM_try_read_reg(client, reg, &val, 2, !READ_IS_UNCHECKED);
 				total_transactions++;
 				if(ret < 0) {
 					r_retry_cnt++;
