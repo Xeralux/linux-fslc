@@ -1271,10 +1271,10 @@ static int _ap0100_write_fw_bin(struct ap0100_m034_data *data, const u8 *bin_sta
 {
 	int ret;
 	/*Erase header first because once we erase main flash the data is invalid.*/
+	data->flash_header.header_const = 0;
 	ret = _ap0100_erase_flash_block(data, FLASH_HEADER_ADDR);
 	if(ret < 0)
 		return ret;
-
 	ret = _ap0100_erase_flash_block(data, 0);
 	if(ret < 0)
 		return ret;
@@ -1302,6 +1302,7 @@ static int _ap0100_write_fw_header(struct ap0100_m034_data *data, const u8 *bin_
 	ret = _ap0100_validate_flash(data, FLASH_HEADER_ADDR, sizeof(struct fw_header), (const u8*)header);
 	if(ret >= 0)
 		return ret;
+	data->flash_header.header_const = 0;
 	ret = _ap0100_erase_flash_block(data, FLASH_HEADER_ADDR);
 	if(ret < 0)
 		return ret;
@@ -1995,6 +1996,7 @@ static ssize_t ap0100_write_header(struct device *dev,
 	int name_length = count;
 	char *end;
 	int ret;
+	struct fw_header header;
 	end = strpbrk(buf,"\n\r");
 	if(end != NULL)
 		name_length = (int)(end-buf);
@@ -2008,6 +2010,13 @@ static ssize_t ap0100_write_header(struct device *dev,
 	ret = _ap0100_handle_cbf(data, name, _ap0100_write_fw_header);
 	dev_err(data->dev, "Header update %s:%d\n", ret < 0 ? "failed" : "succeeded", ret);
 	data->fw_status = ret;
+	if(ret < 0)
+		goto out;
+
+	ret = _ap0100_read_flash_header(data, &header);
+	if(ret >= 0) {
+		memcpy(&data->flash_header, &header, sizeof(header));
+	}
 out:
 	mutex_unlock(&data->lock);
 	return count;
@@ -2273,8 +2282,6 @@ static int _ap0100_m034_probe(struct ap0100_m034_data* data)
 	if(ret < 0) {
 		goto error;
 	}
-
-	_ap0100_read_flash_header(data, &data->flash_header);
 
 	ret = sysfs_create_group(&dev->kobj, &attr_group);
 	if(ret < 0)
