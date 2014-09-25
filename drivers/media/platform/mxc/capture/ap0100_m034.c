@@ -891,9 +891,15 @@ static int _ap0100_write_flash_inner(struct ap0100_m034_data *data, unsigned add
 	return ret;
 }
 
-/*Even if there are errors, this attempts to write as much as flash as possible on the theory that
- of 15k most of it is probably unused the majority of the time, or if it is used it will not
- cause severe errors.*/
+/*WARNING: it seems like having too much delay in between write commands may lead to some sort
+ * of time-out in the camera firmware which leads to statuses of EBUSY, ENOSYS, EACCES. Given
+ * only 11 bytes can be written at once via the command IF, and  the EEPROM data sheet
+ * recommends writing a full page at once, it is quite possible that there is some fancy logic
+ * in the firmware which buffers writes up to a page size or until a certain number of milliseconds
+ * has elapsed.
+ * This function and the surrounding code has been cut down to issue the minimum amount of i2c
+ * accesses. Validation of the flash happens in a separate phase.
+ */
 static int _ap0100_write_flash(struct ap0100_m034_data *data, unsigned addr, unsigned length, const u8 *buf)
 {
 	/*Maximize data per write in order to minimize number of transfers total*/
