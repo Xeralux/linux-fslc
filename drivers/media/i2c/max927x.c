@@ -1326,17 +1326,9 @@ static int max927x_probe(struct i2c_client *client,
 
 	data->deserializer_master = deserializer_master;
 
-	mutex_lock(&data->data_lock);
-
-	ret = sysfs_create_group(&dev->kobj, &init_attr_group);
-	if(ret < 0) {
-	   dev_err(dev,"Could not create sysfs file.\n");
-	  goto error1;
-   }
-
 	ret = _max927x_slave_power_on(data);
 	if(ret < 0)
-		goto error2;
+		return ret;
 	/*Not using v4l2_i2c_subdev_init because we don't want i2c devices to be
 	 * automatically removed
 	 */
@@ -1346,15 +1338,13 @@ static int max927x_probe(struct i2c_client *client,
 	v4l2_set_subdevdata(subdev, client);
 	i2c_set_clientdata(client, subdev);
 
-	_max927x_probe(data);
-	mutex_unlock(&data->data_lock);
-	return 0;
+	ret = sysfs_create_group(&dev->kobj, &init_attr_group);
+	if(ret < 0) {
+	   dev_err(dev,"Could not create sysfs file.\n");
+	   return ret;
+   }
 
-error2:
-	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
-error1:
-	mutex_unlock(&data->data_lock);
-	return ret;
+	return 0;
 }
 
 static int max927x_remove(struct i2c_client *client)
