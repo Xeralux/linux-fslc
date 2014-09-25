@@ -42,6 +42,7 @@ module_param(i2c_retries, ulong, 0444);
 enum AP0100_CMD {
   CMD_SYS_SET_STATE = 0x8100,
   CMD_SYS_GET_STATE = 0x8101,
+  CMD_SYS_CFG_PWR = 0x8102,
   CMD_INVOKE_CMD_SEQ = 0x8900,
   CMD_FLASH_GET_LOCK 		= 0x8500,
   CMD_FLASH_LOCK_STATUS 	= 0x8501,
@@ -708,6 +709,20 @@ static int _ap0100_m034_sensor_init(struct ap0100_m034_data* data, enum ap0100_m
 		dev_err(dev, "init failed!!");
 	}
 	return ret;
+}
+
+static int _ap0100_set_low_power(struct ap0100_m034_data *data)
+{
+	static const struct ap0100_m034_reg_data ap0100_power_regs[] = {
+			{1, REG_CMD_PARAMS_POOL_0, 0x00},
+			{1, REG_CMD_PARAMS_POOL_0+1, 0x1},
+			{1, REG_CMD_PARAMS_POOL_1+0, 0x1},
+			{1, REG_CMD_PARAMS_POOL_1+1, 0x1},
+			{0xC2, REG_CMD, CMD_SYS_CFG_PWR, WRITE_IS_CMD},
+			{2, REG_CMD_PARAMS_POOL_0, 0x4000},
+			{0xC2, REG_CMD, CMD_SYS_SET_STATE, WRITE_IS_CMD},
+	};
+	return  _ap0100_handle_registers(data->client, ap0100_power_regs, ARRAY_SIZE(ap0100_power_regs), &data->error_count);
 }
 
 static int _ap0100_wait_for_flash(struct ap0100_m034_data *data, int wait_time_ms)
@@ -2231,7 +2246,10 @@ static int _ap0100_host_config_mode(struct ap0100_m034_data* data)
 		return ret;
 	val &= ~REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_MASK;
 	ret = _AM_write_reg(client, REG_MCU_BOOT_OPT, val, 2,  &data->error_count);
+	if(ret < 0)
+		return ret;
 
+	ret = _ap0100_set_low_power(data);
 	return ret;
 }
 
