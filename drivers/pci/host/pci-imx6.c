@@ -333,7 +333,7 @@ static int imx6_pcie_wait_for_link(struct pcie_port *pp)
 	int count = 200;
 
 	while (!dw_pcie_link_up(pp)) {
-		usleep_range(100, 1000);
+		msleep(1);
 		if (--count)
 			continue;
 
