@@ -829,6 +829,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc3_mn>;
 	cd-gpios = <&gpio6 11 0>;
+	bus-width = <4>;
 	no-1-8-v;
 	status = "okay";
 };
@@ -836,6 +837,7 @@
 &usdhc4 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc4_mn>;
+	bus-width = <8>;
 	no-1-8-v;
 	status = "okay";
 };
