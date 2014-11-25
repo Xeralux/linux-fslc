@@ -786,8 +786,10 @@ static int _ap0100_read_flash(struct ap0100_m034_data *data, unsigned addr, unsi
 
 	for(; length > READ_FLASH_BLOCK; length -= READ_FLASH_BLOCK) {
 		ret  = _ap0100_read_flash_inner(data, addr, READ_FLASH_BLOCK, buf);
-		if(ret < 0)
+		if(ret < 0) {
+			dev_err(data->dev, "%s: _ap0100_read_flash_inner() faild (%d)\n", __func__, ret);
 			return ret;
+		}
 		addr += READ_FLASH_BLOCK;
 		buf += READ_FLASH_BLOCK;
 	}
@@ -1915,12 +1917,6 @@ static ssize_t ap0100_show_fw_metadata(struct device *dev,
 	ret = _ap0100_validate_fw_header(data, &data->flash_header);
 	if (ret >= 0) {
 		memcpy(&header,&data->flash_header, sizeof(header));
-		goto out;
-	}
-
-	if(data->operational) {
-		ret = -EINVAL;
-		dev_err(data->dev, "Need to re-read flash header; device must not be operational.\n");
 		goto out;
 	}
 
