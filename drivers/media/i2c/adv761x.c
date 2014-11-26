@@ -1112,8 +1112,13 @@ static int adv761x_probe(struct i2c_client *client,
 		ret = gpio_request_one(pdata->gpio, GPIOF_IN,
 				       ADV761X_DRIVER_NAME);
 		if (ret) {
+			pdata->gpio = 1;
+			ret = gpio_request_one(pdata->gpio, GPIOF_IN,
+				       ADV761X_DRIVER_NAME);
+		if (ret) {
 			v4l_err(client, "GPIO setup failed\n");
 			goto err_work;
+			}
 		}
 
 		state->gpio = pdata->gpio;
