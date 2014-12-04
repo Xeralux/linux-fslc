@@ -253,13 +253,23 @@
 		};
 	};
 
+	sound 	{
+		compatible = "adi,imx-sound";
+		clocks = <&clks 3> , <&clks 198> , <&clks 200> , <&clks 201>;
+		clock-names = "osc" , "cko2_sel" , "cko2" , "cko";
+		audio-codec = <&adau1761>;
+		ssi-controller = <&ssi2>;
+		mux-int-port = <2>;
+		mux-ext-port = <4>;
+		};
+
 };
 
 /*  Use native chipselects for all SPI channels.  */
 &ecspi1 {
 	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
-	cs-gpios = <0>;		// <&gpio4 9 0>;	/*  KEY_ROW1  */
+//	cs-gpios = <0>;		// <&gpio4 9 0>;	/*  KEY_ROW1  */
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi1_mn>;
 	status = "okay";
@@ -274,7 +284,7 @@
 &ecspi2 {
 	/*  All signals go out on connector J23.  */
 	fsl,spi-num-chipselects = <1>;
-	cs-gpios = <0>;		// <&gpio2 26 0>;	/*  EIM_RW  */
+//	cs-gpios = <0>;		// <&gpio2 26 0>;	/*  EIM_RW  */
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_ecspi2_mn>;
 	status = "okay";
@@ -819,10 +829,21 @@
 
 &i2c8 {
 	/*https://github.com/analogdevicesinc/linux/blob/adau17x1/sound/soc/codecs/adau1761.c*/
-	adau1761@3b {
+	adau1761:adau1761@3b {
 		compatible = "adau1761";
 		reg = <0x3b>;
 	};
+};
+
+&ssi2 {
+        fsl,mode = "i2s-slave";
+         status = "okay";
+};
+
+&audmux {
+        pinctrl-names = "default";
+        pinctrl-0 = <&pinctrl_audmux_4>;
+        status = "okay";
 };
 
 &usdhc3 {
@@ -1090,7 +1111,8 @@
 		pinctrl_hog_mn: hoggrp-mn {
 			fsl,pins = <
 				/*  SPI DUART IRQ line.  */
-				MX6QDL_PAD_GPIO_0__GPIO1_IO00	0x80000000
+				/*MX6QDL_PAD_GPIO_0__GPIO1_IO00	0x80000000*/
+				MX6QDL_PAD_GPIO_0__CCM_CLKO1  0x000130b0
 				MX6QDL_PAD_GPIO_17__GPIO7_IO12   SION_HYS_PKDIS_ODEN_100MHZ_40Z_FSLEW   /*204 pcie reset-gpio*/
 				MX6QDL_PAD_EIM_D19__GPIO3_IO19   SION_HYS_PKDIS_ODDIS_100MHZ_40Z_FSLEW  /* 83 pcie1 power-on-gpio*/
 				MX6QDL_PAD_ENET_RXD0__GPIO1_IO27 SION_HYS_PKDIS_ODDIS_100MHZ_40Z_FSLEW  /* 27 pcie2 power-on-gpio*/
@@ -1137,6 +1159,16 @@
 //			>;
 //		};
 //	};
+        audmux {
+		pinctrl_audmux_4: audmux-4 {
+			fsl,pins = <
+				MX6QDL_PAD_DISP0_DAT23__AUD4_RXD  0x130b0
+				MX6QDL_PAD_DISP0_DAT20__AUD4_TXC  0x130b0
+				MX6QDL_PAD_DISP0_DAT21__AUD4_TXD  0x110b0
+				MX6QDL_PAD_DISP0_DAT22__AUD4_TXFS 0x130b0
+			>;
+               };
+	};
 };
 
 &mipi_csi {
