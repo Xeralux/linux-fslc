@@ -12,8 +12,8 @@
 #include "imx6qdl-sensity_medianode.dtsi"
 
 / {
-	model = "Sensity Systems Medianode (MX6D/Q)";
-	compatible = "sensity,medianode", "fsl,imx6q";
+	model = "Sensity Systems Falcon (MX6Q)";
+	compatible = "sensity,falcon", "fsl,imx6q";
 };
 
 &sata {
@@ -25,10 +25,8 @@
  * Complete camboard_ch[01]_fixed_5v0 nodes.
  */
 &camboard_ch0_fixed_5v0 {
-	gpio = <&camboard_gpio 2 GPIO_ACTIVE_HIGH>;
-	enable-active-high;
+	gpio = <&camboard_gpio 2 GPIO_ACTIVE_LOW>;
 };
 &camboard_ch1_fixed_5v0 {
-	gpio = <&camboard_gpio 3 GPIO_ACTIVE_HIGH>;
-	enable-active-high;
+	gpio = <&camboard_gpio 3 GPIO_ACTIVE_LOW>;
 };

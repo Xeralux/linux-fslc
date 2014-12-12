@@ -102,14 +102,20 @@
 	regulators {
 		compatible = "simple-bus";
 
+		/*
+		 * IMPORTANT: For the camboard_ch[01]_fixed_5v0 nodes, be
+		 * sure to declare the 'gpio' and optionally the
+		 * enable-active-high properties in the top-level machine
+		 * definition.
+		 */
 		camboard_ch0_fixed_5v0: camboard-ch0-fixed-5v0 {
 			compatible = "regulator-fixed";
 			regulator-name = "camboard-ch0-fixed-5v0";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
-			gpio = <&camboard_gpio 2 0>;
+			/*  gpio = <&camboard_gpio 2 GPIO_ACTIVE_???>;	// Set in top-level.  */
 			gpio-open-drain;
-			enable-active-high;
+			/*  enable-active-high;  // Optionally set in top-level.  */
 			regulator-boot-on;
 		};
 
@@ -118,9 +124,9 @@
 			regulator-name = "camboard-ch1-fixed-5v0";
 			regulator-min-microvolt = <5000000>;
 			regulator-max-microvolt = <5000000>;
-			gpio = <&camboard_gpio 3 0>;
+			/*  gpio = <&camboard_gpio 3 GPIO_ACTIVE_???>;  // Set in top-level.  */
 			gpio-open-drain;
-			enable-active-high;
+			/*  enable-active-high;  // Optionally set in top-level.  */
 			regulator-boot-on;
 		};
 
