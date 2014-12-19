@@ -524,6 +524,11 @@
 	scl-gpio = <&gpio1 3 0>;
 	sda-gpio = <&gpio1 6 0>;
 
+	/*https://github.com/analogdevicesinc/linux/blob/adau17x1/sound/soc/codecs/adau1761.c*/
+	adau1761:adau1761@3b {
+		compatible = "adau1761";
+		reg = <0x3b>;
+	};
 };
 
 
@@ -832,14 +837,6 @@
 				};
 			};
 		};
-	};
-};
-
-&i2c8 {
-	/*https://github.com/analogdevicesinc/linux/blob/adau17x1/sound/soc/codecs/adau1761.c*/
-	adau1761:adau1761@3b {
-		compatible = "adau1761";
-		reg = <0x3b>;
 	};
 };
 
