@@ -9,7 +9,7 @@
 /dts-v1/;
 
 #include "imx6q.dtsi"
-#include "imx6qdl-sensity_medianode.dtsi"
+#include "imx6qdl-sensity_falcon.dtsi"
 
 / {
 	model = "Sensity Systems Falcon (MX6Q)";

@@ -1,7 +1,7 @@
 /*
- * Definitions common to all flavors of the Medianode.
+ * Definitions common to all flavors of the Falcon.
  *
- * Copyright (C) 2013 Sensity Systems, Inc.
+ * Copyright (C) 2014 Sensity Systems, Inc.
  *
  * CONFIDENTIAL AND PROPRIETARY.
  */
@@ -78,8 +78,8 @@
 
 	v4l2_cap_0 {
 		compatible = "fsl,imx6q-v4l2-capture";
-		ipu_id = <0>;
-		csi_id = <0>;
+		ipu_id = <1>;
+		csi_id = <1>;
 		vdev = <0>;
 		mclk_source = <0>;
 		status = "okay";
@@ -238,11 +238,11 @@
 	ssmn_parallel: mxc_parallel_ch0 {
 		compatible = "fsl,mxc-subdev-parallel";
 		pinctrl-names = "default";
-		pinctrl-0 = <&pinctrl_ipu1_2_mn>;
+		pinctrl-0 = <&pinctrl_ipu2_2_mn>;
 		clocks = <&clks 201>;
 		clock-names = "csi_mclk";
-		ipu_id = <0>;
-		csi_id = <0>;
+		ipu_id = <1>;
+		csi_id = <1>;
 		vdev = <0>;
 		mclk = <24000000>;
 		mclk_source = <0>;
@@ -465,11 +465,11 @@
 	};
 
 	/* PCA9546 I2C multiplexer */
-	i2cmux@70 {
+	i2cmux@71 {
 		#address-cells = <1>;
 		#size-cells = <0>;
 		compatible = "nxp,pca9546";
-		reg = <0x70>;
+		reg = <0x71>;
 		/*DO NOT ADD nxp,deselect-on-exit as this will break
 		 *code which expects the mux to be selected across an entire
 		 *i2c transaction
@@ -1133,20 +1133,21 @@
 		};
 	};
 
-	ipu1_2 { /* parallel camera , no data enable*/
-		pinctrl_ipu1_2_mn: ipu1grp-2mn {
+	ipu2_2 { /* parallel camera */
+		pinctrl_ipu2_2_mn: ipu2grp-2mn {
 			fsl,pins = <
-				MX6QDL_PAD_CSI0_DAT12__IPU1_CSI0_DATA12    0x80000000
-				MX6QDL_PAD_CSI0_DAT13__IPU1_CSI0_DATA13    0x80000000
-				MX6QDL_PAD_CSI0_DAT14__IPU1_CSI0_DATA14    0x80000000
-				MX6QDL_PAD_CSI0_DAT15__IPU1_CSI0_DATA15    0x80000000
-				MX6QDL_PAD_CSI0_DAT16__IPU1_CSI0_DATA16    0x80000000
-				MX6QDL_PAD_CSI0_DAT17__IPU1_CSI0_DATA17    0x80000000
-				MX6QDL_PAD_CSI0_DAT18__IPU1_CSI0_DATA18    0x80000000
-				MX6QDL_PAD_CSI0_DAT19__IPU1_CSI0_DATA19    0x80000000
-				MX6QDL_PAD_CSI0_PIXCLK__IPU1_CSI0_PIXCLK   0x80000000
-				MX6QDL_PAD_CSI0_MCLK__IPU1_CSI0_HSYNC      0x80000000
-				MX6QDL_PAD_CSI0_VSYNC__IPU1_CSI0_VSYNC     0x80000000
+				MX6QDL_PAD_EIM_A17__IPU2_CSI1_DATA12    0x0000b0b1
+				MX6QDL_PAD_EIM_A18__IPU2_CSI1_DATA13    0x0000b0b1
+				MX6QDL_PAD_EIM_A19__IPU2_CSI1_DATA14    0x0000b0b1
+				MX6QDL_PAD_EIM_A20__IPU2_CSI1_DATA15    0x0000b0b1
+				MX6QDL_PAD_EIM_A21__IPU2_CSI1_DATA16    0x0000b0b1
+				MX6QDL_PAD_EIM_A22__IPU2_CSI1_DATA17    0x0000b0b1
+				MX6QDL_PAD_EIM_A23__IPU2_CSI1_DATA18    0x0000b0b1
+				MX6QDL_PAD_EIM_A24__IPU2_CSI1_DATA19    0x0000b0b1
+				MX6QDL_PAD_EIM_A16__IPU2_CSI1_PIXCLK    0x0000b0b1
+				MX6QDL_PAD_EIM_EB3__IPU2_CSI1_HSYNC    0x0000b0b1
+				MX6QDL_PAD_EIM_DA12__IPU2_CSI1_VSYNC    0x0000b0b1
+				MX6QDL_PAD_EIM_D23__IPU2_CSI1_DATA_EN   0x0000b0b1
 			>;
 		};
 	};
