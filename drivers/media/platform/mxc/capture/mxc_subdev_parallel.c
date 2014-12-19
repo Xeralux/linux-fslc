@@ -37,6 +37,8 @@ struct mxc_subdev_parallel_cam {
 	struct regmap *gpr;
 	struct v4l2_subdev	subdev;
 	struct clk *sensor_clk;
+	int ipu;
+	int csi;
 };
 
 static struct mxc_subdev_parallel_cam *to_mxc_subdev_parallel_from_v4l2(const struct v4l2_subdev *sd)
@@ -52,16 +54,23 @@ static void mxc_subdev_parallel_powerdown(struct mxc_subdev_parallel_cam *data, 
 {
 	pr_debug("ssmn_camera_parallel: powerdown %d\n", powerdown);
 	if (powerdown) {
-       if (of_machine_is_compatible("fsl,imx6q"))
-               regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),(0<<19));
+		if (of_machine_is_compatible("fsl,imx6q")) {
+			if (data->ipu == 0)
+				regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),(0<<19));
+			else
+				regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<20),(0<<20));
+		}
 		if (of_machine_is_compatible("fsl,imx6dl"))
 			regmap_update_bits(data->gpr,IOMUXC_GPR13,
 					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_MIPI_CSI0);
 	}
 	else {
-		if (of_machine_is_compatible("fsl,imx6q"))
-               regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),(1<<19));
-
+		if (of_machine_is_compatible("fsl,imx6q")) {
+			if (data->ipu == 0)
+				regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<19),(1<<19));
+			else
+				regmap_update_bits(data->gpr,IOMUXC_GPR1,(1<<20),(1<<20));
+		}
 		if (of_machine_is_compatible("fsl,imx6dl"))
 			regmap_update_bits(data->gpr,IOMUXC_GPR13,
 					IMX6DL_GPR13_IPU_CSI0_MUX, IMX6DL_GPR13_IPU_CSI0_MUX_IPU_CSI0);
@@ -108,6 +117,7 @@ static int mxc_subdev_parallel_probe(struct platform_device *pdev)
 	struct mxc_subdev_parallel_cam *data;
 	int ret;
 	int csi;
+	int ipu;
 
 	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
 	if(!data)
@@ -127,11 +137,41 @@ static int mxc_subdev_parallel_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	if(csi != 0) {
-		dev_err(dev, "csi other than 0 not supported.\n");
+	if(csi != 0 && csi != 1) {
+		dev_err(dev, "csi other than 0 or 1 not supported.\n");
 		return -EINVAL;
 	}
 
+	data->csi = csi;
+
+	ret = of_property_read_u32(dev->of_node, "ipu_id",
+							   &ipu);
+	if (ret < 0) {
+		dev_err(dev, "ipu id missing or invalid\n");
+		return ret;
+	}
+
+	if(ipu != 0 && ipu != 1) {
+		dev_err(dev, "ipu other than 0 or 1 not supported.\n");
+		return -EINVAL;
+	}
+
+	data->ipu = ipu;
+
+	if (of_machine_is_compatible("fsl,imx6q")) {
+		// Quad/Dual: ipu/csi mapping is fixed.
+		if ((ipu == 0 && csi == 1) ||
+			(ipu == 1 && csi == 0)) {
+			dev_err(dev, "ipu/csi combination not supported.\n");
+			return -EINVAL;
+		}
+	} else {
+		// Dual-lite and others: only one IPU
+		if (ipu != 0) {
+			dev_err(dev, "invalid ipu specified.\n");
+			return -EINVAL;
+		}
+	}
 
 	data->gpr = syscon_regmap_lookup_by_phandle(dev->of_node,
 				"gpr");
