@@ -66,6 +66,7 @@ struct max927x_data {
 	bool deserializer_master;
 	u8 gpio_en;
 	u8 gpio_set;
+	u8 des_gpio;
 	unsigned revtxamp;
 	unsigned rev_trf;
 	unsigned rev_logain;
@@ -242,7 +243,7 @@ static int _max927x_try_write_reg(struct i2c_client *client, u8 reg, u8 val)
 }
 
 
-static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, unsigned *error_count)
+static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, u8 mask, unsigned *error_count)
 {
 	int err = -EIO;
 	int i;
@@ -263,7 +264,7 @@ static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, unsigne
 		if(err < 0)
 			continue;
 
-		if(check != val) {
+		if((check & mask) != (val & mask)) {
 			dev_warn_ratelimit(&client->dev,"%s:check warn:reg=%x,val=%x,check=%x\n", __func__,
 				reg, val, check);
 			err = -EIO;
@@ -284,18 +285,21 @@ static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, unsigne
 	return err;
 }
 
-#define SLAVE_WRITE(reg,val,error) _max927x_write_reg(data->slave, reg, val, error)
-#define MASTER_WRITE(reg,val,error) _max927x_write_reg(data->master, reg, val, error)
+#define SLAVE_WRITE(reg,val,error) _max927x_write_reg(data->slave, reg, val, 0xff, error)
+#define MASTER_WRITE(reg,val,error) _max927x_write_reg(data->master, reg, val, 0xff, error)
 #define SER_WRITE(reg,val,error) \
 	_max927x_write_reg(data->deserializer_master ? data->slave : data->master, \
-			reg, val, error)
+			reg, val, 0xff, error)
 #define SER_READ(reg,val,error) \
 	_max927x_read_reg(data->deserializer_master ? data->slave : data->master, \
 			reg, val, error)
 
 #define DES_WRITE(reg,val,error) \
 	_max927x_write_reg(data->deserializer_master ? data->master : data->slave, \
-			reg, val, error)
+			reg, val, 0xff, error)
+#define DES_WRITE_MASK(reg,val,mask,error) \
+	_max927x_write_reg(data->deserializer_master ? data->master : data->slave, \
+			reg, val, mask, error)
 #define DES_READ(reg,val,error) \
 	_max927x_read_reg(data->deserializer_master ? data->master : data->slave, \
 			reg, val, error)
@@ -381,14 +385,36 @@ static int max9271_gpio_get_value(struct gpio_chip *gc, unsigned off)
 	struct max927x_data* data = to_max927x_from_gpio(gc);
 	u8 val;
 	int ret;
-	mutex_lock(&data->gpio_lock);
-	ret = SER_READ(0x10, &val, &data->error_count);
-	mutex_unlock(&data->gpio_lock);
-	if(ret < 0) {
-		dev_err(data->dev,"error in %s\n",__func__);
-		return 0;
+
+	printk(KERN_INFO "get value: off=%d\n", off);
+
+	if (off < 6) {
+		/* Serializer GPIOs: 1-5 */
+		mutex_lock(&data->gpio_lock);
+		ret = SER_READ(0x10, &val, &data->error_count);
+		mutex_unlock(&data->gpio_lock);
+		if(ret < 0) {
+			dev_err(data->dev,"error in %s\n",__func__);
+			return 0;
+		}
+
+		return (val & (1u << off)) ? 1 : 0;
+	} else {
+		/* De-serializer GPIOs: 6-7 */
+		mutex_lock(&data->gpio_lock);
+		ret = DES_READ(0x0E, &val, &data->error_count);
+		mutex_unlock(&data->gpio_lock);
+		if(ret < 0) {
+			dev_err(data->dev,"error in %s\n",__func__);
+			return 0;
+		}
+
+		/* GPIO6 - bit 0, GPIO7 - bit 2*/
+		off -= 6;
+		off *= 2;
+		return (val >> off) & 1;
 	}
-	return (val & (1u << off)) ? 1 : 0;
+
 }
 
 static void max9271_gpio_set_value(struct gpio_chip *gc, unsigned off, int output_val)
@@ -396,25 +422,52 @@ static void max9271_gpio_set_value(struct gpio_chip *gc, unsigned off, int outpu
 	struct max927x_data* data = to_max927x_from_gpio(gc);
 	int ret;
 	mutex_lock(&data->gpio_lock);
-	if(output_val)
-		data->gpio_set |= (1 << off);
-	else
-		data->gpio_set &= ~(1 << off);
-	ret = SER_WRITE(0x0F, data->gpio_set, &data->error_count);
+
+	printk(KERN_INFO "set value: off=%d, output=%d\n", off, output_val);
+
+	if(off < 6) {
+		if(output_val)
+			data->gpio_set |= (1 << off);
+		else
+			data->gpio_set &= ~(1 << off);
+
+		ret = SER_WRITE(0x0F, data->gpio_set, &data->error_count);
+	} else {
+		u8 bits = 0;
+		/* GPIO6 - bit 1, GPIO7 - bit 3 */
+		off -= 6; // 0 or 1
+		off *= 2; // 0 or 2
+		off += 1; // 1 or 3
+		bits = (1 << off);
+		data->des_gpio &= ~bits;
+		if(output_val)
+			data->des_gpio |= bits;
+
+		ret = DES_WRITE_MASK(0x0E, data->des_gpio, 0x6a, &data->error_count);
+	}
+
 	mutex_unlock(&data->gpio_lock);
 	if(ret < 0) {
 		dev_err(data->dev,"error in %s\n",__func__);
 	}
+
 }
 
 static int max9721_gpio_direction_input(struct gpio_chip *gc, unsigned off)
 {
 	struct max927x_data* data = to_max927x_from_gpio(gc);
-	int ret;
+	int ret = 0;
 	if(off == 0) {
 		dev_err(data->dev, "Bad gpio offset\n");
 		return -EINVAL;
 	}
+
+	/* max9272 GPIOs are OD only, so just set them 'high'. */
+	if (off > 5) {
+		max9271_gpio_set_value(gc, off, 1);
+		return ret;
+	}
+
 	mutex_lock(&data->gpio_lock);
 	data->gpio_en &= ~(1 << off);
 	ret = SER_WRITE(0x0E, data->gpio_en, &data->error_count);
@@ -422,14 +475,18 @@ static int max9721_gpio_direction_input(struct gpio_chip *gc, unsigned off)
 	if(ret < 0) {
 		dev_err(data->dev,"error in %s\n",__func__);
 	}
+
 	return ret;
 }
 
 static int max9721_gpio_direction_output(struct gpio_chip *gc, unsigned off, int value)
 {
 	struct max927x_data* data = to_max927x_from_gpio(gc);
-	int ret;
+	int ret = 0;
 	max9271_gpio_set_value(gc, off, value);
+	if (off > 5)
+		return ret;
+
 	mutex_lock(&data->gpio_lock);
 	data->gpio_en |= 1 << off;
 	ret = SER_WRITE(0x0E, data->gpio_en, &data->error_count);
@@ -549,6 +606,7 @@ static int _max927x_link_configure(struct max927x_data* data)
 	if(!data->gpio_chip_initialized) {
 		data->gpio_en = 0x42;
 		data->gpio_set = 0xFE;
+		data->des_gpio = 0x6a;
 	}
 
 	retval = SER_WRITE(0x0F, data->gpio_set, &data->error_count);
@@ -556,6 +614,10 @@ static int _max927x_link_configure(struct max927x_data* data)
 		goto error;
 
 	retval = SER_WRITE(0x0E, data->gpio_en, &data->error_count);
+	if(retval < 0)
+		goto error;
+
+	retval = DES_WRITE_MASK(0x0E, data->des_gpio, 0x6a, &data->error_count);
 	if(retval < 0)
 		goto error;
 
@@ -864,7 +926,7 @@ static void _max927x_i2c_test(struct i2c_client * client, struct device *dev, co
 		}
 	}
 out:
-	_max927x_write_reg(client, reg, 0x0, NULL);
+	_max927x_write_reg(client, reg, 0x0, 0xff, NULL);
 
 	dev_err(dev, "%s i2c test %s !, total test count = %d, fail_cnt=%d, w_retry_cnt = %d, "
 			"r_retry_cnt = %d, check_cnt = %d, max retries=%d, total transactions=%d\n",
@@ -1124,7 +1186,7 @@ static int _max927x_probe(struct max927x_data* data)
 		gc->get = max9271_gpio_get_value;
 		gc->set = max9271_gpio_set_value;
 		gc->can_sleep = 1;
-		gc->ngpio = 6;
+		gc->ngpio = 8;
 		gc->label = client->name;
 		gc->dev = &client->dev;
 		gc->owner = THIS_MODULE;
