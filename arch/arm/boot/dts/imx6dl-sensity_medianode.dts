@@ -26,3 +26,15 @@
 	pinctrl-0 = <&pinctrl_i2c4_1>;	/*  "ENET TX" pins.  */
 	status = "okay";
 };
+
+/*
+ * Complete camboard_ch[01]_fixed_5v0 nodes.
+ */
+&camboard_ch0_fixed_5v0 {
+	gpio = <&camboard_gpio 2 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
+&camboard_ch1_fixed_5v0 {
+	gpio = <&camboard_gpio 3 GPIO_ACTIVE_HIGH>;
+	enable-active-high;
+};
