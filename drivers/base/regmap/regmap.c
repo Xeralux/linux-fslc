@@ -431,9 +431,9 @@ static enum regmap_endian regmap_get_reg_endian(const struct regmap_bus *bus,
 	return REGMAP_ENDIAN_BIG;
 }
 
-static enum regmap_endian regmap_get_val_endian(struct device *dev,
-					const struct regmap_bus *bus,
-					const struct regmap_config *config)
+enum regmap_endian regmap_get_val_endian(struct device *dev,
+					 const struct regmap_bus *bus,
+					 const struct regmap_config *config)
 {
 	struct device_node *np = dev->of_node;
 	enum regmap_endian endian;
@@ -466,6 +466,7 @@ static enum regmap_endian regmap_get_val_endian(struct device *dev,
 	/* Use this if no other value was found */
 	return REGMAP_ENDIAN_BIG;
 }
+EXPORT_SYMBOL_GPL(regmap_get_val_endian);
 
 /**
  * regmap_init(): Initialise register map
