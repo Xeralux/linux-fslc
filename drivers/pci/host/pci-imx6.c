@@ -236,10 +236,6 @@ static int imx6_pcie_deassert_core_reset(struct pcie_port *pp)
 	if (gpio_is_valid(imx6_pcie->power_on_gpio))
 		gpio_set_value(imx6_pcie->power_on_gpio, 1);
 
-	regmap_update_bits(imx6_pcie->iomuxc_gpr, IOMUXC_GPR1,
-			IMX6Q_GPR1_PCIE_TEST_PD, 0 << 18);
-	regmap_update_bits(imx6_pcie->iomuxc_gpr, IOMUXC_GPR1,
-			IMX6Q_GPR1_PCIE_REF_CLK_EN, 1 << 16);
 	request_bus_freq(BUS_FREQ_HIGH);
 
 	ret = clk_prepare_enable(imx6_pcie->sata_ref_100m);
@@ -271,6 +267,19 @@ static int imx6_pcie_deassert_core_reset(struct pcie_port *pp)
 
 	/* allow the clocks to stabilize */
 	usleep_range(200, 500);
+
+	/* power up core phy and enable ref clock */
+	regmap_update_bits(imx6_pcie->iomuxc_gpr, IOMUXC_GPR1,
+			IMX6Q_GPR1_PCIE_TEST_PD, 0 << 18);
+	/*
+	 * the async reset input need ref clock to sync internally,
+	 * when the ref clock comes after reset, internal synced
+	 * reset time is too short, cannot meet the requirement.
+	 * add one ~10us delay here.
+	 */
+	udelay (10);
+	regmap_update_bits(imx6_pcie->iomuxc_gpr, IOMUXC_GPR1,
+			IMX6Q_GPR1_PCIE_REF_CLK_EN, 1 << 16);
 
 	if (gpio_is_valid(imx6_pcie->reset_gpio)) {
 		gpio_set_value(imx6_pcie->reset_gpio, 0);
