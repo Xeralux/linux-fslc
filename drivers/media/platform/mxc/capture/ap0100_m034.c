@@ -508,7 +508,7 @@ static int _AM_send_command(struct i2c_client * client, u16 val, unsigned *error
 	}
 	for(i = 0; i < DOORBELL_RETRIES; i++) {
 		err = _AM_read_reg_unchecked(client, REG_CMD, &ap0100_err, 2, NULL);
-		if(err >= 0 && !(ap0100_err & REG_CMD_DOORBELL_MASK))
+		if(err >= 0 && !(ap0100_err & REG_CMD_DOORBELL_MASK) && ap0100_err < ARRAY_SIZE(cmd_error_codes))
 			break;
 		msleep(5);
 	}
