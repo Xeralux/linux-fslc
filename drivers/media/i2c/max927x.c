@@ -67,9 +67,13 @@ struct max927x_data {
 	u8 gpio_en;
 	u8 gpio_set;
 	u8 des_gpio;
-	unsigned revtxamp;
+	unsigned rev_amp;
 	unsigned rev_trf;
+	unsigned rev_dig_flt;
 	unsigned rev_logain;
+	unsigned rev_higain;
+	unsigned rev_hibw;
+	unsigned rev_hivth;
 	unsigned i2c_slvsh;
 	unsigned i2c_mstbt;
 	unsigned slave_off_ms;
@@ -153,8 +157,16 @@ static struct max927x_data *to_max927x_from_gpio(struct gpio_chip *gc)
 #define MAX9272_REG_08_AUTORST_SHIFT (2)
 #define MAX9272_REG_08_ERRSEL_SHIFT (0)
 
+#define MAX9271_REG_08_REV_DIG_FLT_SHIFT (4)
+#define MAX9271_REG_08_REV_DIG_FLT_MASK (3 << MAX9271_REG_08_REV_DIG_FLT_SHIFT)
 #define MAX9271_REG_08_REV_LOGAIN_SHIFT (3)
 #define MAX9271_REG_08_REV_LOGAIN_MASK (1 << MAX9271_REG_08_REV_LOGAIN_SHIFT)
+#define MAX9271_REG_08_REV_HIGAIN_SHIFT (2)
+#define MAX9271_REG_08_REV_HIGAIN_MASK (1 << MAX9271_REG_08_REV_HIGAIN_SHIFT)
+#define MAX9271_REG_08_REV_HIBW_SHIFT (1)
+#define MAX9271_REG_08_REV_HIBW_MASK (1 << MAX9271_REG_08_REV_HIBW_SHIFT)
+#define MAX9271_REG_08_REV_HIVTH_SHIFT (0)
+#define MAX9271_REG_08_REV_HIVTH_MASK (1 << MAX9271_REG_08_REV_HIVTH_SHIFT)
 
 #define MAX927X_REG_0D_I2CLOCACK_SHIFT (7)
 #define MAX927X_REG_0D_I2CSLVSH_SHIFT  (5)
@@ -184,16 +196,16 @@ static struct max927x_data *to_max927x_from_gpio(struct gpio_chip *gc)
 #define MAX9272_REG_15_REV_TRF_281_200 (1 << MAX9272_REG_15_REV_TRF_SHIFT)
 #define MAX9272_REG_15_REV_TRF_422_300 (2 << MAX9272_REG_15_REV_TRF_SHIFT)
 #define MAX9272_REG_15_REV_TRF_563_400 (3 << MAX9272_REG_15_REV_TRF_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_SHIFT (0)
-#define MAX9272_REG_15_REVTXAMP_MASK (0xF << MAX9272_REG_15_REVTXAMP_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_30  (0 << MAX9272_REG_15_REVTXAMP_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_40  (1 << MAX9272_REG_15_REVTXAMP_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_50  (2 << MAX9272_REG_15_REVTXAMP_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_60  (3 << MAX9272_REG_15_REVTXAMP_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_70  (4 << MAX9272_REG_15_REVTXAMP_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_80  (5 << MAX9272_REG_15_REVTXAMP_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_90  (6 << MAX9272_REG_15_REVTXAMP_SHIFT)
-#define MAX9272_REG_15_REVTXAMP_100 (7 << MAX9272_REG_15_REVTXAMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_SHIFT (0)
+#define MAX9272_REG_15_REV_AMP_MASK (0xF << MAX9272_REG_15_REV_AMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_30  (0 << MAX9272_REG_15_REV_AMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_40  (1 << MAX9272_REG_15_REV_AMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_50  (2 << MAX9272_REG_15_REV_AMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_60  (3 << MAX9272_REG_15_REV_AMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_70  (4 << MAX9272_REG_15_REV_AMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_80  (5 << MAX9272_REG_15_REV_AMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_90  (6 << MAX9272_REG_15_REV_AMP_SHIFT)
+#define MAX9272_REG_15_REV_AMP_100 (7 << MAX9272_REG_15_REV_AMP_SHIFT)
 
 static int _max927x_try_read_reg(struct i2c_client *client, u8 reg, u8 *val)
 {
@@ -306,15 +318,19 @@ static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, u8 mask
 
 static inline u8 _max9272_magic(struct max927x_data* data)
 {
-	return (data->revtxamp << MAX9272_REG_15_REVTXAMP_SHIFT) |
+	return (data->rev_amp << MAX9272_REG_15_REV_AMP_SHIFT) |
 			(data->rev_trf << MAX9272_REG_15_REV_TRF_SHIFT);
 }
 
-static inline u8 _max927x_magic(struct max927x_data* data)
+static inline u8 _max9271_magic(struct max927x_data* data)
 {
 	return (0 << MAX927X_REG_08_INVVS_SHIFT) |
 			(0 << MAX927X_REG_08_INVHS_SHIFT) |
-			(data->rev_logain << MAX9271_REG_08_REV_LOGAIN_SHIFT);
+			(data->rev_dig_flt << MAX9271_REG_08_REV_DIG_FLT_SHIFT) |
+			(data->rev_logain << MAX9271_REG_08_REV_LOGAIN_SHIFT) |
+			(data->rev_higain << MAX9271_REG_08_REV_HIGAIN_SHIFT) |
+			(data->rev_hibw << MAX9271_REG_08_REV_HIBW_SHIFT) |
+			(data->rev_hivth << MAX9271_REG_08_REV_HIVTH_SHIFT);
 }
 
 static inline u8 _max927x_i2c(struct max927x_data* data)
@@ -538,7 +554,7 @@ static int _max927x_link_configure(struct max927x_data* data)
 	if(data->deserializer_master)
 		retval = MASTER_WRITE(0x15, _max9272_magic(data), &data->error_count);
 	else
-		retval = MASTER_WRITE(0x8, _max927x_magic(data), &data->error_count);
+		retval = MASTER_WRITE(0x8, _max9271_magic(data), &data->error_count);
 	if(retval < 0) {
 		_max927x_slave_power_on(data);
 		goto error;
@@ -567,7 +583,7 @@ static int _max927x_link_configure(struct max927x_data* data)
 
 	/*Write slaves magic*/
 	if(data->deserializer_master)
-		retval = SLAVE_WRITE(0x8, _max927x_magic(data), &data->error_count);
+		retval = SLAVE_WRITE(0x8, _max9271_magic(data), &data->error_count);
 	else
 		retval = SLAVE_WRITE(0x15, _max9272_magic(data), &data->error_count);
 	if(retval < 0)
@@ -663,6 +679,30 @@ static ssize_t max9272_rev_trf_show(struct device *dev,
 }
 static DEVICE_ATTR(magic_rev_trf, 0666, (void *)max9272_rev_trf_show, (void *)max9272_rev_trf_store);
 
+static ssize_t max9271_rev_dig_flt_store(struct device *dev,
+					struct device_attribute *attr, const char *buf, int count)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	unsigned int val;
+	if(kstrtouint(buf, 10, &val) || val > 3) {
+		dev_err(dev,"Must supply value between 0-3.\n");
+		return count;
+	}
+	mutex_lock(&data->data_lock);
+	data->rev_dig_flt = val;
+	mutex_unlock(&data->data_lock);
+	return count;
+}
+
+static ssize_t max9271_rev_dig_flt_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+
+	return sprintf(buf, "%d\n", data->rev_dig_flt);
+}
+static DEVICE_ATTR(magic_rev_dig_flt, 0666, (void *)max9271_rev_dig_flt_show, (void *)max9271_rev_dig_flt_store);
+
 static ssize_t max9271_rev_logain_store(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
 {
@@ -686,6 +726,78 @@ static ssize_t max9271_rev_logain_show(struct device *dev,
 	return sprintf(buf, "%d\n", data->rev_logain);
 }
 static DEVICE_ATTR(magic_rev_logain, 0666, (void *)max9271_rev_logain_show, (void *)max9271_rev_logain_store);
+
+static ssize_t max9271_rev_higain_store(struct device *dev,
+					struct device_attribute *attr, const char *buf, int count)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	unsigned int val;
+	if(kstrtouint(buf, 10, &val) || val > 1) {
+		dev_err(dev,"Must supply value between 0-1.\n");
+		return count;
+	}
+	mutex_lock(&data->data_lock);
+	data->rev_higain = val;
+	mutex_unlock(&data->data_lock);
+	return count;
+}
+
+static ssize_t max9271_rev_higain_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+
+	return sprintf(buf, "%d\n", data->rev_higain);
+}
+static DEVICE_ATTR(magic_rev_higain, 0666, (void *)max9271_rev_higain_show, (void *)max9271_rev_higain_store);
+
+static ssize_t max9271_rev_hibw_store(struct device *dev,
+					struct device_attribute *attr, const char *buf, int count)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	unsigned int val;
+	if(kstrtouint(buf, 10, &val) || val > 1) {
+		dev_err(dev,"Must supply value between 0-1.\n");
+		return count;
+	}
+	mutex_lock(&data->data_lock);
+	data->rev_hibw = val;
+	mutex_unlock(&data->data_lock);
+	return count;
+}
+
+static ssize_t max9271_rev_hibw_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+
+	return sprintf(buf, "%d\n", data->rev_hibw);
+}
+static DEVICE_ATTR(magic_rev_hibw, 0666, (void *)max9271_rev_hibw_show, (void *)max9271_rev_hibw_store);
+
+static ssize_t max9271_rev_hivth_store(struct device *dev,
+					struct device_attribute *attr, const char *buf, int count)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	unsigned int val;
+	if(kstrtouint(buf, 10, &val) || val > 1) {
+		dev_err(dev,"Must supply value between 0-1.\n");
+		return count;
+	}
+	mutex_lock(&data->data_lock);
+	data->rev_hivth = val;
+	mutex_unlock(&data->data_lock);
+	return count;
+}
+
+static ssize_t max9271_rev_hivth_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+
+	return sprintf(buf, "%d\n", data->rev_hivth);
+}
+static DEVICE_ATTR(magic_rev_hivth, 0666, (void *)max9271_rev_hivth_show, (void *)max9271_rev_hivth_store);
 
 static ssize_t max927x_i2c_slvsh_store(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
@@ -733,7 +845,7 @@ static ssize_t max927x_i2c_mstbt_show(struct device *dev,
 }
 static DEVICE_ATTR(i2c_mstbt, 0666, (void *)max927x_i2c_mstbt_show, (void *)max927x_i2c_mstbt_store);
 
-static ssize_t max9272_revtxamp_store(struct device *dev,
+static ssize_t max9272_rev_amp_store(struct device *dev,
 				   struct device_attribute *attr, const char *buf, int count)
 {
 	struct max927x_data* data = to_max927x_from_dev(dev);
@@ -743,18 +855,18 @@ static ssize_t max9272_revtxamp_store(struct device *dev,
 		return count;
 	}
 	mutex_lock(&data->data_lock);
-	data->revtxamp = val;
+	data->rev_amp = val;
 	mutex_unlock(&data->data_lock);
 	return count;
 }
 
-static ssize_t max9272_revtxamp_show(struct device *dev,
+static ssize_t max9272_rev_amp_show(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
 	struct max927x_data* data = to_max927x_from_dev(dev);
-	return sprintf(buf, "%d:%dmV\n",data->revtxamp,data->revtxamp*10+30);
+	return sprintf(buf, "%d:%dmV\n",data->rev_amp,data->rev_amp*10+30);
 }
-static DEVICE_ATTR(magic_revtxamp, 0666, (void *)max9272_revtxamp_show, (void *)max9272_revtxamp_store);
+static DEVICE_ATTR(magic_rev_amp, 0666, (void *)max9272_rev_amp_show, (void *)max9272_rev_amp_store);
 
 static ssize_t max9272_show_regs(struct device *dev,
 				   struct device_attribute *attr, char *buf)
@@ -971,15 +1083,19 @@ static DEVICE_ATTR(max9271_i2c_test, 0222, NULL, (void *)max9271_i2c_test);
 static int _max927x_of_get_config(struct max927x_data* data, struct device_node	*np, unsigned index)
 {
 	enum {
-		CFG_REVTXAMP = 0,
-		CFG_REV_TRF = 1,
-		CFG_REV_LOGAIN = 2,
-		CFG_I2C_SLVSH = 3,
-		CFG_I2C_MSTBT = 4,
+		CFG_REV_AMP,
+		CFG_REV_TRF,
+		CFG_REV_DIG_FLT,
+		CFG_REV_LOGAIN,
+		CFG_REV_HIGAIN,
+		CFG_REV_HIBW,
+		CFG_REV_HIVTH,
+		CFG_I2C_SLVSH,
+		CFG_I2C_MSTBT,
 		NUM_CFG_PROPS
 	};
 	int i, ret;
-	u8 limits[NUM_CFG_PROPS] = {7,3,1,3,7};
+	u8 limits[NUM_CFG_PROPS] = {7,3,3,1,1,1,1,3,7};
 	u32 cfg[NUM_CFG_PROPS];
 	char buf[sizeof("cfg-")+2];
 	if(index > 99) {
@@ -1000,9 +1116,13 @@ static int _max927x_of_get_config(struct max927x_data* data, struct device_node	
 			return -EINVAL;
 		}
 	}
-	data->revtxamp = cfg[CFG_REVTXAMP];
+	data->rev_amp = cfg[CFG_REV_AMP];
 	data->rev_trf = cfg[CFG_REV_TRF];
+	data->rev_dig_flt = cfg[CFG_REV_DIG_FLT];
 	data->rev_logain = cfg[CFG_REV_LOGAIN];
+	data->rev_higain = cfg[CFG_REV_HIGAIN];
+	data->rev_hibw = cfg[CFG_REV_HIBW];
+	data->rev_hivth = cfg[CFG_REV_HIVTH];
 	data->i2c_slvsh = cfg[CFG_I2C_SLVSH];
 	data->i2c_mstbt = cfg[CFG_I2C_MSTBT];
 	return 0;
@@ -1280,8 +1400,12 @@ static struct attribute *init_attributes[] = {
 	&dev_attr_operational.attr,
 	&dev_attr_i2c_error_count.attr,
 	&dev_attr_magic_rev_trf.attr,
-	&dev_attr_magic_revtxamp.attr,
+	&dev_attr_magic_rev_amp.attr,
+	&dev_attr_magic_rev_dig_flt.attr,
 	&dev_attr_magic_rev_logain.attr,
+	&dev_attr_magic_rev_higain.attr,
+	&dev_attr_magic_rev_hibw.attr,
+	&dev_attr_magic_rev_hivth.attr,
 	&dev_attr_i2c_slvsh.attr,
 	&dev_attr_i2c_mstbt.attr,
 	&dev_attr_max9272_i2c_test.attr,
@@ -1467,4 +1591,3 @@ MODULE_AUTHOR("Sarah Newman <sarah.newman@computer.org>");
 MODULE_DESCRIPTION("max927x Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
-
