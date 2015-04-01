@@ -544,8 +544,8 @@
 		/*The voltage goes from about 5V to 1.125V after 2s*/
 		/*Longer does not really help*/
 		slave-off-delay-ms = <2000>;
-    /*REVTXAMP REV_TRF REV_DIG_FLT REV_LOGAIN REV_HIGAIN REV_HIBW REV_HIVTH I2C_SLVSH I2C_MSTBT*/
-    cfg-0 = <6 2 0 1 0 0 0 3 4>;
+    /*REVTXAMP REV_TRF REV_DIG_FLT REV_LOGAIN REV_HIGAIN REV_HIBW REV_HIVTH I2C_SLVSH I2C_MSTBT CMLLVL PREEMP*/
+    cfg-0 = <5 2 0 1 0 0 0 3 4 10 0>;
 
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -698,8 +698,8 @@
 		/*The voltage goes from about 5V to 1.125V after 2s*/
 		/*Longer does not really help*/
 		slave-off-delay-ms = <2000>;
-    /*REVTXAMP REV_TRF REV_DIG_FLT REV_LOGAIN REV_HIGAIN REV_HIBW REV_HIVTH I2C_SLVSH I2C_MSTBT*/
-    cfg-0 = <6 2 0 1 0 0 0 3 4>;
+    /*REVTXAMP REV_TRF REV_DIG_FLT REV_LOGAIN REV_HIGAIN REV_HIBW REV_HIVTH I2C_SLVSH I2C_MSTBT CMLLVL PREEMP*/
+    cfg-0 = <5 2 0 1 0 0 0 3 4 10 0>;
 
 		#address-cells = <1>;
 		#size-cells = <0>;

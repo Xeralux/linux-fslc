@@ -76,6 +76,8 @@ struct max927x_data {
 	unsigned rev_hivth;
 	unsigned i2c_slvsh;
 	unsigned i2c_mstbt;
+	unsigned cmllvl;
+	unsigned preemp;
 	unsigned slave_off_ms;
 	unsigned slave_on_ms;
 	struct v4l2_subdev	subdev;
@@ -140,7 +142,9 @@ static struct max927x_data *to_max927x_from_gpio(struct gpio_chip *gc)
 #define MAX9271_REG_05_ENWAKEP_SHIFT (0)
 
 #define MAX9271_REG_06_CMLLVL_SHIFT (4)
+#define MAX9271_REG_06_CMLLVL_MASK (0xf << MAX9271_REG_06_CMLLVL_SHIFT)
 #define MAX9271_REG_06_PREEMP_SHIFT (0)
+#define MAX9271_REG_06_PREEMP_MASK (0xf << MAX9271_REG_06_PREEMP_SHIFT)
 
 #define MAX927X_REG_07_DBL_SHIFT  (7)
 #define MAX927X_REG_07_DRS_SHIFT  (6)
@@ -331,6 +335,12 @@ static inline u8 _max9271_magic(struct max927x_data* data)
 			(data->rev_higain << MAX9271_REG_08_REV_HIGAIN_SHIFT) |
 			(data->rev_hibw << MAX9271_REG_08_REV_HIBW_SHIFT) |
 			(data->rev_hivth << MAX9271_REG_08_REV_HIVTH_SHIFT);
+}
+
+static inline u8 _max9271_preemp(struct max927x_data* data)
+{
+	return (data->preemp << MAX9271_REG_06_PREEMP_SHIFT) |
+			(data->cmllvl << MAX9271_REG_06_CMLLVL_SHIFT);
 }
 
 static inline u8 _max927x_i2c(struct max927x_data* data)
@@ -582,13 +592,17 @@ static int _max927x_link_configure(struct max927x_data* data)
 		goto error;
 
 	/*Write slaves magic*/
-	if(data->deserializer_master)
+	if(data->deserializer_master) {
 		retval = SLAVE_WRITE(0x8, _max9271_magic(data), &data->error_count);
-	else
+		if (retval >= 0)
+			retval = SLAVE_WRITE(0x6, _max9271_preemp(data), &data->error_count);\
+
+	} else {
 		retval = SLAVE_WRITE(0x15, _max9272_magic(data), &data->error_count);
+	}
+
 	if(retval < 0)
 		goto error;
-
 
 	/*Set remote i2c config*/
 	retval = SLAVE_WRITE(0x0d, _max927x_i2c(data), &data->error_count);
@@ -850,7 +864,7 @@ static ssize_t max9272_rev_amp_store(struct device *dev,
 {
 	struct max927x_data* data = to_max927x_from_dev(dev);
 	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 7) {
+	if(kstrtouint(buf, 10, &val) || val > 15) {
 		dev_err(dev,"Must supply value between 0-7.\n");
 		return count;
 	}
@@ -867,6 +881,52 @@ static ssize_t max9272_rev_amp_show(struct device *dev,
 	return sprintf(buf, "%d:%dmV\n",data->rev_amp,data->rev_amp*10+30);
 }
 static DEVICE_ATTR(magic_rev_amp, 0666, (void *)max9272_rev_amp_show, (void *)max9272_rev_amp_store);
+
+static ssize_t max9271_cmllvl_store(struct device *dev,
+					struct device_attribute *attr, const char *buf, int count)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	unsigned int val;
+	if(kstrtouint(buf, 10, &val) || val > 15) {
+		dev_err(dev,"Must supply value between 0-15.\n");
+		return count;
+	}
+	mutex_lock(&data->data_lock);
+	data->cmllvl = val;
+	mutex_unlock(&data->data_lock);
+	return count;
+}
+
+static ssize_t max9271_cmllvl_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	return sprintf(buf, "%d\n",data->cmllvl);
+}
+static DEVICE_ATTR(cmllvl, 0666, (void *)max9271_cmllvl_show, (void *)max9271_cmllvl_store);
+
+static ssize_t max9271_preemp_store(struct device *dev,
+					struct device_attribute *attr, const char *buf, int count)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	unsigned int val;
+	if(kstrtouint(buf, 10, &val) || val > 15) {
+		dev_err(dev,"Must supply value between 0-15.\n");
+		return count;
+	}
+	mutex_lock(&data->data_lock);
+	data->preemp = val;
+	mutex_unlock(&data->data_lock);
+	return count;
+}
+
+static ssize_t max9271_preemp_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	return sprintf(buf, "%d\n",data->preemp);
+}
+static DEVICE_ATTR(preemp, 0666, (void *)max9271_preemp_show, (void *)max9271_preemp_store);
 
 static ssize_t max9272_show_regs(struct device *dev,
 				   struct device_attribute *attr, char *buf)
@@ -1092,10 +1152,12 @@ static int _max927x_of_get_config(struct max927x_data* data, struct device_node	
 		CFG_REV_HIVTH,
 		CFG_I2C_SLVSH,
 		CFG_I2C_MSTBT,
+		CFG_CMLLVL,
+		CFG_PREEMP,
 		NUM_CFG_PROPS
 	};
 	int i, ret;
-	u8 limits[NUM_CFG_PROPS] = {7,3,3,1,1,1,1,3,7};
+	u8 limits[NUM_CFG_PROPS] = {15,3,3,1,1,1,1,3,7,15,15};
 	u32 cfg[NUM_CFG_PROPS];
 	char buf[sizeof("cfg-")+2];
 	if(index > 99) {
@@ -1125,6 +1187,8 @@ static int _max927x_of_get_config(struct max927x_data* data, struct device_node	
 	data->rev_hivth = cfg[CFG_REV_HIVTH];
 	data->i2c_slvsh = cfg[CFG_I2C_SLVSH];
 	data->i2c_mstbt = cfg[CFG_I2C_MSTBT];
+	data->cmllvl = cfg[CFG_CMLLVL];
+	data->preemp = cfg[CFG_PREEMP];
 	return 0;
 }
 
@@ -1408,6 +1472,8 @@ static struct attribute *init_attributes[] = {
 	&dev_attr_magic_rev_hivth.attr,
 	&dev_attr_i2c_slvsh.attr,
 	&dev_attr_i2c_mstbt.attr,
+	&dev_attr_cmllvl.attr,
+	&dev_attr_preemp.attr,
 	&dev_attr_max9272_i2c_test.attr,
 	&dev_attr_max9272_regs.attr,
 	NULL,
