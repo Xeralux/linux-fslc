@@ -7,9 +7,11 @@
  */
 
 / {
+/*
 	aliases {
 		mxcfb0 = &mxcfb1;
 	};
+*/
 
 	memory {
 		reg = <0x10000000 0x40000000>;
@@ -30,6 +32,7 @@
 		};
 	};
 
+  /*
 	mxcfb1: fb@0 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "hdmi";
@@ -41,7 +44,6 @@
 		status = "okay";
 	};
 
-	/*
 	mxcfb2: fb@1 {
 		compatible = "fsl,mxc_sdc_fb";
 		disp_dev = "ldb";
@@ -348,6 +350,7 @@
 	};
 };
 
+/*
 &hdmi_audio {
 	status = "okay";
 };
@@ -369,6 +372,7 @@
 	fsl,phy_reg_cksymtx = <0x800d>;
 	status = "okay";
 };
+*/
 
 &i2c1 {
 	clock-frequency = <400000>;
@@ -459,10 +463,12 @@
 	 	with the other freescale drivers.  There are default values used
 	 	if the EDID can't be read which is why it still works.
 	 */
+  /*
 	mxc_hdmi_i2c@50 {
 		compatible = "fsl,mxc_hdmi_i2c";
 		reg = <0x50>;
 	};
+  */
 
 	/* PCA9546 I2C multiplexer */
 	i2cmux@71 {
@@ -921,6 +927,7 @@
 	status = "okay";
 };
 
+/*
 &usbotg {
 	//vbus-supply = <&reg_usb_otg_vbus>;
 	pinctrl-names = "default";
@@ -928,6 +935,7 @@
 	disable-over-current;
 	status = "okay";
 };
+*/
 
 &iomuxc {
 	pinctrl-names = "default";
