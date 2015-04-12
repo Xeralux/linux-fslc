@@ -432,8 +432,6 @@ static int mxc_streamon(cam_data *cam)
 		return -EINVAL;
 	}
 
-	cam->capture_pid = current->pid;
-
 	if (cam->overlay_on == true)
 		stop_preview(cam);
 
@@ -1761,17 +1759,13 @@ static int mxc_v4l_close(struct file *file)
 
 	down(&cam->busy_lock);
 
-	/* for the case somebody hit the ctrl C */
-	if (cam->overlay_pid == current->pid && cam->overlay_on) {
-		err = stop_preview(cam);
-		cam->overlay_on = false;
-	}
-	if (cam->capture_pid == current->pid) {
+	if (--cam->open_count == 0) {
+		if (cam->overlay_on) {
+			err = stop_preview(cam);
+			cam->overlay_on = false;
+		}
 		err |= mxc_streamoff(cam);
 		wake_up_interruptible(&cam->enc_queue);
-	}
-
-	if (--cam->open_count == 0) {
 		vidioc_int_s_power(cam->sensor, 0);
 		clk_disable_unprepare(sensor->sensor_clk);
 		wait_event_interruptible(cam->power_queue,
@@ -2195,7 +2189,6 @@ static long mxc_v4l_do_ioctl(struct file *file,
 		pr_debug("   VIDIOC_OVERLAY on=%d\n", *on);
 		if (*on) {
 			cam->overlay_on = true;
-			cam->overlay_pid = current->pid;
 			retval = start_preview(cam);
 		}
 		if (!*on) {

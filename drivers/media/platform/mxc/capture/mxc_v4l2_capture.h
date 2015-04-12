@@ -202,8 +202,6 @@ typedef struct _cam_data {
 	/* misc status flag */
 	bool overlay_on;
 	bool capture_on;
-	int overlay_pid;
-	int capture_pid;
 	bool low_power;
 	wait_queue_head_t power_queue;
 	unsigned int ipu_id;
