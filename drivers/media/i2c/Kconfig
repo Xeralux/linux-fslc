@@ -698,6 +698,15 @@ config VIDEO_M52790
 
 	 To compile this driver as a module, choose M here: the
 	 module will be called m52790.
+
+config VIDEO_MAX927X
+	tristate "Maxim video serializer/deserializer link with i2c carrier"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	---help---
+	  Support for a pair of Maxim max9272+max9271 chips.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called max927x.
 endmenu
 
 menu "Sensors used on soc_camera driver"
