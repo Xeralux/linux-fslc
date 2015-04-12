@@ -699,6 +699,15 @@ config VIDEO_M52790
 	 To compile this driver as a module, choose M here: the
 	 module will be called m52790.
 
+config VIDEO_TC35874X
+	tristate "TC35874X MIPI-parallel bridge"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	---help---
+	  Limited support for the Toshiba TC35874X MIPI-parallel bridge
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called tc35874x.
+
 config VIDEO_MAX927X
 	tristate "Maxim video serializer/deserializer link with i2c carrier"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
