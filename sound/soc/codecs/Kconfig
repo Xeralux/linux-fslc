@@ -63,6 +63,7 @@ config SND_SOC_ALL_CODECS
 	select SND_SOC_RT5631 if I2C
 	select SND_SOC_RT5640 if I2C
 	select SND_SOC_SGTL5000 if I2C
+	select SND_SOC_ADAU1761 if I2C
 	select SND_SOC_SI476X if MFD_SI476X_CORE
 	select SND_SOC_SN95031 if INTEL_SCU_IPC
 	select SND_SOC_SPDIF
@@ -338,6 +339,9 @@ config SND_SOC_SGTL5000
 
 # NXP TDA1997X HDMI audio codec
 config SND_SOC_TDA1997X
+	tristate
+
+config SND_SOC_ADAU1761
 	tristate
 
 config SND_SOC_SI476X
