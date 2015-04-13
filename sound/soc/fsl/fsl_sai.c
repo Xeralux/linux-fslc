@@ -10,6 +10,7 @@
  *
  */
 
+#include <linux/busfreq-imx.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/dmaengine.h>
