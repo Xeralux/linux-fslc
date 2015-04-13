@@ -20,7 +20,9 @@ struct gpio_reset_data {
 	struct reset_controller_dev rcdev;
 	unsigned int gpio;
 	bool active_low;
+	bool sleep_ok;
 	s32 delay_us;
+	s32 delay_ms;
 };
 
 static void gpio_reset_set(struct reset_controller_dev *rcdev, int asserted)
@@ -44,6 +46,8 @@ static int gpio_reset(struct reset_controller_dev *rcdev, unsigned long id)
 		return -ENOSYS;
 
 	gpio_reset_set(rcdev, 1);
+	if(drvdata->delay_ms)
+		drvdata->sleep_ok ? msleep(drvdata->delay_ms) : mdelay(drvdata->delay_ms);
 	udelay(drvdata->delay_us);
 	gpio_reset_set(rcdev, 0);
 
@@ -115,12 +119,18 @@ static int gpio_reset_probe(struct platform_device *pdev)
 		drvdata->delay_us = -1;
 	else if (drvdata->delay_us < 0)
 		dev_warn(&pdev->dev, "reset delay too high\n");
-
+	else {
+		drvdata->delay_ms = drvdata->delay_us/1000;
+		drvdata->delay_us -= drvdata->delay_ms*1000;
+	}
 	initially_in_reset = of_property_read_bool(np, "initially-in-reset");
 	if (drvdata->active_low ^ initially_in_reset)
 		gpio_flags = GPIOF_OUT_INIT_HIGH;
 	else
 		gpio_flags = GPIOF_OUT_INIT_LOW;
+
+	if (of_find_property(np, "gpio-open-drain", NULL))
+		gpio_flags |= GPIOF_OPEN_DRAIN;
 
 	ret = devm_gpio_request_one(&pdev->dev, drvdata->gpio, gpio_flags, NULL);
 	if (ret < 0) {
@@ -128,6 +138,9 @@ static int gpio_reset_probe(struct platform_device *pdev)
 			drvdata->gpio, ret);
 		return ret;
 	}
+
+	if (of_find_property(np, "sleep-ok", NULL))
+		drvdata->sleep_ok = true;
 
 	platform_set_drvdata(pdev, drvdata);
 
