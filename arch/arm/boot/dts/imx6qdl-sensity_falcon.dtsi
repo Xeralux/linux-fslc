@@ -606,6 +606,7 @@
 			i2c;
 
 			ap0100_ch0: camboard-ch0-ap0100@5d {
+				status = "disabled";
 				compatible = "aptina,ap0100_m034";
 				resets = <&camboard_ch0_ap0100_reset>;
 				reg = <0x5d>;
@@ -623,6 +624,7 @@
 			};
 
 			adv7611_ch0: camboard-ch0-adv7611@4c {
+				status = "disabled";
 				compatible = "adi,adv7611";
 				reg = <0x4c>;
 				reg-avlink = <0x60>;
@@ -760,6 +762,7 @@
 			i2c;
 
 			ap0100_ch1: camboard-ch1-ap0100@5d {
+				status = "disabled";
 				compatible = "aptina,ap0100_m034";
 				resets = <&camboard_ch1_ap0100_reset>;
 				reg = <0x5d>;
@@ -777,6 +780,7 @@
 			};
 
 			adv7611_ch1: camboard-ch1-adv7611@4c {
+				status = "disabled";
 				compatible = "adi,adv7611";
 				reg = <0x4c>;
 				reg-avlink = <0x60>;
