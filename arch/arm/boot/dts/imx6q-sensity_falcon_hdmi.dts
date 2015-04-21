@@ -20,22 +20,21 @@
 	status = "okay";
 };
 
-&ap0100_ch0 {
-  status = "okay";
-};
+//&ap0100_ch0 {
+//  status = "okay";
+//};
 
 &adv7611_ch0 {
   status = "okay";
 };
 
-&ap0100_ch1 {
-  status = "okay";
-};
+//&ap0100_ch1 {
+//  status = "okay";
+//};
 
 &adv7611_ch1 {
   status = "okay";
 };
-
 
 /*
  * Complete camboard_ch[01]_fixed_5v0 nodes.
