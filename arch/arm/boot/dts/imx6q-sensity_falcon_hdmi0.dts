@@ -1,0 +1,48 @@
+/*
+ * Definitions specific to the i.MX6D/Q version of the Medianode.
+ *
+ * Copyright (C) 2013 Sensity Systems, Inc.
+ *
+ * CONFIDENTIAL AND PROPRIETARY.
+ */
+
+/dts-v1/;
+
+#include "imx6q.dtsi"
+#include "imx6qdl-sensity_falcon.dtsi"
+
+/ {
+	model = "Sensity Systems Falcon (MX6Q)";
+	compatible = "sensity,falcon", "fsl,imx6q";
+};
+
+&sata {
+	status = "okay";
+};
+
+//&ap0100_ch0 {
+//  status = "okay";
+//};
+
+&adv7611_ch0 {
+  status = "okay";
+};
+
+&ap0100_ch1 {
+  status = "okay";
+};
+
+&adv7611_ch1 {
+  status = "okay";
+};
+
+
+/*
+ * Complete camboard_ch[01]_fixed_5v0 nodes.
+ */
+&camboard_ch0_fixed_5v0 {
+	gpio = <&camboard_gpio 2 GPIO_ACTIVE_LOW>;
+};
+&camboard_ch1_fixed_5v0 {
+	gpio = <&camboard_gpio 3 GPIO_ACTIVE_LOW>;
+};
