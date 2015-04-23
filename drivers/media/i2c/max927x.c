@@ -77,6 +77,7 @@ struct max927x_data {
 	unsigned i2c_mstbt;
 	unsigned cmllvl;
 	unsigned preemp;
+	unsigned spread;
 	unsigned slave_off_ms;
 	unsigned slave_on_ms;
 	struct v4l2_subdev	subdev;
@@ -106,6 +107,9 @@ static struct max927x_data *to_max927x_from_gpio(struct gpio_chip *gc)
 {
 	return container_of(gc, struct max927x_data, gpio_chip);
 }
+
+#define MAX9271_REG_02_SS_SHIFT (5)
+#define MAX9271_REG_02_SS_MASK (0x7 << MAX9271_REG_02_SS_SHIFT)
 
 #define MAX9271_REG_04_SEREN_SHIFT (7)
 #define MAX9271_REG_04_CLINKEN_SHIFT (6)
@@ -340,6 +344,11 @@ static inline u8 _max9271_preemp(struct max927x_data* data)
 {
 	return (data->preemp << MAX9271_REG_06_PREEMP_SHIFT) |
 			(data->cmllvl << MAX9271_REG_06_CMLLVL_SHIFT);
+}
+
+static inline u8 _max9271_spread(struct max927x_data* data)
+{
+	return (data->spread << MAX9271_REG_02_SS_SHIFT) | 0x1f;
 }
 
 static inline u8 _max927x_i2c(struct max927x_data* data)
@@ -594,7 +603,10 @@ static int _max927x_link_configure(struct max927x_data* data)
 	if(data->deserializer_master) {
 		retval = SLAVE_WRITE(0x8, _max9271_magic(data), &data->error_count);
 		if (retval >= 0)
-			retval = SLAVE_WRITE(0x6, _max9271_preemp(data), &data->error_count);\
+			retval = SLAVE_WRITE(0x6, _max9271_preemp(data), &data->error_count);
+
+		if (retval >= 0)
+			retval = SLAVE_WRITE(0x2, _max9271_spread(data), &data->error_count);
 
 	} else {
 		retval = SLAVE_WRITE(0x15, _max9272_magic(data), &data->error_count);
@@ -927,6 +939,29 @@ static ssize_t max9271_preemp_show(struct device *dev,
 }
 static DEVICE_ATTR(preemp, 0666, (void *)max9271_preemp_show, (void *)max9271_preemp_store);
 
+static ssize_t max9271_spread_store(struct device *dev,
+					struct device_attribute *attr, const char *buf, int count)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	unsigned int val;
+	if(kstrtouint(buf, 10, &val) || val > 7) {
+		dev_err(dev,"Must supply value between 0-7.\n");
+		return count;
+	}
+	mutex_lock(&data->data_lock);
+	data->spread = val;
+	mutex_unlock(&data->data_lock);
+	return count;
+}
+
+static ssize_t max9271_spread_show(struct device *dev,
+					struct device_attribute *attr, char *buf)
+{
+	struct max927x_data* data = to_max927x_from_dev(dev);
+	return sprintf(buf, "%d\n",data->spread);
+}
+static DEVICE_ATTR(spread, 0666, (void *)max9271_spread_show, (void *)max9271_spread_store);
+
 static ssize_t max9272_show_regs(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -1153,10 +1188,11 @@ static int _max927x_of_get_config(struct max927x_data* data, struct device_node	
 		CFG_I2C_MSTBT,
 		CFG_CMLLVL,
 		CFG_PREEMP,
+		CFG_SPREAD,
 		NUM_CFG_PROPS
 	};
 	int i, ret;
-	u8 limits[NUM_CFG_PROPS] = {15,3,3,1,1,1,1,3,7,15,15};
+	u8 limits[NUM_CFG_PROPS] = {15,3,3,1,1,1,1,3,7,15,15,7};
 	u32 cfg[NUM_CFG_PROPS];
 	char buf[sizeof("cfg-")+2];
 	if(index > 99) {
@@ -1188,6 +1224,7 @@ static int _max927x_of_get_config(struct max927x_data* data, struct device_node	
 	data->i2c_mstbt = cfg[CFG_I2C_MSTBT];
 	data->cmllvl = cfg[CFG_CMLLVL];
 	data->preemp = cfg[CFG_PREEMP];
+	data->spread = cfg[CFG_SPREAD];
 	return 0;
 }
 
@@ -1472,6 +1509,7 @@ static struct attribute *init_attributes[] = {
 	&dev_attr_i2c_mstbt.attr,
 	&dev_attr_cmllvl.attr,
 	&dev_attr_preemp.attr,
+	&dev_attr_spread.attr,
 	&dev_attr_max9272_i2c_test.attr,
 	&dev_attr_max9272_regs.attr,
 	NULL,
