@@ -420,7 +420,10 @@ static int max9271_gpio_get_value(struct gpio_chip *gc, unsigned off)
 	u8 val;
 	int ret;
 
-	printk(KERN_INFO "get value: off=%d\n", off);
+	printk(KERN_INFO "%s: off=%d\n", __func__, off);
+
+	if (!data->operational)
+		return -ENODEV;
 
 	if (off < 6) {
 		/* Serializer GPIOs: 1-5 */
@@ -455,9 +458,13 @@ static void max9271_gpio_set_value(struct gpio_chip *gc, unsigned off, int outpu
 {
 	struct max927x_data* data = to_max927x_from_gpio(gc);
 	int ret;
-	mutex_lock(&data->gpio_lock);
 
-	printk(KERN_INFO "set value: off=%d, output=%d\n", off, output_val);
+	printk(KERN_INFO "%s: off=%d, output=%d\n", __func__, off, output_val);
+
+	if (!data->operational)
+		return;
+
+	mutex_lock(&data->gpio_lock);
 
 	if(off < 6) {
 		if(output_val)
@@ -491,6 +498,12 @@ static int max9721_gpio_direction_input(struct gpio_chip *gc, unsigned off)
 {
 	struct max927x_data* data = to_max927x_from_gpio(gc);
 	int ret = 0;
+
+	printk(KERN_INFO "%s: off=%d\n", __func__, off);
+
+	if (!data->operational)
+		return -ENODEV;
+
 	if(off == 0) {
 		dev_err(data->dev, "Bad gpio offset\n");
 		return -EINVAL;
@@ -517,6 +530,12 @@ static int max9721_gpio_direction_output(struct gpio_chip *gc, unsigned off, int
 {
 	struct max927x_data* data = to_max927x_from_gpio(gc);
 	int ret = 0;
+
+	printk(KERN_INFO "%s: off=%d value=0x%x\n", __func__, off, value);
+
+	if (!data->operational)
+		return -ENODEV;
+
 	max9271_gpio_set_value(gc, off, value);
 	if (off > 5)
 		return ret;
@@ -563,6 +582,7 @@ static int _max927x_link_configure(struct max927x_data* data)
 {
 	struct device *dev = data->dev;
 	int retval=0;
+	int counter;
 
 	retval = _max927x_slave_power_off(data);
 	if(retval < 0)
@@ -594,9 +614,19 @@ static int _max927x_link_configure(struct max927x_data* data)
 	if(retval < 0)
 		goto error;
 
-	/*Enable reverse channel so we know if remote writes succeed*/
-	retval  = SER_WRITE(0x04, MAX9271_REG04, &data->error_count);
-	if(retval < 0)
+	for (counter = 1; counter <= 5; counter++) {
+
+		/*Enable reverse channel so we know if remote writes succeed*/
+		retval  = SER_WRITE(0x04, MAX9271_REG04, &data->error_count);
+		if (retval == 0)
+			break;
+		dev_dbg(dev, "%s: enable reverse channel try %d err %d",
+			__func__, counter, retval);
+		/*Allow some additional time for power on*/
+		msleep(10);
+	}
+
+	if (retval < 0)
 		goto error;
 
 	/*Write slaves magic*/
@@ -617,8 +647,10 @@ static int _max927x_link_configure(struct max927x_data* data)
 
 	/*Set remote i2c config*/
 	retval = SLAVE_WRITE(0x0d, _max927x_i2c(data), &data->error_count);
-	if(retval < 0)
+	if(retval < 0) {
+		dev_err(dev, "err %d setting remote I2C config", retval);
 		goto error;
+	}
 
 	/*Set slave value for 0x07 first because we lose contact when the common settings mismatch*/
 	SLAVE_WRITE(0x07, data->deserializer_master ? MAX9271_REG07 : MAX9272_REG07, NULL);
@@ -629,38 +661,48 @@ static int _max927x_link_configure(struct max927x_data* data)
 	/*Set local to match slave*/
 	retval = MASTER_WRITE(0x07, data->deserializer_master ?
 			MAX9272_REG07 : MAX9271_REG07, &data->error_count);
-	if(retval < 0)
+	if(retval < 0) {
+		dev_err(dev, "err %d setting local to match slave", retval);
 		goto error;
+	}
 
 	/*Set deserializer video settings for generating local bus*/
 	retval = DES_WRITE(0x08, MAX9272_REG08, &data->error_count);
-	if(retval < 0)
+	if(retval < 0) {
+		dev_err(dev, "err %d setting deserializer video settings", retval);
 		goto error;
+	}
 
 	/*Clear automatic acks since we shouldn't need them anymore*/
 	retval = MASTER_WRITE(0x0d,
 			_max927x_i2c(data) & ~(1 << MAX927X_REG_0D_I2CLOCACK_SHIFT),
 			&data->error_count);
-	if(retval < 0)
+	if(retval < 0) {
+		dev_err(dev, "err %d clearing automatic ACKs", retval);
 		goto error;
-
-	if(!data->gpio_chip_initialized) {
-		data->gpio_en = 0x42;
-		data->gpio_set = 0xFE;
-		data->des_gpio = 0x6a;
 	}
 
+	data->gpio_en = 0x42;
+	data->gpio_set = 0xFE;
+	data->des_gpio = 0x6a;
+
 	retval = SER_WRITE(0x0F, data->gpio_set, &data->error_count);
-	if(retval < 0)
+	if(retval < 0) {
+		dev_err(dev, "err %d writing gpio_set", retval);
 		goto error;
+	}
 
 	retval = SER_WRITE(0x0E, data->gpio_en, &data->error_count);
-	if(retval < 0)
+	if(retval < 0) {
+		dev_err(dev, "err %d writing gpio_en", retval);
 		goto error;
+	}
 
 	retval = DES_WRITE_MASK(0x0E, data->des_gpio, 0x6a, &data->error_count);
-	if(retval < 0)
+	if(retval < 0) {
+		dev_err(dev, "err %d writing des_gpio", retval);
 		goto error;
+	}
 
 	dev_dbg(dev, "max927x init done\n");
 	return retval;
@@ -1334,6 +1376,13 @@ static int _max927x_probe(struct max927x_data* data)
 	if(data->operational)
 		return 0;
 
+	dev_dbg(dev, "%s: client (master)=%p", __func__, client);
+	if (!client)
+		return -EPROBE_DEFER;
+	dev_dbg(dev, "%s: adapter=%p", __func__, client->dev.parent);
+	if (!client->dev.parent)
+		return -EPROBE_DEFER;
+
 	ret = sysfs_create_group(&dev->kobj, &attr_group);
 	if(ret<0) {
 		dev_err(dev,"Cannot create sysfs group\n");
@@ -1370,7 +1419,8 @@ static int _max927x_probe(struct max927x_data* data)
 	ret = of_property_read_u32(np,"remote-reg",&remote_reg);
 	if(ret < 0) {
 		dev_err(dev,"Missing remote-reg property\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto error_i2c_adap;
 	}
 	data->slave = i2c_new_dummy(&data->adap, remote_reg);
 	if(!data->slave) {
@@ -1427,6 +1477,7 @@ static int _max927x_probe(struct max927x_data* data)
 
 error_i2c_adap:
 	i2c_del_adapter(&data->adap);
+	memset(&data->adap, 0, sizeof(data->adap));
 
 error_sysfs:
 	sysfs_remove_group(&dev->kobj, &attr_group);
@@ -1438,10 +1489,13 @@ static int _max927x_remove(struct max927x_data* data)
 {
 	int ret = 0;
 
+	dev_dbg(data->dev, "in _max927x_remove");
+
 	_max927x_subdev_clear(data);
 
 	data->operational = false;
 	i2c_del_adapter(&data->adap);
+	memset(&data->adap, 0, sizeof(data->adap));
 
 	sysfs_remove_group(&data->dev->kobj, &attr_group);
 	return ret;
@@ -1549,6 +1603,7 @@ static int max927x_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
+	struct device_driver *drv = dev->driver;
 	struct device_node	*np = dev->of_node;
 	struct max927x_data* data;
 	bool deserializer_master;
@@ -1556,9 +1611,18 @@ static int max927x_probe(struct i2c_client *client,
 	struct v4l2_subdev *subdev;
 	int ret;
 
+	dev_dbg(dev, "max927x probe, drv=%p", drv);
+
+	if (!drv)
+		return -EPROBE_DEFER;
+
 	ret = device_reset(dev);
 	if (ret == -ENODEV)
 		return -EPROBE_DEFER;
+
+	if (ret < 0)
+		dev_dbg(dev, "device_reset returned %d", ret);
+
 	msleep(5);
 
 	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
@@ -1623,7 +1687,7 @@ static int max927x_probe(struct i2c_client *client,
 	 */
 	subdev = &data->subdev;
 	v4l2_subdev_init(subdev, &max927x_subdev_ops);
-	subdev->owner = to_i2c_driver(client->dev.driver)->driver.owner;
+	subdev->owner = to_i2c_driver(drv)->driver.owner;
 	v4l2_set_subdevdata(subdev, client);
 	i2c_set_clientdata(client, subdev);
 
@@ -1641,19 +1705,26 @@ static int max927x_remove(struct i2c_client *client)
 	int ret = 0;
 	struct max927x_data* data = to_max927x_from_i2c(client);
 
+	dev_dbg(data->dev, "in max927x_remove");
+
 	if(data->subdev.v4l2_dev != NULL) {
 		dev_err(data->dev,"v4l2 subdev still in use; please shut down %s.\n",
 				data->subdev.v4l2_dev->name);
+		return -EBUSY;
 	}
 
 	if(data->operational) {
+		if (data->gpio_chip_initialized) {
+			dev_dbg(data->dev, "calling gpiochip_remove");
 			ret = gpiochip_remove(&data->gpio_chip);
 			if(ret < 0) {
 				dev_err(data->dev, "%s failed, %d\n",
 				"gpiochip_remove()", ret);
 				return ret;
 			}
-
+			memset(&data->gpio_chip, 0, sizeof(data->gpio_chip));
+			data->gpio_chip_initialized = false;
+		}
 		ret = _max927x_remove(data);
 	}
 	if(ret < 0)
