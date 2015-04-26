@@ -502,7 +502,7 @@ static int max9721_gpio_direction_input(struct gpio_chip *gc, unsigned off)
 	printk(KERN_INFO "%s: off=%d\n", __func__, off);
 
 	if (!data->operational)
-		return -ENODEV;
+		return 0;
 
 	if(off == 0) {
 		dev_err(data->dev, "Bad gpio offset\n");
@@ -534,7 +534,7 @@ static int max9721_gpio_direction_output(struct gpio_chip *gc, unsigned off, int
 	printk(KERN_INFO "%s: off=%d value=0x%x\n", __func__, off, value);
 
 	if (!data->operational)
-		return -ENODEV;
+		return 0;
 
 	max9271_gpio_set_value(gc, off, value);
 	if (off > 5)
