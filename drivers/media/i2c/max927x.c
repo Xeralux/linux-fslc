@@ -55,7 +55,6 @@ struct max927x_data {
 	struct mutex data_lock;
 	struct mutex gpio_lock;
 	struct gpio_chip gpio_chip;
-	bool gpio_chip_initialized;
 	struct device *dev;
 	struct i2c_adapter *parent;
 	struct i2c_adapter adap;
@@ -420,7 +419,8 @@ static int max9271_gpio_get_value(struct gpio_chip *gc, unsigned off)
 	u8 val;
 	int ret;
 
-	printk(KERN_INFO "%s: off=%d\n", __func__, off);
+	dev_dbg(data->dev, "%s: off=%d, operational=%d\n",
+		__func__, off, data->operational);
 
 	if (!data->operational)
 		return -ENODEV;
@@ -459,7 +459,8 @@ static void max9271_gpio_set_value(struct gpio_chip *gc, unsigned off, int outpu
 	struct max927x_data* data = to_max927x_from_gpio(gc);
 	int ret;
 
-	printk(KERN_INFO "%s: off=%d, output=%d\n", __func__, off, output_val);
+	dev_dbg(data->dev, "%s: off=%d, output=%d, operational=%d\n",
+		__func__, off, output_val, data->operational);
 
 	if (!data->operational)
 		return;
@@ -499,7 +500,8 @@ static int max9721_gpio_direction_input(struct gpio_chip *gc, unsigned off)
 	struct max927x_data* data = to_max927x_from_gpio(gc);
 	int ret = 0;
 
-	printk(KERN_INFO "%s: off=%d\n", __func__, off);
+	dev_dbg(data->dev, "%s: off=%d, operational=%d\n",
+		__func__, off, data->operational);
 
 	if (!data->operational)
 		return 0;
@@ -531,7 +533,8 @@ static int max9721_gpio_direction_output(struct gpio_chip *gc, unsigned off, int
 	struct max927x_data* data = to_max927x_from_gpio(gc);
 	int ret = 0;
 
-	printk(KERN_INFO "%s: off=%d value=0x%x\n", __func__, off, value);
+	dev_dbg(data->dev, "%s: off=%d, value=0x%x, operational=%d\n",
+		__func__, off, value, data->operational);
 
 	if (!data->operational)
 		return 0;
@@ -1367,7 +1370,6 @@ static int _max927x_probe(struct max927x_data* data)
 	struct device *dev = data->dev;
 	struct i2c_client *client = data->master;
 	int ret;
-	struct gpio_chip *gc;
 	int i2c_nr = 0;
 	struct device_node	*np = data->dev->of_node;
 	struct device_node *child;
@@ -1446,27 +1448,6 @@ static int _max927x_probe(struct max927x_data* data)
 	if (ret < 0) {
 		dev_err(dev, "Could not initialize max927x link\n");
 		goto error_i2c_adap;
-	}
-
-
-	if(!data->gpio_chip_initialized) {
-		gc = &data->gpio_chip;
-		gc->direction_output = max9721_gpio_direction_output;
-		gc->direction_input = max9721_gpio_direction_input;
-		gc->get = max9271_gpio_get_value;
-		gc->set = max9271_gpio_set_value;
-		gc->can_sleep = 1;
-		gc->ngpio = 8;
-		gc->label = client->name;
-		gc->dev = &client->dev;
-		gc->owner = THIS_MODULE;
-		gc->base = -1;
-		ret = gpiochip_add(gc);
-		if(ret) {
-			dev_err(dev,"Failed to add gpio\n");
-			goto error_i2c_adap;
-		}
-		data->gpio_chip_initialized = true;
 	}
 
 	dev_err(dev,"initialization complete\n");
@@ -1606,6 +1587,7 @@ static int max927x_probe(struct i2c_client *client,
 	struct device_driver *drv = dev->driver;
 	struct device_node	*np = dev->of_node;
 	struct max927x_data* data;
+	struct gpio_chip *gc;
 	bool deserializer_master;
 	u8 client_id;
 	struct v4l2_subdev *subdev;
@@ -1660,6 +1642,23 @@ static int max927x_probe(struct i2c_client *client,
 	mutex_init(&data->data_lock);
 	mutex_init(&data->gpio_lock);
 
+	gc = &data->gpio_chip;
+	gc->direction_output = max9721_gpio_direction_output;
+	gc->direction_input = max9721_gpio_direction_input;
+	gc->get = max9271_gpio_get_value;
+	gc->set = max9271_gpio_set_value;
+	gc->can_sleep = 1;
+	gc->ngpio = 8;
+	gc->label = client->name;
+	gc->dev = &client->dev;
+	gc->owner = THIS_MODULE;
+	gc->base = -1;
+	ret = gpiochip_add(gc);
+	if (ret) {
+		dev_err(dev,"Failed to add gpio\n");
+		return ret;
+	}
+
 	ret = _max927x_read_reg(client, 0x1e, &client_id, NULL);
 	if(ret < 0) {
 		dev_err(dev,"Missing client\n");
@@ -1713,24 +1712,20 @@ static int max927x_remove(struct i2c_client *client)
 		return -EBUSY;
 	}
 
-	if(data->operational) {
-		if (data->gpio_chip_initialized) {
-			dev_dbg(data->dev, "calling gpiochip_remove");
-			ret = gpiochip_remove(&data->gpio_chip);
-			if(ret < 0) {
-				dev_err(data->dev, "%s failed, %d\n",
-				"gpiochip_remove()", ret);
-				return ret;
-			}
-			memset(&data->gpio_chip, 0, sizeof(data->gpio_chip));
-			data->gpio_chip_initialized = false;
-		}
+	if (data->operational)
 		ret = _max927x_remove(data);
-	}
+
 	if(ret < 0)
 		return ret;
 
 	_max927x_slave_power_off(data);
+
+	ret = gpiochip_remove(&data->gpio_chip);
+	if (ret < 0) {
+		dev_err(data->dev, "gpiochip_remove failed, %d\n", ret);
+		return ret;
+	}
+
 	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
 	return 0;
 }
