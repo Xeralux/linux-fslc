@@ -869,7 +869,13 @@ static ssize_t mxc_pipeline_operational_show(struct device *dev,
                                   struct device_attribute *attr, char *buf)
 {
 	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
-	return sprintf(buf, "%d\n",data->operational);
+	ssize_t result;
+	if (WARN_ON(!data))
+		return -ENODEV;
+	mutex_lock(&data->lock);
+	result = sprintf(buf, "%d\n",data->operational);
+	mutex_unlock(&data->lock);
+	return result;
 }
 static DEVICE_ATTR(operational, 0666, (void *)mxc_pipeline_operational_show, (void *)mxc_pipeline_operational_store);
 
