@@ -119,6 +119,18 @@ static void null_restart(enum reboot_mode reboot_mode, const char *cmd)
 }
 
 /*
+ *  Enter non-interruptable CPU halt state
+ */
+static void cpu_halt(void)
+{
+	clockevents_suspend();
+
+	local_irq_disable();
+	while (1)
+		cpu_do_idle();
+}
+
+/*
  * Function pointers to optional machine specific functions
  */
 void (*pm_power_off)(void);
@@ -202,8 +214,7 @@ void machine_halt(void)
 	local_irq_disable();
 	smp_send_stop();
 
-	local_irq_disable();
-	while (1);
+	cpu_halt();
 }
 
 /*
@@ -219,6 +230,8 @@ void machine_power_off(void)
 
 	if (pm_power_off)
 		pm_power_off();
+
+	cpu_halt();
 }
 
 /*
@@ -244,8 +257,7 @@ void machine_restart(char *cmd)
 
 	/* Whoops - the platform was unable to reboot. Tell the user! */
 	printk("Reboot failed -- System halted\n");
-	local_irq_disable();
-	while (1);
+	cpu_halt();
 }
 
 void __show_regs(struct pt_regs *regs)
