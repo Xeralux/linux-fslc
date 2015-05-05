@@ -840,6 +840,9 @@ static ssize_t mxc_pipeline_operational_store(struct device *dev,
 	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
 	unsigned long val;
 
+	if (WARN_ON(!data))
+		return -ENODEV;
+
 	if(_kstrtoul(buf, 10, &val) || val > 1) {
 		dev_err(dev,"Must supply value between 0-1.\n");
 		return count;
