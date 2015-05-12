@@ -24,9 +24,9 @@
   status = "okay";
 };
 
-&adv7611_ch0 {
-  status = "okay";
-};
+//&adv7611_ch0 {
+//  status = "okay";
+//};
 
 //&ap0100_ch1 {
 //  status = "okay";
