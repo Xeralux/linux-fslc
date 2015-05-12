@@ -32,9 +32,9 @@
   status = "okay";
 };
 
-&adv7611_ch1 {
-  status = "okay";
-};
+//&adv7611_ch1 {
+//  status = "okay";
+//};
 
 
 /*
