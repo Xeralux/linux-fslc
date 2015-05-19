@@ -1,1732 +1,1238 @@
 /*
- * Copyright (C) 2013-2014 Leopard Imaging, Inc. All Rights Reserved.
- */
-
-/*
+ * Maxim 9721 seralizer/9272 deserializer driver
+ *
+ * Copyright (c) 2013-2014 Leopard Imaging, Inc.
+ * Copyright (c) 2015 Sensity Systems, Inc.
+ *
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
-
+ *
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	 See the
  * GNU General Public License for more details.
-
+ *
  * You should have received a copy of the GNU General Public License along
  * with this program; if not, write to the Free Software Foundation, Inc.,
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ * The 9271/9272 operate as a pair, with the CPU controlling the pair
+ * through the 9272 deserializer for inbound (camera) applications, or
+ * through the 9271 serialize for outbound (display) applications.
+ *
+ * Besides the video stream, the serial link carries a control channel
+ * that acts as an extension of the I2C bus.  A GPI-to-GPO signal may
+ * also be carried; that functionality is not implemented here.
+ *
  */
-
-//#define DEBUG
 
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/init.h>
-#include <linux/slab.h>
-#include <linux/ctype.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/i2c.h>
 #include <linux/i2c-mux.h>
 #include <linux/regulator/consumer.h>
 #include <linux/reset.h>
-#include <linux/i2c-mux.h>
 #include <linux/gpio.h>
-
+#include <linux/atomic.h>
 #include <media/v4l2-subdev.h>
-#include <media/v4l2-device.h>
+#include "max927x.h"
 
-#include <linux/moduleparam.h>
-#define I2C_RETRY_CNT_HIST 11
-static unsigned long i2c_retries = I2C_RETRY_CNT_HIST-1;
-module_param(i2c_retries, ulong, 0444);
+/*
+ * Device settings
+ */
+#define MAX9271_SETTING(name_, regno_, pos_, wid_) MAX9271_##name_,
+typedef enum {
+	MAX9271_SETTINGS
+	MAX9271_NUM_SETTINGS
+} max9271_setting_t;
+#undef MAX9271_SETTING
+#define MAX9271_SETTING(name_, regno_, pos_, wid_) \
+	[ MAX9271_##name_ ] = { .name = #name_, .reg = regno_, .pos = pos_, .width = wid_, .idx = MAX9271_##name_  },
+static const struct max927x_setting max9271_settings[MAX9271_NUM_SETTINGS] = { MAX9271_SETTINGS };
+#undef MAX9271_SETTING
 
-/*Magic number, either higher or lower seems to lead to many bit errors,
-* think very hard about changing
-*/
-static unsigned long i2c_udelay = 3000;
-module_param(i2c_udelay, ulong, 0444);
+#define MAX9272_SETTING(name_, regno_, pos_, wid_) MAX9272_##name_,
+typedef enum {
+	MAX9272_SETTINGS
+	MAX9272_NUM_SETTINGS
+} max9272_setting_t;
+#undef MAX9272_SETTING
+#define MAX9272_SETTING(name_, regno_, pos_, wid_) \
+	[ MAX9272_##name_ ] = { .name = #name_, .reg = regno_, .pos = pos_, .width = wid_, .idx = MAX9272_##name_  },
+static const struct max927x_setting max9272_settings[MAX9272_NUM_SETTINGS] = { MAX9272_SETTINGS };
+#undef MAX9272_SETTING
 
-#define dev_warn_ratelimit(...) do{ if(printk_ratelimit()) dev_warn( __VA_ARGS__); } while(0)
+/*
+ * Device tree and sysfs-accessible configuration controls, named
+ * for backward compatibility with old driver.
+ *
+ * MAX927x_PROPERTY(<name>, <attribute-name>, <setting-name>
+ */
+#define MAX9272_PROPERTIES \
+	MAX9272_PROPERTY(REV_AMP, magic_rev_amp, REV_AMP) \
+	MAX9272_PROPERTY(REV_TRF, magic_rev_trf, REV_TRF)
+#define MAX9271_PROPERTIES \
+	MAX9271_PROPERTY(REV_DIG_FLT, magic_rev_dig_flt, DIGFLT) \
+	MAX9271_PROPERTY(REV_LOGAIN, magic_rev_logain, LOGAIN) \
+	MAX9271_PROPERTY(REV_HIGAIN, magic_rev_higain, HIGAIN) \
+	MAX9271_PROPERTY(REV_HIBW, magic_rev_hibw, HIBW) \
+	MAX9271_PROPERTY(REV_HIVTH, magic_rev_hivth, HIVTH) \
+	MAX9271_PROPERTY(I2C_SLVSH, i2c_slvsh, I2CSLVSH) \
+	MAX9271_PROPERTY(I2C_MSTBT, i2c_mstbt, I2CMSTBT) \
+	MAX9271_PROPERTY(CMLLVL, cmllvl, CMLLVL) \
+	MAX9271_PROPERTY(PREEMP, preemp, PREEMP) \
+	MAX9271_PROPERTY(SPREAD, spread, SS)
 
-struct max927x_data {
-	struct mutex data_lock;
-	struct mutex gpio_lock;
-	struct gpio_chip gpio_chip;
+#define MAX9272_PROPERTY(tag_, name_, setting_) CFG_##tag_,
+#define MAX9271_PROPERTY(tag_, name_, setting_) CFG_##tag_,
+typedef enum {
+	MAX9272_PROPERTIES
+	MAX9271_PROPERTIES
+	NUM_CFG_PROPS
+} property_id_t;
+#undef MAX9272_PROPERTY
+#undef MAX9271_PROPERTY
+
+struct max927x_property {
+	int for_deserializer;
+	const struct max927x_setting *setting;
+	struct device_attribute dev_attr;
+};
+
+/*
+ * We maintain an array of counts of I2C transactions
+ * that were successful after <n> retries, where n ranges
+ * from 0 to I2C_RETRIES_MAX.
+ */
+#define I2C_RETRIES_MAX 10
+static unsigned long i2c_retries = I2C_RETRIES_MAX;
+
+/*
+ * I2C delay value.  Default value was worked out
+ * after many trials, so be careful about making
+ * any adjustments.
+ */
+#define I2C_UDELAY_DEFAULT 3000
+static unsigned long i2c_udelay = I2C_UDELAY_DEFAULT;
+
+
+/*
+ * Driver-private data structures
+ */
+struct max927x;
+
+typedef int (*link_init_fn)(struct max927x *me);
+
+struct max927x {
 	struct device *dev;
 	struct i2c_adapter *parent;
+	struct i2c_client *local, *remote;
+	struct i2c_client *ser, *des;
+	link_init_fn ctrl_link_init;
+	struct regulator *remote_power;
+	u32 power_on_mdelay, power_off_mdelay;
+	atomic_t ser_gpios_enabled;
+	atomic_t ser_gpios_set;
+	struct gpio_chip gc;
+	struct i2c_adapter dummy_adapter;
 	struct i2c_adapter adap;
-	struct i2c_client* master;
-	struct i2c_client* slave;
-	struct regulator *slave_supply;
-	bool deserializer_master;
-	u8 gpio_en;
-	u8 gpio_set;
-	u8 des_gpio;
-	unsigned rev_amp;
-	unsigned rev_trf;
-	unsigned rev_dig_flt;
-	unsigned rev_logain;
-	unsigned rev_higain;
-	unsigned rev_hibw;
-	unsigned rev_hivth;
-	unsigned i2c_slvsh;
-	unsigned i2c_mstbt;
-	unsigned cmllvl;
-	unsigned preemp;
-	unsigned spread;
-	unsigned slave_off_ms;
-	unsigned slave_on_ms;
-	struct v4l2_subdev	subdev;
-	bool operational;
-	unsigned error_count;
-	unsigned i2c_retry_counts[I2C_RETRY_CNT_HIST];
+	struct v4l2_subdev subdev;
+	atomic_t i2c_error_count;
+	atomic_t i2c_retry_counts[I2C_RETRIES_MAX+1];
+	u32 of_cfg_settings[NUM_CFG_PROPS];
 };
 
-static struct max927x_data *to_max927x_from_i2c(const struct i2c_client *client)
+/*
+ * Pointer translation
+ */
+static struct max927x *to_max927x_from_dev(struct device *dev)
 {
-	return container_of(i2c_get_clientdata(client), struct max927x_data, subdev);
+	return container_of(dev_get_drvdata(dev), struct max927x, subdev);
 }
 
-static struct max927x_data *to_max927x_from_v4l2(const struct v4l2_subdev *sd)
+static struct max927x *to_max927x_from_v4l2_subdev(struct v4l2_subdev *sd)
 {
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
-	return to_max927x_from_i2c(client);
+	return container_of(sd, struct max927x, subdev);
 }
 
-static struct max927x_data *to_max927x_from_dev(const struct device *dev)
+/*
+ * Basic I2C register access
+ */
+static int i2c_reg_read(struct i2c_client *client, u8 reg, u8 *val)
 {
-	struct v4l2_subdev *sd = dev_get_drvdata(dev);
-	return container_of(sd, struct max927x_data, subdev);
-}
-
-static struct max927x_data *to_max927x_from_gpio(struct gpio_chip *gc)
-{
-	return container_of(gc, struct max927x_data, gpio_chip);
-}
-
-#define MAX9271_REG_02_SS_SHIFT (5)
-#define MAX9271_REG_02_SS_MASK (0x7 << MAX9271_REG_02_SS_SHIFT)
-
-#define MAX9271_REG_04_SEREN_SHIFT (7)
-#define MAX9271_REG_04_CLINKEN_SHIFT (6)
-
-#define MAX9272_REG_04_LOCKED_SHIFT (7)
-#define MAX9272_REG_04_OUTENB_SHIFT (6)
-
-#define MAX927X_REG_04_PRBSEN_SHIFT (5)
-#define MAX927X_REG_04_SLEEP_SHIFT (4)
-#define MAX927X_REG_04_INTTYPE_SHIFT (2)
-#define MAX927X_REG_04_REVCCEN_SHIFT (1)
-#define MAX927X_REG_04_FWDCCEN_SHIFT (0)
-
-
-#define MAX9272_REG_04_SEREN_SHIFT (7)
-#define MAX9272_REG_04_CLINKEN_SHIFT (6)
-#define MAX9272_REG_04_PRBSEN_SHIFT (5)
-#define MAX9272_REG_04_SLEEP_SHIFT (4)
-#define MAX9272_REG_04_INTTYPE_SHIFT (2)
-#define MAX9272_REG_04_REVCCEN_SHIFT (1)
-#define MAX9272_REG_04_FWDCCEN_SHIFT (0)
-
-#define MAX927X_REG_05_I2CMETHOD_SHIFT (7)
-
-#define MAX9272_REG_05_DCS_SHIFT (6)
-#define MAX9272_REG_05_HVTRMODE_SHIFT (5)
-#define MAX9272_REG_05_ENEQ_SHIFT (4)
-#define MAX9272_REG_05_EQTUNE_SHIFT (0)
-
-#define MAX9271_REG_05_ENJITFILT_SHIFT (6)
-#define MAX9271_REG_05_PRBSLEN_SHIFT (4)
-#define MAX9271_REG_05_ENWAKEN_SHIFT (1)
-#define MAX9271_REG_05_ENWAKEP_SHIFT (0)
-
-#define MAX9271_REG_06_CMLLVL_SHIFT (4)
-#define MAX9271_REG_06_CMLLVL_MASK (0xf << MAX9271_REG_06_CMLLVL_SHIFT)
-#define MAX9271_REG_06_PREEMP_SHIFT (0)
-#define MAX9271_REG_06_PREEMP_MASK (0xf << MAX9271_REG_06_PREEMP_SHIFT)
-
-#define MAX927X_REG_07_DBL_SHIFT  (7)
-#define MAX927X_REG_07_DRS_SHIFT  (6)
-#define MAX927X_REG_07_BWS_SHIFT (5)
-#define MAX927X_REG_07_ES_SHIFT (4)
-#define MAX9272_REG_07_HVTRACK_SHIFT (3)
-#define MAX927X_REG_07_HVEN_SHIFT (2)
-#define MAX927X_REG_07_EDC_SHIFT (0)
-
-#define MAX927X_REG_08_INVVS_SHIFT (7)
-#define MAX927X_REG_08_INVHS_SHIFT (6)
-#define MAX9272_REG_08_UNEQDBL_SHIFT (4)
-#define MAX9272_REG_08_DISSTAG_SHIFT (3)
-#define MAX9272_REG_08_AUTORST_SHIFT (2)
-#define MAX9272_REG_08_ERRSEL_SHIFT (0)
-
-#define MAX9271_REG_08_REV_DIG_FLT_SHIFT (4)
-#define MAX9271_REG_08_REV_DIG_FLT_MASK (3 << MAX9271_REG_08_REV_DIG_FLT_SHIFT)
-#define MAX9271_REG_08_REV_LOGAIN_SHIFT (3)
-#define MAX9271_REG_08_REV_LOGAIN_MASK (1 << MAX9271_REG_08_REV_LOGAIN_SHIFT)
-#define MAX9271_REG_08_REV_HIGAIN_SHIFT (2)
-#define MAX9271_REG_08_REV_HIGAIN_MASK (1 << MAX9271_REG_08_REV_HIGAIN_SHIFT)
-#define MAX9271_REG_08_REV_HIBW_SHIFT (1)
-#define MAX9271_REG_08_REV_HIBW_MASK (1 << MAX9271_REG_08_REV_HIBW_SHIFT)
-#define MAX9271_REG_08_REV_HIVTH_SHIFT (0)
-#define MAX9271_REG_08_REV_HIVTH_MASK (1 << MAX9271_REG_08_REV_HIVTH_SHIFT)
-
-#define MAX927X_REG_0D_I2CLOCACK_SHIFT (7)
-#define MAX927X_REG_0D_I2CSLVSH_SHIFT  (5)
-#define MAX927X_REG_0D_I2CSLVSH_MASK   (0x3 << MAX927X_REG_0D_I2CSLVSH_SHIFT)
-#define MAX927X_REG_0D_I2CMSTBT_SHIFT  (2)
-#define MAX927X_REG_0D_I2CMSTBT_MASK   (0x7 << MAX927X_REG_0D_I2CMSTBT_SHIFT)
-#define MAX927X_REG_0D_I2CSLVTO_SHIFT  (0)
-
-#define MAX9271_REG_0E_DIS_REV_P_SHIFT (7)
-#define MAX9271_REG_0E_DIS_REV_N_SHIFT (6)
-#define MAX9271_REG_0E_DIS_GPIO5EN_SHIFT (5)
-#define MAX9271_REG_0E_DIS_GPIO4EN_SHIFT (4)
-#define MAX9271_REG_0E_DIS_GPIO3EN_SHIFT (3)
-#define MAX9271_REG_0E_DIS_GPIO2EN_SHIFT (2)
-#define MAX9271_REG_0E_DIS_GPIO1EN_SHIFT (1)
-
-#define MAX9271_REG_0F_GPIO5OUT_SHIFT (5)
-#define MAX9271_REG_0F_GPIO4OUT_SHIFT (4)
-#define MAX9271_REG_0F_GPIO3OUT_SHIFT (3)
-#define MAX9271_REG_0F_GPIO2OUT_SHIFT (2)
-#define MAX9271_REG_0F_GPIO1OUT_SHIFT (1)
-#define MAX9271_REG_0F_SETGP0_SHIFT (0)
-
-#define MAX9272_REG_15_REV_TRF_SHIFT (5)
-#define MAX9272_REG_15_REV_TRF_MASK (0x3 << MAX9272_REG_15_REV_TRF_SHIFT)
-#define MAX9272_REG_15_REV_TRF_211_100 (0 << MAX9272_REG_15_REV_TRF_SHIFT)
-#define MAX9272_REG_15_REV_TRF_281_200 (1 << MAX9272_REG_15_REV_TRF_SHIFT)
-#define MAX9272_REG_15_REV_TRF_422_300 (2 << MAX9272_REG_15_REV_TRF_SHIFT)
-#define MAX9272_REG_15_REV_TRF_563_400 (3 << MAX9272_REG_15_REV_TRF_SHIFT)
-#define MAX9272_REG_15_REV_AMP_SHIFT (0)
-#define MAX9272_REG_15_REV_AMP_MASK (0xF << MAX9272_REG_15_REV_AMP_SHIFT)
-#define MAX9272_REG_15_REV_AMP_30  (0 << MAX9272_REG_15_REV_AMP_SHIFT)
-#define MAX9272_REG_15_REV_AMP_40  (1 << MAX9272_REG_15_REV_AMP_SHIFT)
-#define MAX9272_REG_15_REV_AMP_50  (2 << MAX9272_REG_15_REV_AMP_SHIFT)
-#define MAX9272_REG_15_REV_AMP_60  (3 << MAX9272_REG_15_REV_AMP_SHIFT)
-#define MAX9272_REG_15_REV_AMP_70  (4 << MAX9272_REG_15_REV_AMP_SHIFT)
-#define MAX9272_REG_15_REV_AMP_80  (5 << MAX9272_REG_15_REV_AMP_SHIFT)
-#define MAX9272_REG_15_REV_AMP_90  (6 << MAX9272_REG_15_REV_AMP_SHIFT)
-#define MAX9272_REG_15_REV_AMP_100 (7 << MAX9272_REG_15_REV_AMP_SHIFT)
-
-static int _max927x_try_read_reg(struct i2c_client *client, u8 reg, u8 *val)
-{
-	u8 au8RegBuf;
 	struct i2c_msg msgs[2];
+	u8 regnum = reg;
+	int ret;
 
-	msgs[0].addr = client->addr;
+	msgs[0].addr = msgs[1].addr = client->addr;
 	msgs[0].flags = 0;
-	msgs[0].len = 1;
-	au8RegBuf = reg;
-	msgs[0].buf = &au8RegBuf;
-
-	msgs[1].addr = client->addr;
 	msgs[1].flags = I2C_M_RD;
-	msgs[1].len = 1;
+	msgs[0].len = msgs[1].len = 1;
+	msgs[0].buf = &regnum;
 	msgs[1].buf = val;
-	return i2c_transfer(client->adapter, msgs, 2);
+	ret = i2c_transfer(client->adapter, msgs, 2);
+	return (ret < 0 ? ret : 0);
 }
 
-static int _max927x_read_reg(struct i2c_client *client, u8 reg, u8 *val, unsigned *error_count)
+static int i2c_reg_write(struct i2c_client *client, u8 reg, u8 val)
 {
-	int err = -EIO;
-
-	err =  _max927x_try_read_reg(client, reg, val);
-
-	if (err < 0) {
-		dev_err(&client->dev,"%s: error:reg=%x,val=%x,err=%d\n",
-					__func__, reg, *val, err);
-		if(error_count)
-			*error_count += 1;
-		return err;
-	}
-
-	return 0;
+	u8 buf[2] = {reg, val};
+	int ret = i2c_master_send(client, buf, 2);
+	return (ret < 0 ? ret : 0);
 }
 
-static int _max927x_try_write_reg(struct i2c_client *client, u8 reg, u8 val)
+/*
+ * Serializer settings
+ */
+static int ser_read(struct max927x *me, max9271_setting_t which, u8 *valp)
 {
-	int ret;
-	u8 au8Buf[2];
-
-	au8Buf[0] = reg;
-	au8Buf[1] = val;
-
-	ret = i2c_master_send(client, au8Buf, 2);
-	return ret;
-}
-
-
-static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, u8 mask, unsigned *error_count)
-{
-	int err = -EIO;
-	int i;
-	u8 check;
-
-	for(i = 0; i < i2c_retries; i++) {
-		msleep(5);
-		/*Write data*/
-		err = _max927x_try_write_reg(client, reg, val);
-		if (err < 0) {
-			dev_warn_ratelimit(&client->dev,"%s warn:reg=%x,val=%x,err=%d\n",
-					__func__, reg, val, err);
-			continue;
-		}
-
-		/*Read back data just written*/
-		err = _max927x_read_reg(client, reg, &check, NULL);
-		if(err < 0)
-			continue;
-
-		if((check & mask) != (val & mask)) {
-			dev_warn_ratelimit(&client->dev,"%s:check warn:reg=%x,val=%x,check=%x\n", __func__,
-				reg, val, check);
-			err = -EIO;
-			continue;
-		}
-
-		/*All conditions satisfied (data written, read back
-		 * and verified to be the same value
-		 */
-		return 0;
-	}
-	if(error_count)
-		*error_count += 1;
-
-	dev_err(&client->dev,"%s warn:reg=%x,val=%x,err=%d,check=%02hhx\n",
-					__func__, reg, val, err, check);
-
-	return err;
-}
-
-#define SLAVE_WRITE(reg,val,error) _max927x_write_reg(data->slave, reg, val, 0xff, error)
-#define MASTER_WRITE(reg,val,error) _max927x_write_reg(data->master, reg, val, 0xff, error)
-#define SER_WRITE(reg,val,error) \
-	_max927x_write_reg(data->deserializer_master ? data->slave : data->master, \
-			reg, val, 0xff, error)
-#define SER_READ(reg,val,error) \
-	_max927x_read_reg(data->deserializer_master ? data->slave : data->master, \
-			reg, val, error)
-
-#define DES_WRITE(reg,val,error) \
-	_max927x_write_reg(data->deserializer_master ? data->master : data->slave, \
-			reg, val, 0xff, error)
-#define DES_WRITE_MASK(reg,val,mask,error) \
-	_max927x_write_reg(data->deserializer_master ? data->master : data->slave, \
-			reg, val, mask, error)
-#define DES_READ(reg,val,error) \
-	_max927x_read_reg(data->deserializer_master ? data->master : data->slave, \
-			reg, val, error)
-
-static inline u8 _max9272_magic(struct max927x_data* data)
-{
-	return (data->rev_amp << MAX9272_REG_15_REV_AMP_SHIFT) |
-			(data->rev_trf << MAX9272_REG_15_REV_TRF_SHIFT);
-}
-
-static inline u8 _max9271_magic(struct max927x_data* data)
-{
-	return (0 << MAX927X_REG_08_INVVS_SHIFT) |
-			(0 << MAX927X_REG_08_INVHS_SHIFT) |
-			(data->rev_dig_flt << MAX9271_REG_08_REV_DIG_FLT_SHIFT) |
-			(data->rev_logain << MAX9271_REG_08_REV_LOGAIN_SHIFT) |
-			(data->rev_higain << MAX9271_REG_08_REV_HIGAIN_SHIFT) |
-			(data->rev_hibw << MAX9271_REG_08_REV_HIBW_SHIFT) |
-			(data->rev_hivth << MAX9271_REG_08_REV_HIVTH_SHIFT);
-}
-
-static inline u8 _max9271_preemp(struct max927x_data* data)
-{
-	return (data->preemp << MAX9271_REG_06_PREEMP_SHIFT) |
-			(data->cmllvl << MAX9271_REG_06_CMLLVL_SHIFT);
-}
-
-static inline u8 _max9271_spread(struct max927x_data* data)
-{
-	return (data->spread << MAX9271_REG_02_SS_SHIFT) | 0x1f;
-}
-
-static inline u8 _max927x_i2c(struct max927x_data* data)
-{
-	return (1 << MAX927X_REG_0D_I2CLOCACK_SHIFT) |
-			 (data->i2c_slvsh << MAX927X_REG_0D_I2CSLVSH_SHIFT) |
-			 (data->i2c_mstbt << MAX927X_REG_0D_I2CMSTBT_SHIFT) |
-			 (0x2 << MAX927X_REG_0D_I2CSLVTO_SHIFT);
-}
-
-#define MAX9271_REG04 (0 << MAX9271_REG_04_SEREN_SHIFT) | \
-			 (1 << MAX9271_REG_04_CLINKEN_SHIFT) | \
-			 (0 << MAX927X_REG_04_PRBSEN_SHIFT) | \
-			 (0 << MAX927X_REG_04_SLEEP_SHIFT) | \
-			 (0x1 << MAX927X_REG_04_INTTYPE_SHIFT) | \
-			 (1 << MAX927X_REG_04_REVCCEN_SHIFT) | \
-			 (1 << MAX927X_REG_04_FWDCCEN_SHIFT)
-
-#define MAX9271_REG07 (1 << MAX927X_REG_07_DBL_SHIFT) | \
-			 (0 << MAX927X_REG_07_DRS_SHIFT) | \
-			 (0 << MAX927X_REG_07_BWS_SHIFT) | \
-			 (0 << MAX927X_REG_07_ES_SHIFT) | \
-			 (1 << MAX927X_REG_07_HVEN_SHIFT) | \
-			 (0x2 << MAX927X_REG_07_EDC_SHIFT)
-
-#define MAX9272_REG07 (1 << MAX927X_REG_07_DBL_SHIFT) | \
-			 (0 << MAX927X_REG_07_DRS_SHIFT) | \
-			 (0 << MAX927X_REG_07_BWS_SHIFT) | \
-			 (1 << MAX927X_REG_07_ES_SHIFT) | \
-			 (0 << MAX9272_REG_07_HVTRACK_SHIFT) | \
-			 (1 << MAX927X_REG_07_HVEN_SHIFT) | \
-			 (0x2 << MAX927X_REG_07_EDC_SHIFT)
-
-#define MAX9272_REG08 (0 << MAX927X_REG_08_INVVS_SHIFT) | \
-			 (0 << MAX927X_REG_08_INVHS_SHIFT) | \
-			 (0 << MAX9272_REG_08_UNEQDBL_SHIFT ) | \
-			 (1 << MAX9272_REG_08_DISSTAG_SHIFT) | \
-			 (1 << MAX9272_REG_08_AUTORST_SHIFT) | \
-			 (0x2 << MAX9272_REG_08_ERRSEL_SHIFT)
-
-static int _max927x_video_enable(struct max927x_data* data, int enable)
-{
-	return SER_WRITE(0x04,
-			((enable ? 1 : 0) << MAX9271_REG_04_SEREN_SHIFT) | MAX9271_REG04, &data->error_count);
-}
-
-#define LOCK_MAX_RETRIES (5)
-static int _max9272_link_locked(struct max927x_data* data)
-{
-	int i;
-	int err;
+	const struct max927x_setting *s = &max9271_settings[which];
 	u8 val;
-
-	for(i = 0; i < LOCK_MAX_RETRIES; i++) {
-		err = SER_READ(0x04, &val, NULL);
-		if(err == 0 && (val & (1 << MAX9272_REG_04_LOCKED_SHIFT)))
-			break;
-		msleep(5);
-	}
-	if(i == LOCK_MAX_RETRIES) {
-		return -EIO;
-	}
-	return 0;
-}
-
-static int max9271_gpio_get_value(struct gpio_chip *gc, unsigned off)
-{
-	struct max927x_data* data = to_max927x_from_gpio(gc);
-	u8 val;
-	int ret;
-
-	dev_dbg(data->dev, "%s: off=%d, operational=%d\n",
-		__func__, off, data->operational);
-
-	if (!data->operational)
-		return -ENODEV;
-
-	if (off < 6) {
-		/* Serializer GPIOs: 1-5 */
-		mutex_lock(&data->gpio_lock);
-		ret = SER_READ(0x10, &val, &data->error_count);
-		mutex_unlock(&data->gpio_lock);
-		if(ret < 0) {
-			dev_err(data->dev,"error in %s\n",__func__);
-			return 0;
-		}
-
-		return (val & (1u << off)) ? 1 : 0;
-	} else {
-		/* De-serializer GPIOs: 6-7 */
-		mutex_lock(&data->gpio_lock);
-		ret = DES_READ(0x0E, &val, &data->error_count);
-		mutex_unlock(&data->gpio_lock);
-		if(ret < 0) {
-			dev_err(data->dev,"error in %s\n",__func__);
-			return 0;
-		}
-
-		/* GPIO6 - bit 0, GPIO7 - bit 2*/
-		off -= 6;
-		off *= 2;
-		return (val >> off) & 1;
-	}
-
-}
-
-static void max9271_gpio_set_value(struct gpio_chip *gc, unsigned off, int output_val)
-{
-	struct max927x_data* data = to_max927x_from_gpio(gc);
-	int ret;
-
-	dev_dbg(data->dev, "%s: off=%d, output=%d, operational=%d\n",
-		__func__, off, output_val, data->operational);
-
-	if (!data->operational)
-		return;
-
-	mutex_lock(&data->gpio_lock);
-
-	if(off < 6) {
-		if(output_val)
-			data->gpio_set |= (1 << off);
-		else
-			data->gpio_set &= ~(1 << off);
-
-		ret = SER_WRITE(0x0F, data->gpio_set, &data->error_count);
-	} else {
-		u8 bits = 0;
-		/* GPIO6 - bit 1, GPIO7 - bit 3 */
-		off -= 6; // 0 or 1
-		off *= 2; // 0 or 2
-		off += 1; // 1 or 3
-		bits = (1 << off);
-		data->des_gpio &= ~bits;
-		if(output_val)
-			data->des_gpio |= bits;
-
-		ret = DES_WRITE_MASK(0x0E, data->des_gpio, 0x6a, &data->error_count);
-	}
-
-	mutex_unlock(&data->gpio_lock);
-	if(ret < 0) {
-		dev_err(data->dev,"error in %s\n",__func__);
-	}
-
-}
-
-static int max9721_gpio_direction_input(struct gpio_chip *gc, unsigned off)
-{
-	struct max927x_data* data = to_max927x_from_gpio(gc);
-	int ret = 0;
-
-	dev_dbg(data->dev, "%s: off=%d, operational=%d\n",
-		__func__, off, data->operational);
-
-	if (!data->operational)
-		return 0;
-
-	if(off == 0) {
-		dev_err(data->dev, "Bad gpio offset\n");
-		return -EINVAL;
-	}
-
-	/* max9272 GPIOs are OD only, so just set them 'high'. */
-	if (off > 5) {
-		max9271_gpio_set_value(gc, off, 1);
-		return ret;
-	}
-
-	mutex_lock(&data->gpio_lock);
-	data->gpio_en &= ~(1 << off);
-	ret = SER_WRITE(0x0E, data->gpio_en, &data->error_count);
-	mutex_unlock(&data->gpio_lock);
-	if(ret < 0) {
-		dev_err(data->dev,"error in %s\n",__func__);
-	}
-
-	return ret;
-}
-
-static int max9721_gpio_direction_output(struct gpio_chip *gc, unsigned off, int value)
-{
-	struct max927x_data* data = to_max927x_from_gpio(gc);
-	int ret = 0;
-
-	dev_dbg(data->dev, "%s: off=%d, value=0x%x, operational=%d\n",
-		__func__, off, value, data->operational);
-
-	if (!data->operational)
-		return 0;
-
-	max9271_gpio_set_value(gc, off, value);
-	if (off > 5)
-		return ret;
-
-	mutex_lock(&data->gpio_lock);
-	data->gpio_en |= 1 << off;
-	ret = SER_WRITE(0x0E, data->gpio_en, &data->error_count);
-	mutex_unlock(&data->gpio_lock);
-	if(ret < 0) {
-		dev_err(data->dev,"error in %s\n",__func__);
-	}
-	return ret;
-}
-
-static int _max927x_slave_power_on(struct max927x_data* data)
-{
-	int retval = 0;
-	if(!data->slave_supply)
-		return 0;
-
-	retval = regulator_enable(data->slave_supply);
-	if(retval < 0)
-		return retval;
-	msleep(data->slave_on_ms);
-	return 0;
-
-}
-
-static int _max927x_slave_power_off(struct max927x_data* data)
-{
-	int retval = 0;
-	if(!data->slave_supply)
-		return 0;
-
-	retval = regulator_disable(data->slave_supply);
-	if(retval < 0)
-		return retval;
-	msleep(data->slave_off_ms);
-	return 0;
-
-}
-
-static int _max927x_link_configure(struct max927x_data* data)
-{
-	struct device *dev = data->dev;
-	int retval=0;
-	int counter;
-
-	retval = _max927x_slave_power_off(data);
-	if(retval < 0)
-		goto error;
-
-	/*Write magic before powering slave*/
-	if(data->deserializer_master)
-		retval = MASTER_WRITE(0x15, _max9272_magic(data), &data->error_count);
-	else
-		retval = MASTER_WRITE(0x8, _max9271_magic(data), &data->error_count);
-	if(retval < 0) {
-		_max927x_slave_power_on(data);
-		goto error;
-	}
-	dev_dbg(dev, "max927x init\n");
-
-	/*Allow magic to take*/
-	msleep(1000);
-
-	/*Set local i2c config*/
-	retval = MASTER_WRITE(0x0d, _max927x_i2c(data), &data->error_count);
-	if(retval < 0) {
-		_max927x_slave_power_on(data);
-		goto error;
-	}
-
-	/*Power slave back on*/
-	retval = _max927x_slave_power_on(data);
-	if(retval < 0)
-		goto error;
-
-	for (counter = 1; counter <= 5; counter++) {
-
-		/*Enable reverse channel so we know if remote writes succeed*/
-		retval  = SER_WRITE(0x04, MAX9271_REG04, &data->error_count);
-		if (retval == 0)
-			break;
-		dev_dbg(dev, "%s: enable reverse channel try %d err %d",
-			__func__, counter, retval);
-		/*Allow some additional time for power on*/
-		msleep(10);
-	}
-
-	if (retval < 0)
-		goto error;
-
-	/*Write slaves magic*/
-	if(data->deserializer_master) {
-		retval = SLAVE_WRITE(0x8, _max9271_magic(data), &data->error_count);
-		if (retval >= 0)
-			retval = SLAVE_WRITE(0x6, _max9271_preemp(data), &data->error_count);
-
-		if (retval >= 0)
-			retval = SLAVE_WRITE(0x2, _max9271_spread(data), &data->error_count);
-
-	} else {
-		retval = SLAVE_WRITE(0x15, _max9272_magic(data), &data->error_count);
-	}
-
-	if(retval < 0)
-		goto error;
-
-	/*Set remote i2c config*/
-	retval = SLAVE_WRITE(0x0d, _max927x_i2c(data), &data->error_count);
-	if(retval < 0) {
-		dev_err(dev, "err %d setting remote I2C config", retval);
-		goto error;
-	}
-
-	/*Set slave value for 0x07 first because we lose contact when the common settings mismatch*/
-	SLAVE_WRITE(0x07, data->deserializer_master ? MAX9271_REG07 : MAX9272_REG07, NULL);
-	i2c_lock_adapter(&data->adap);
-	memset(data->i2c_retry_counts, 0, sizeof(data->i2c_retry_counts));
-	i2c_unlock_adapter(&data->adap);
-
-	/*Set local to match slave*/
-	retval = MASTER_WRITE(0x07, data->deserializer_master ?
-			MAX9272_REG07 : MAX9271_REG07, &data->error_count);
-	if(retval < 0) {
-		dev_err(dev, "err %d setting local to match slave", retval);
-		goto error;
-	}
-
-	/*Set deserializer video settings for generating local bus*/
-	retval = DES_WRITE(0x08, MAX9272_REG08, &data->error_count);
-	if(retval < 0) {
-		dev_err(dev, "err %d setting deserializer video settings", retval);
-		goto error;
-	}
-
-	/*Clear automatic acks since we shouldn't need them anymore*/
-	retval = MASTER_WRITE(0x0d,
-			_max927x_i2c(data) & ~(1 << MAX927X_REG_0D_I2CLOCACK_SHIFT),
-			&data->error_count);
-	if(retval < 0) {
-		dev_err(dev, "err %d clearing automatic ACKs", retval);
-		goto error;
-	}
-
-	data->gpio_en = 0x42;
-	data->gpio_set = 0xFE;
-	data->des_gpio = 0x6a;
-
-	retval = SER_WRITE(0x0F, data->gpio_set, &data->error_count);
-	if(retval < 0) {
-		dev_err(dev, "err %d writing gpio_set", retval);
-		goto error;
-	}
-
-	retval = SER_WRITE(0x0E, data->gpio_en, &data->error_count);
-	if(retval < 0) {
-		dev_err(dev, "err %d writing gpio_en", retval);
-		goto error;
-	}
-
-	retval = DES_WRITE_MASK(0x0E, data->des_gpio, 0x6a, &data->error_count);
-	if(retval < 0) {
-		dev_err(dev, "err %d writing des_gpio", retval);
-		goto error;
-	}
-
-	dev_dbg(dev, "max927x init done\n");
-	return retval;
-
-error:
-	dev_err(dev, "max927x init failed\n");
-	return retval;
-}
-
-static ssize_t max9272_rev_trf_store(struct device *dev,
-				   struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 3) {
-		dev_err(dev,"Must supply value between 0-3.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->rev_trf = val;
-	mutex_unlock(&data->data_lock);
-
-	return count;
-}
-
-static ssize_t max9272_rev_trf_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	switch(data->rev_trf) {
-	case 0:
-		return sprintf(buf, "0:211ns,100ns\n");
-	case 1:
-		return sprintf(buf, "1:281ns,200ns\n");
-	case 2:
-		return sprintf(buf, "2:422ns,300ns\n");
-	case 3:
-		return sprintf(buf, "3:563ns,400ns\n");
-	};
-	return 0;
-}
-static DEVICE_ATTR(magic_rev_trf, 0666, (void *)max9272_rev_trf_show, (void *)max9272_rev_trf_store);
-
-static ssize_t max9271_rev_dig_flt_store(struct device *dev,
-					struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 3) {
-		dev_err(dev,"Must supply value between 0-3.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->rev_dig_flt = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9271_rev_dig_flt_show(struct device *dev,
-					struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-
-	return sprintf(buf, "%d\n", data->rev_dig_flt);
-}
-static DEVICE_ATTR(magic_rev_dig_flt, 0666, (void *)max9271_rev_dig_flt_show, (void *)max9271_rev_dig_flt_store);
-
-static ssize_t max9271_rev_logain_store(struct device *dev,
-				   struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 1) {
-		dev_err(dev,"Must supply value between 0-1.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->rev_logain = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9271_rev_logain_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-
-	return sprintf(buf, "%d\n", data->rev_logain);
-}
-static DEVICE_ATTR(magic_rev_logain, 0666, (void *)max9271_rev_logain_show, (void *)max9271_rev_logain_store);
-
-static ssize_t max9271_rev_higain_store(struct device *dev,
-					struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 1) {
-		dev_err(dev,"Must supply value between 0-1.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->rev_higain = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9271_rev_higain_show(struct device *dev,
-					struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-
-	return sprintf(buf, "%d\n", data->rev_higain);
-}
-static DEVICE_ATTR(magic_rev_higain, 0666, (void *)max9271_rev_higain_show, (void *)max9271_rev_higain_store);
-
-static ssize_t max9271_rev_hibw_store(struct device *dev,
-					struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 1) {
-		dev_err(dev,"Must supply value between 0-1.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->rev_hibw = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9271_rev_hibw_show(struct device *dev,
-					struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-
-	return sprintf(buf, "%d\n", data->rev_hibw);
-}
-static DEVICE_ATTR(magic_rev_hibw, 0666, (void *)max9271_rev_hibw_show, (void *)max9271_rev_hibw_store);
-
-static ssize_t max9271_rev_hivth_store(struct device *dev,
-					struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 1) {
-		dev_err(dev,"Must supply value between 0-1.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->rev_hivth = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9271_rev_hivth_show(struct device *dev,
-					struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-
-	return sprintf(buf, "%d\n", data->rev_hivth);
-}
-static DEVICE_ATTR(magic_rev_hivth, 0666, (void *)max9271_rev_hivth_show, (void *)max9271_rev_hivth_store);
-
-static ssize_t max927x_i2c_slvsh_store(struct device *dev,
-				   struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 3) {
-		dev_err(dev,"Must supply value between 0-3.");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->i2c_slvsh = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max927x_i2c_slvsh_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	return sprintf(buf, "%d\n", data->i2c_slvsh);
-}
-static DEVICE_ATTR(i2c_slvsh, 0666, (void *)max927x_i2c_slvsh_show, (void *)max927x_i2c_slvsh_store);
-
-static ssize_t max927x_i2c_mstbt_store(struct device *dev,
-				   struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 7) {
-		dev_err(dev,"Must supply value between 0-7.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->i2c_mstbt = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max927x_i2c_mstbt_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	return sprintf(buf, "%d\n", data->i2c_mstbt);
-}
-static DEVICE_ATTR(i2c_mstbt, 0666, (void *)max927x_i2c_mstbt_show, (void *)max927x_i2c_mstbt_store);
-
-static ssize_t max9272_rev_amp_store(struct device *dev,
-				   struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 15) {
-		dev_err(dev,"Must supply value between 0-7.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->rev_amp = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9272_rev_amp_show(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	return sprintf(buf, "%d:%dmV\n",data->rev_amp,data->rev_amp*10+30);
-}
-static DEVICE_ATTR(magic_rev_amp, 0666, (void *)max9272_rev_amp_show, (void *)max9272_rev_amp_store);
-
-static ssize_t max9271_cmllvl_store(struct device *dev,
-					struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 15) {
-		dev_err(dev,"Must supply value between 0-15.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->cmllvl = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9271_cmllvl_show(struct device *dev,
-					struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	return sprintf(buf, "%d\n",data->cmllvl);
-}
-static DEVICE_ATTR(cmllvl, 0666, (void *)max9271_cmllvl_show, (void *)max9271_cmllvl_store);
-
-static ssize_t max9271_preemp_store(struct device *dev,
-					struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 15) {
-		dev_err(dev,"Must supply value between 0-15.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->preemp = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9271_preemp_show(struct device *dev,
-					struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	return sprintf(buf, "%d\n",data->preemp);
-}
-static DEVICE_ATTR(preemp, 0666, (void *)max9271_preemp_show, (void *)max9271_preemp_store);
-
-static ssize_t max9271_spread_store(struct device *dev,
-					struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
-	if(kstrtouint(buf, 10, &val) || val > 7) {
-		dev_err(dev,"Must supply value between 0-7.\n");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	data->spread = val;
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-
-static ssize_t max9271_spread_show(struct device *dev,
-					struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	return sprintf(buf, "%d\n",data->spread);
-}
-static DEVICE_ATTR(spread, 0666, (void *)max9271_spread_show, (void *)max9271_spread_store);
-
-static ssize_t max9272_show_regs(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	int cnt = 0;
-	u8 i;
-	u8 val;
-	int err;
-	mutex_lock(&data->data_lock);
-	for(i=0; i < 0x20 && cnt < PAGE_SIZE; i++) {
-		err = DES_READ(i, &val, NULL);
-		if(err)
-			continue;
-		cnt += snprintf(buf+cnt,PAGE_SIZE-cnt,"%02x:%02x\n", i, val);
-	}
-	mutex_unlock(&data->data_lock);
-	return cnt;
-}
-static DEVICE_ATTR(max9272_regs, 0444, (void *)max9272_show_regs, NULL);
-
-static ssize_t max9271_show_regs(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	int cnt = 0;
-	u8 i;
-	u8 val;
-	int err;
-	mutex_lock(&data->data_lock);
-	for(i=0; i < 0x20 && cnt < PAGE_SIZE; i++) {
-		err = SER_READ(i, &val, NULL);
-		if(err)
-			continue;
-		cnt += snprintf(buf+cnt,PAGE_SIZE-cnt,"%02x:%02x\n", i, val);
-	}
-	mutex_unlock(&data->data_lock);
-	return cnt;
-}
-static DEVICE_ATTR(max9271_regs, 0444, (void *)max9271_show_regs, NULL);
-
-static ssize_t max9272_store_retry_count(struct device *dev,
-				   struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	i2c_lock_adapter(&data->adap);
-	memset(data->i2c_retry_counts, 0, sizeof(data->i2c_retry_counts));
-	i2c_unlock_adapter(&data->adap);
-	return count;
-}
-
-static ssize_t max9272_show_retry_count(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	int i, cnt = 0;
-	unsigned i2c_retry_counts[sizeof(data->i2c_retry_counts)];
-	i2c_lock_adapter(&data->adap);
-	memcpy(i2c_retry_counts, data->i2c_retry_counts,sizeof(i2c_retry_counts));
-	//memset(data->i2c_retry_counts, 0, sizeof(data->i2c_retry_counts));
-	i2c_unlock_adapter(&data->adap);
-	for(i = 0; i < I2C_RETRY_CNT_HIST; i++) {
-		cnt += snprintf(buf+cnt,PAGE_SIZE-cnt,"%u:%u\n", i, i2c_retry_counts[i]);
-	}
-	return cnt;
-}
-static DEVICE_ATTR(i2c_retry_counts, 0644, (void *)max9272_show_retry_count, (void*)max9272_store_retry_count);
-
-static ssize_t max9272_show_link_errors(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	u8 corrected_err_cnt;
-	int ret = 0;
-	mutex_lock(&data->data_lock);
-	ret = DES_READ(0x12,&corrected_err_cnt, &data->error_count);
-	mutex_unlock(&data->data_lock);
-	if (ret != 0) {
-		dev_err(dev,"%s:read error\n", __func__);
-		return 0;
-	}
-
-	return snprintf(buf, PAGE_SIZE,"%d\n", corrected_err_cnt);
-}
-static DEVICE_ATTR(corrected_link_errors, 0444, (void *)max9272_show_link_errors, NULL);
-
-static ssize_t max9272_show_detected_link_errors(struct device *dev,
-				   struct device_attribute *attr, char *buf)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	u8 detected_err_cnt;
-	int ret = 0;
-	mutex_lock(&data->data_lock);
-	ret = DES_READ(0x10,&detected_err_cnt, &data->error_count);
-	mutex_unlock(&data->data_lock);
-	if (ret != 0) {
-		dev_err(dev,"%s:read error\n", __func__);
-		return 0;
-	}
-
-	return snprintf(buf, PAGE_SIZE,"%d\n", detected_err_cnt);
-}
-static DEVICE_ATTR(detected_link_errors, 0444, (void *)max9272_show_detected_link_errors, NULL);
-
-static void _max927x_i2c_test(struct i2c_client * client, struct device *dev, const char *name, unsigned cycles)
-{
-	static const u8 reg =  0x0A; // a register for testing
-	u8 val, w_val;
-	int w_retry_cnt, r_retry_cnt, check_cnt;
-	int i, j, k;
-	int fail_cnt;
-	int ret=0;
-	int max_retry_cnt = 0;
-	int total_transactions = 0;
-
-	dev_err(dev, "%s i2c test running ......", name);
-
-	w_retry_cnt = 0;
-	r_retry_cnt = 0;
-	check_cnt = 0;
-	fail_cnt = 0;
-	for (i=0; i< cycles; i++) {
-		if ( i % (cycles / 100) == 0) {
-			dev_err(dev, "test in progress : %d%%, w_retry_cnt = %d, r_retry_cnt = %d, check_cnt=%d", \
-				i / (cycles / 100) , w_retry_cnt, r_retry_cnt, check_cnt);
-			dev_err(dev, "                         fail_cnt = %d",  \
-				fail_cnt);
-		}
-
-		w_val = (i << 1) & 0x0FFE;
-
-		ret = -1;
-
-		for(j = 0; j <= i2c_retries && (ret < 0 || w_val != val); j++) {
-			u8 au8Buf[2];
-			au8Buf[0] = reg;
-			au8Buf[1] = w_val;
-			ret = i2c_master_send(client, au8Buf, 2);
-			total_transactions++;
-			if(ret < 0) {
-				dev_warn(&client->dev,"%s:write reg warn:reg=%x,val=%x\n",
-						__func__, reg, w_val);
-				w_retry_cnt++;
-				continue;
-			}
-
-			ret = -1;
-			for(k = 0; k < i2c_retries && ret < 0; k++) {
-				ret = _max927x_try_read_reg(client, reg, &val);
-				total_transactions++;
-				if(ret < 0) {
-					r_retry_cnt++;
-					msleep(5);
-				}
-			}
-			if(ret >= 0 && val != w_val) {
-				dev_warn(&client->dev,"%s:check reg warn:reg=%x,val=%x,check=%x\n",
-						__func__, reg, w_val, val);
-				check_cnt++;
-			}
-		}
-		if (ret < 0 || w_val != val) {
-			fail_cnt++;
-			dev_err(dev, "write failed: i = %d, write = 0x%x, w_retry_cnt=%d, r_retry_cnt=%d, check_cnt=%d\n",
-					i, w_val, w_retry_cnt, r_retry_cnt, check_cnt);
-			goto out;
-		} else if(j > max_retry_cnt) {
-			max_retry_cnt = j;
-		}
-	}
-out:
-	_max927x_write_reg(client, reg, 0x0, 0xff, NULL);
-
-	dev_err(dev, "%s i2c test %s !, total test count = %d, fail_cnt=%d, w_retry_cnt = %d, "
-			"r_retry_cnt = %d, check_cnt = %d, max retries=%d, total transactions=%d\n",
-				name, fail_cnt == 0 ? "passed" : "failed", cycles, fail_cnt, w_retry_cnt,
-						r_retry_cnt, check_cnt, max_retry_cnt,total_transactions);
-}
-
-
-static ssize_t max9272_i2c_test(struct device *dev,
-				   struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned val;
-	if(kstrtouint(buf, 10, &val) || val < 100) {
-		dev_err(dev,"Must supply test cycles > 100 in decimal.");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	_max927x_i2c_test(data->deserializer_master ? data->master : data->slave, dev, "max9272", val);
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-static DEVICE_ATTR(max9272_i2c_test, 0222, NULL, (void *)max9272_i2c_test);
-
-static ssize_t max9271_i2c_test(struct device *dev,
-				   struct device_attribute *attr, const char *buf, int count)
-{
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned val;
-	if(kstrtouint(buf, 10, &val) || val < 100) {
-		dev_err(dev,"Must supply test cycles > 100 in decimal.");
-		return count;
-	}
-	mutex_lock(&data->data_lock);
-	_max927x_i2c_test(data->deserializer_master ? data->slave : data->master, dev, "max9271", val);
-	mutex_unlock(&data->data_lock);
-	return count;
-}
-static DEVICE_ATTR(max9271_i2c_test, 0222, NULL, (void *)max9271_i2c_test);
-
-
-static int _max927x_of_get_config(struct max927x_data* data, struct device_node	*np, unsigned index)
-{
-	enum {
-		CFG_REV_AMP,
-		CFG_REV_TRF,
-		CFG_REV_DIG_FLT,
-		CFG_REV_LOGAIN,
-		CFG_REV_HIGAIN,
-		CFG_REV_HIBW,
-		CFG_REV_HIVTH,
-		CFG_I2C_SLVSH,
-		CFG_I2C_MSTBT,
-		CFG_CMLLVL,
-		CFG_PREEMP,
-		CFG_SPREAD,
-		NUM_CFG_PROPS
-	};
-	int i, ret;
-	u8 limits[NUM_CFG_PROPS] = {15,3,3,1,1,1,1,3,7,15,15,7};
-	u32 cfg[NUM_CFG_PROPS];
-	char buf[sizeof("cfg-")+2];
-	if(index > 99) {
-		dev_dbg(data->dev, "%s:index too big\n",__func__);
-		return -EINVAL;
-	}
-	snprintf(buf,sizeof(buf),"cfg-%d",index);
-
-	ret = of_property_read_u32_array(np,buf,cfg,NUM_CFG_PROPS);
-	if(ret < 0) {
-		dev_dbg(data->dev, "%s:could not read %s, code %d\n", __func__, buf, ret);
-		return -EINVAL;
-	}
-	for(i=0; i < NUM_CFG_PROPS; i++) {
-		if(cfg[i] > limits[i]) {
-			dev_dbg(data->dev, "%s:prop %d: cfg %d exceeds %d\n",
-					__func__, i, cfg[i], limits[i]);
-			return -EINVAL;
-		}
-	}
-	data->rev_amp = cfg[CFG_REV_AMP];
-	data->rev_trf = cfg[CFG_REV_TRF];
-	data->rev_dig_flt = cfg[CFG_REV_DIG_FLT];
-	data->rev_logain = cfg[CFG_REV_LOGAIN];
-	data->rev_higain = cfg[CFG_REV_HIGAIN];
-	data->rev_hibw = cfg[CFG_REV_HIBW];
-	data->rev_hivth = cfg[CFG_REV_HIVTH];
-	data->i2c_slvsh = cfg[CFG_I2C_SLVSH];
-	data->i2c_mstbt = cfg[CFG_I2C_MSTBT];
-	data->cmllvl = cfg[CFG_CMLLVL];
-	data->preemp = cfg[CFG_PREEMP];
-	data->spread = cfg[CFG_SPREAD];
-	return 0;
-}
-
-static struct attribute *attributes[] = {
-		&dev_attr_max9271_regs.attr,
-		&dev_attr_detected_link_errors.attr,
-		&dev_attr_corrected_link_errors.attr,
-		&dev_attr_max9271_i2c_test.attr,
-		&dev_attr_i2c_retry_counts.attr,
-		NULL,
-};
-
-static const struct attribute_group attr_group = {
-	.attrs	= attributes,
-};
-
-
-static int i2c_max927x_xfer(struct i2c_adapter *adap,
-			       struct i2c_msg msgs[], int num)
-{
-	struct max927x_data *data = adap->algo_data;
-	int j, ret = 0;
-	unsigned delay = i2c_udelay;
-	/*this is delay rather than sleep so that it is more
-	 * predictable, meaning it is easier to guarantee that
-	 * what works under one workload will continue to work
-	 * under a different workload.
-    */
-	while(delay > 1000) {
-		udelay(delay);
-		delay -= 1000;
-	}
-	udelay(delay);
-	/*The messages must be sent all at once so that there is a repeated
-	 * start condition instead of start/stop in between the messages.  This
-	 * is required by one of the drivers using this adapter.
-	 */
-	for(j = 0; j < i2c_retries; j++) {
-		ret = data->parent->algo->master_xfer(data->parent, msgs,num);
-		if(ret >= 0)
-			break;
-	}
-	if(j < I2C_RETRY_CNT_HIST)
-		data->i2c_retry_counts[j]++;
-	else
-		data->i2c_retry_counts[I2C_RETRY_CNT_HIST-1]++;
-	return ret;
-}
-
-static u32 i2c_max927x_func(struct i2c_adapter *adapter)
-{
-	return I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL;
-}
-
-static struct i2c_algorithm i2c_max927x_algo = {
-	.master_xfer	= i2c_max927x_xfer,
-	.functionality	= i2c_max927x_func,
-};
-
-
-int max927x_video_s_stream(struct v4l2_subdev *sd, int enable)
-{
-	struct max927x_data *data = to_max927x_from_v4l2(sd);
-	int ret;
-	if(!data->operational)
-		return -ENODEV;
-
-	/*TODO can't turn off once it has been turned on(?)*/
-	if(!enable)
-		return 0;
-
-	mutex_lock(&data->data_lock);
-	ret = _max927x_video_enable(data, enable);
-	if(ret < 0) {
-		dev_err(data->dev,"Unable to turn %s video\n", enable ? "on" : "off");
-		goto out;
-	}
-	ret = _max9272_link_locked(data);
-
-	if(!enable) {
-		if(ret == 0) {
-			dev_err(data->dev, "Video link did not drop\n");
-			ret = -EIO;
-		}
-	} else {
-		if(ret < 0) {
-			dev_err(data->dev, "Video link did not start\n");
-		}
-	}
-out:
-	mutex_unlock(&data->data_lock);
-	return ret;
-}
-
-static void _max927x_subdev_init(struct max927x_data* data);
-static int _max927x_probe(struct max927x_data* data)
-{
-	struct device *dev = data->dev;
-	struct i2c_client *client = data->master;
-	int ret;
-	int i2c_nr = 0;
-	struct device_node	*np = data->dev->of_node;
-	struct device_node *child;
-	int remote_reg;
-
-	if(data->operational)
-		return 0;
-
-	dev_dbg(dev, "%s: client (master)=%p", __func__, client);
-	if (!client)
-		return -EPROBE_DEFER;
-	dev_dbg(dev, "%s: adapter=%p", __func__, client->dev.parent);
-	if (!client->dev.parent)
-		return -EPROBE_DEFER;
-
-	ret = sysfs_create_group(&dev->kobj, &attr_group);
-	if(ret<0) {
-		dev_err(dev,"Cannot create sysfs group\n");
-		return ret;
-	}
-
-	of_property_read_u32(np,"i2c-nr", &i2c_nr);
-	data->parent = to_i2c_adapter(client->dev.parent);
-	snprintf(data->adap.name, sizeof(data->adap.name),
-		 "max927x-%d", i2c_adapter_id(data->parent));
-	data->adap.owner = THIS_MODULE;
-	data->adap.algo = &i2c_max927x_algo;
-	data->adap.algo_data = data;
-	data->adap.dev.parent = &data->parent->dev;
-	data->adap.class = 0;
-	for_each_child_of_node(np, child) {
-		ret = of_property_read_bool(child, "i2c");
-		if(ret) {
-			data->adap.dev.of_node = child;
-			break;
-		}
-	}
-
-	data->adap.nr = i2c_nr;
-
-	memset(data->i2c_retry_counts, 0, sizeof(data->i2c_retry_counts));
-	ret = i2c_add_numbered_adapter(&data->adap);
-	if(ret < 0) {
-		ret = -ENODEV;
-		dev_err(dev, "Failed to register i2c adapter\n");
-		goto error_sysfs;
-	}
-
-	ret = of_property_read_u32(np,"remote-reg",&remote_reg);
-	if(ret < 0) {
-		dev_err(dev,"Missing remote-reg property\n");
-		ret = -EINVAL;
-		goto error_i2c_adap;
-	}
-	data->slave = i2c_new_dummy(&data->adap, remote_reg);
-	if(!data->slave) {
-		dev_err(dev, "Could not create slave i2c client\n");
-		ret = -EINVAL;
-		goto error_i2c_adap;
-	}
-
-	/*Take GPIO lock while it is unsafe to use gpio.*/
-	mutex_lock(&data->gpio_lock);
-	ret = device_reset(dev);
-	if (ret == -ENODEV) {
-		mutex_unlock(&data->gpio_lock);
-		ret = -EPROBE_DEFER;
-		goto error_i2c_adap;
-	}
-	/*power up time is 6ms, double*/
-	msleep(12);
-
-	ret = _max927x_link_configure(data);
-	mutex_unlock(&data->gpio_lock);
+	int ret = i2c_reg_read(me->ser, s->reg, &val);
 
 	if (ret < 0) {
-		dev_err(dev, "Could not initialize max927x link\n");
-		goto error_i2c_adap;
+		dev_dbg(me->dev, "%s: which=%s, read status=%d\n", __func__, s->name, ret);
+		return ret;
 	}
-
-	dev_err(dev,"initialization complete\n");
-	data->error_count = 0;
-	data->operational = true;
-	_max927x_subdev_init(data);
-	return 0;
-
-error_i2c_adap:
-	i2c_del_adapter(&data->adap);
-	memset(&data->adap, 0, sizeof(data->adap));
-
-error_sysfs:
-	sysfs_remove_group(&dev->kobj, &attr_group);
+	*valp = (val >> s->pos) & ~(0xFF << s->width);
 	return ret;
 }
 
-static void _max927x_subdev_clear(struct max927x_data* data);
-static int _max927x_remove(struct max927x_data* data)
+static int ser_update(struct max927x *me, max9271_setting_t which, u8 newval)
 {
-	int ret = 0;
+	const struct max927x_setting *s = &max9271_settings[which];
+	u8 val,	 mask, updval, checkval = 0;
+	int ret = i2c_reg_read(me->ser, s->reg, &val);
 
-	dev_dbg(data->dev, "in _max927x_remove");
-
-	_max927x_subdev_clear(data);
-
-	data->operational = false;
-	i2c_del_adapter(&data->adap);
-	memset(&data->adap, 0, sizeof(data->adap));
-
-	sysfs_remove_group(&data->dev->kobj, &attr_group);
+	dev_dbg(me->dev, "%s: %s = %d\n", __func__, s->name, newval);
+	if (ret < 0) {
+		dev_dbg(me->dev, "%s: which=%s, read status=%d\n", __func__, s->name, ret);
+		return ret;
+	}
+	mask = ~(~(0xFF << s->width) << s->pos);
+	updval = (val & mask) | ((newval << s->pos) & ~mask);
+	ret = i2c_reg_write(me->ser, s->reg, updval);
+	if (ret >= 0) {
+		/*
+		 * If the serializer is remote, and we're touching register 4,
+		 * we may not be able to access the remote for some time after
+		 * updating SEREN and/or CLINKEN, so pause first.  If the read-back
+		 * still fails, put back the old value before returning.
+		 *
+		 * The read-back can fail if we're enabling SEREN on a remote
+		 * serializer but there is no input for the serializer to process.
+		 * So restore the old value so we can reestablish control communication
+		 * with the remote.
+		 */
+		if (me->ser == me->remote && s->reg == 4)
+			msleep(5);
+		ret = i2c_reg_read(me->ser, s->reg, &checkval);
+		if (ret < 0) {
+			dev_warn(me->dev, "error %d reading back register 0x%x\n", ret, s->reg);
+			if (me->ser == me->remote && s->reg == 4)
+				i2c_reg_write(me->ser, s->reg, val);
+		}
+	} else {
+		dev_warn(me->dev, "error %d writing register 0x%x\n", ret, s->reg);
+	}
+	if (ret >=0 && checkval != updval) {
+		dev_dbg(me->dev, "%s: which=%s read back val 0x%x mismatch with desired 0x%x\n",
+			__func__, s->name, val, updval);
+		ret = -EIO;
+	}
 	return ret;
 }
 
-static ssize_t max927x_operational_store(struct device *dev,
-                                  struct device_attribute *attr, const char *buf, int count)
+/*
+ * Deserializer settings
+ */
+static int des_read(struct max927x *me, max9272_setting_t which, u8 *valp)
 {
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	unsigned int val;
+	const struct max927x_setting *s = &max9272_settings[which];
+	u8 val;
+	int ret = i2c_reg_read(me->des, s->reg, &val);
 
-	if(kstrtouint(buf, 10, &val) || val > 1) {
-		dev_err(dev,"Must supply value between 0-1.\n");
-		return count;
+	if (ret < 0) {
+		dev_dbg(me->dev, "%s: which=%s, read status=%d\n", __func__, s->name, ret);
+		return ret;
+	}
+	*valp = (val >> s->pos) & ~(0xFF << s->width);
+	return ret;
+}
+
+static int des_update(struct max927x *me, max9272_setting_t which, u8 newval)
+{
+	const struct max927x_setting *s = &max9272_settings[which];
+	u8 val, mask, updval;
+	int ret = i2c_reg_read(me->des, s->reg, &val);
+
+	dev_dbg(me->dev, "%s: %s = %d\n", __func__, s->name, newval);
+	if (ret < 0)
+		return ret;
+	mask = ~(~(0xFF << s->width) << s->pos);
+	updval = (val & mask) | ((newval << s->pos) & ~mask);
+	ret = i2c_reg_write(me->des, s->reg, updval);
+	if (ret >= 0)
+		ret = i2c_reg_read(me->des, s->reg, &val);
+	if (ret >=0 && val != updval) {
+		dev_dbg(me->dev, "%s: which=%s read back val 0x%x mismatch with desired 0x%x\n",
+			__func__, s->name, val, updval);
+		ret = -EIO;
+	}
+	return ret;
+}
+
+/*
+ * Our I2C transfer routine for devices hanging off the remote, which
+ * adds some retries-after-delay in the event of a failure.
+ */
+static int remote_i2c_xfer(struct i2c_adapter *adap,
+			   struct i2c_msg msgs[], int num)
+{
+	struct max927x *me = adap->algo_data;
+	unsigned delay, ntries;
+	int ret;
+
+	for (ntries = 0; ntries < i2c_retries; ntries += 1) {
+		ret = me->parent->algo->master_xfer(me->parent, msgs, num);
+		if (ret >= 0)
+			break;
+
+		for (delay = i2c_udelay; delay > 1000; delay -= 1000)
+			udelay(1000);
+		if (delay > 0)
+			udelay(delay);
+
 	}
 
-	mutex_lock(&data->data_lock);
-	if(!!val == data->operational)
-		goto out;
+	atomic_inc(&me->i2c_retry_counts[(ntries > I2C_RETRIES_MAX ? I2C_RETRIES_MAX : ntries)]);
 
-	if(data->subdev.v4l2_dev != NULL) {
-		dev_err(dev,"v4l2 subdev still in use; please shut down %s.\n",
-				data->subdev.v4l2_dev->name);
-		goto out;
+	if (ret < 0)
+		atomic_inc(&me->i2c_error_count);
+
+	return ret;
+
+}
+
+/*
+ * Power on/off remote
+ */
+static void power_up_remote(struct max927x *me)
+{
+	int ret;
+	if (me->remote_power) {
+		ret = regulator_enable(me->remote_power);
+		dev_dbg(me->dev, "powering up remote %s (%d), now waiting %u msec\n",
+			(ret < 0 ? "failed" : "succeeded"), ret, me->power_on_mdelay);
+		if (me->power_on_mdelay != 0)
+			msleep(me->power_on_mdelay);
+	}
+}
+
+static void power_down_remote(struct max927x *me)
+{
+	int ret;
+	if (me->remote_power) {
+		ret = regulator_disable(me->remote_power);
+		if (ret < 0)
+			dev_dbg(me->dev, "powering down remote failed: %d\n", ret);
+		if (me->power_on_mdelay != 0)
+			msleep(me->power_off_mdelay);
+	}
+}
+
+/*
+ * Device attribute handling.  If you need to make another setting accessible through
+ * sysfs or the array in the device tree, add it to the list of property definitions above.
+ */
+static ssize_t show_property(struct device *dev, struct device_attribute *devattr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	struct max927x_property *prop = container_of(devattr, struct max927x_property, dev_attr);
+	int ret;
+	u8 val;
+
+	if (me == NULL)
+		return -ENODEV;
+	if (prop == NULL)
+		return -EINVAL;
+	dev_dbg(dev, "%s: me=%p, for %sserializer, setting=%s\n", __func__,
+		me, (prop->for_deserializer ? "de" : ""), prop->setting->name);
+	if (prop->for_deserializer) {
+		if (me->des == NULL)
+			return -ENODEV;
+		ret = des_read(me, prop->setting->idx, &val);
+	} else {
+		if (me->ser == NULL)
+			return -ENODEV;
+		ret = ser_read(me, prop->setting->idx, &val);
 	}
 
-	if(data->operational)
-		_max927x_remove(data);
+	return (ret < 0 ? ret : scnprintf(buf, PAGE_SIZE, "%u\n", val));
+}
 
-	if(val)
-		_max927x_probe(data);
+static ssize_t store_property(struct device *dev, struct device_attribute *devattr,
+			      const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	struct max927x_property *prop = container_of(devattr, struct max927x_property, dev_attr);
+	int ret;
+	unsigned val;
 
-out:
-	mutex_unlock(&data->data_lock);
+	dev_dbg(dev, "%s: me=%p, prop=%p, setting=%p\n", __func__, me, prop,
+		(prop == NULL ? NULL : prop->setting));
+
+	if (me == NULL)
+		return -ENODEV;
+	if (prop == NULL || kstrtouint(buf, 10, &val) != 0 || val >= (1 << prop->setting->width))
+		return -EINVAL;
+
+	if (prop->for_deserializer) {
+		if (me->des == NULL)
+			return -ENODEV;
+		ret = des_update(me, prop->setting->idx, val);
+	} else {
+		if (me->ser == NULL)
+			return -ENODEV;
+		ret = ser_update(me, prop->setting->idx, val);
+	}
+
+	return (ret < 0 ? ret : count);
+}
+
+#define MAX9272_PROPERTY(tag_, name_, setting_) [CFG_##tag_] = { \
+	.for_deserializer = 1, \
+	.setting = &max9272_settings[MAX9272_##setting_], \
+	.dev_attr = { .attr = { .name = #name_, .mode = 0666, }, \
+		      .show = show_property, .store = store_property }},
+#define MAX9271_PROPERTY(tag_, name_, setting_) [CFG_##tag_] = { \
+	.for_deserializer = 0, \
+	.setting = &max9271_settings[MAX9271_##setting_], \
+	.dev_attr = { .attr = { .name = #name_, .mode = 0666, },\
+		      .show = show_property, .store = store_property }},
+static struct max927x_property properties[NUM_CFG_PROPS] = { MAX9272_PROPERTIES MAX9271_PROPERTIES };
+#undef MAX9272_PROPERTY
+#undef MAX9271_PROPERTY
+
+#define MAX9272_PROPERTY(tag_, name_, setting_) &properties[CFG_##tag_].dev_attr.attr,
+#define MAX9271_PROPERTY(tag_, name_, setting_) &properties[CFG_##tag_].dev_attr.attr,
+static struct attribute *properties_attributes[] = {
+	MAX9272_PROPERTIES
+	MAX9271_PROPERTIES
+	NULL
+};
+#undef MAX9272_PROPERTY
+#undef MAX9271_PROPERTY
+static struct attribute_group properties_attr_group = {
+	.attrs = properties_attributes,
+};
+
+
+static const property_id_t ser_init_properties[] = {
+	CFG_REV_DIG_FLT, CFG_REV_LOGAIN, CFG_REV_HIGAIN, CFG_REV_HIBW, CFG_REV_HIVTH
+};
+
+/*
+ * Control channel initialization when serializer is local and deserializer
+ * is remote
+ */
+static int ser_control_init(struct max927x *me)
+{
+	int i, ret;
+
+	/*
+	 * Start by disabling SEREN and enabling CLINKEN in one register access.
+	 */
+	ret = i2c_reg_write(me->ser, 0x04, 0x47);
+	if (ret < 0) {
+		dev_err(me->dev, "error initializing control channel: %d\n", ret);
+		return ret;
+	}
+
+	/*
+	 * According to the comments in the old driver, these settings need
+	 * to be done early.
+	 */
+	for (i = 0; i < ARRAY_SIZE(ser_init_properties); i++) {
+		property_id_t which = ser_init_properties[i];
+		ret = ser_update(me, properties[which].setting->idx,
+				 me->of_cfg_settings[which]);
+		if (ret < 0) {
+			dev_err(me->dev, "could not set initial value for %s\n",
+				properties[which].dev_attr.attr.name);
+		}
+	}
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_INVVS, 0);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_INVHS, 0);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_GPIO_EN, atomic_read(&me->ser_gpios_enabled));
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_GPIO_SET, atomic_read(&me->ser_gpios_set));
+	if (ret < 0)
+		dev_err(me->dev, "error initializing serializer: %d\n", ret);
+
+	/*
+	 * Prepare for I2C communication over the serial link
+	 */
+	ret = ser_update(me, MAX9271_I2CLOCACK, 1);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_I2CSLVSH, me->of_cfg_settings[CFG_I2C_SLVSH]);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_I2CMSTBT, me->of_cfg_settings[CFG_I2C_MSTBT]);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_I2CSLVTO, 2);
+	if (ret < 0)
+		dev_err(me->dev, "serializer I2C setup error: %d\n", ret);
+
+	power_up_remote(me);
+
+	ret = des_update(me, MAX9272_REV_AMP, me->of_cfg_settings[CFG_REV_AMP]);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_REV_TRF, me->of_cfg_settings[CFG_REV_TRF]);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_I2CLOCACK, 1);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_I2CSLVSH, me->of_cfg_settings[CFG_I2C_SLVSH]);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_I2CMSTBT, me->of_cfg_settings[CFG_I2C_MSTBT]);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_I2CSLVTO, 2);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_DBL, 1);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_DRS, MAX927X_DRS_HIGH);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_BWS, MAX927X_BWS_24BIT);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_ES, MAX927X_ES_FALLING);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_HVTRACK, 0);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_HVEN, 1);
+	/*
+	 * Changing EDC on the remote causes loss of communication
+	 * until we update the local side to match, so update both,
+	 * then re-update the remote to test that the change was made.
+	 */
+	if (ret == 0) {
+		des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
+		ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
+		ret = des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
+	}
+	if (ret < 0) {
+		dev_err(me->dev, "error initializing deserializer: %d\n", ret);
+		power_down_remote(me);
+		return ret;
+	}
+
+	/*
+	 * Don't care about I2C retries or errors during setup
+	 */
+	atomic_xchg(&me->i2c_error_count, 0);
+	for (i = 0; i < ARRAY_SIZE(me->i2c_retry_counts); i++)
+		atomic_xchg(&me->i2c_retry_counts[i], 0);
+
+	ret = ser_update(me, MAX9271_DBL, 1);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_DRS, MAX927X_DRS_HIGH);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_BWS, MAX927X_BWS_24BIT);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_ES, MAX927X_ES_RISING);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_HVEN, 1);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
+	if (ret < 0) {
+		dev_err(me->dev, "error finalizing serializer config: %d\n", ret);
+		power_down_remote(me);
+		return ret;
+	}
+
+	/*
+	 * Don't need automatic I2C acks any longer
+	 */
+	return ser_update(me, MAX9271_I2CLOCACK, 0);
+
+}
+
+/*
+ * Control channel initialization for when deserializer is local and
+ * serializer is remote
+ */
+static int des_control_init(struct max927x *me)
+{
+	int i, ret;
+
+	/*
+	 * According to the comments in the old driver, these settings (which are
+	 * not documented in the data sheet) need to be performed early.
+	 */
+	ret = des_update(me, MAX9272_REV_AMP, me->of_cfg_settings[CFG_REV_AMP]);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_REV_TRF, me->of_cfg_settings[CFG_REV_TRF]);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_SLEEP, 0);
+
+	/*
+	 * Prepare for I2C communication with the remote
+	 */
+	ret = des_update(me, MAX9272_I2CLOCACK, 1);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_I2CSLVSH, me->of_cfg_settings[CFG_I2C_SLVSH]);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_I2CMSTBT, me->of_cfg_settings[CFG_I2C_MSTBT]);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_I2CSLVTO, 2);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_FWDCCEN, 1);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_REVCCEN, 1);
+	if (ret < 0)
+		dev_err(me->dev, "deserializer I2C setup error: %d\n", ret);
+
+	power_up_remote(me);
+
+	/*
+	 * Disable SEREN and enable CLINKEN on the serializer in a single register
+	 * write.  If we can read back the setting, we know the control channel is good.
+	 * Retry/delay loop here is just in case - it shouldn't really be needed.
+	 */
+	for (i = 1; i <= 5; i++) {
+		dev_dbg(me->dev, "setting up control link on serializer (attempt #%d)\n", i);
+		ret = i2c_reg_write(me->ser, 0x04, 0x47);
+		if (ret == 0) {
+			u8 val;
+			ret = i2c_reg_read(me->ser, 0x04, &val);
+			if (ret == 0 && val == 0x47)
+				break;
+		}
+		msleep(5);
+	}
+	if (ret < 0) {
+		dev_err(me->dev, "could not initialize control link in serializer, ret=%d\n", ret);
+		return ret;
+	}
+
+	for (i = 0; i < ARRAY_SIZE(ser_init_properties); i++) {
+		property_id_t which = ser_init_properties[i];
+		ret = ser_update(me, properties[which].setting->idx,
+				 me->of_cfg_settings[which]);
+		if (ret < 0) {
+			dev_err(me->dev, "could not set initial value for %s\n",
+				properties[which].dev_attr.attr.name);
+		}
+	}
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_INVVS, 0);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_INVHS, 0);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_GPIO_EN, atomic_read(&me->ser_gpios_enabled));
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_GPIO_SET, atomic_read(&me->ser_gpios_set));
+	if (ret < 0)
+		dev_err(me->dev, "error initializing serializer: %d\n", ret);
+
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_I2CLOCACK, 1);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_I2CSLVSH, me->of_cfg_settings[CFG_I2C_SLVSH]);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_I2CMSTBT, me->of_cfg_settings[CFG_I2C_MSTBT]);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_I2CSLVTO, 2);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_DBL, 1);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_DRS, MAX927X_DRS_HIGH);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_BWS, MAX927X_BWS_24BIT);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_ES, MAX927X_ES_RISING);
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_HVEN, 1);
+
+	/*
+	 * Changing EDC on the remote causes loss of communication
+	 * until we update the local side to match, so update both,
+	 * then re-update the remote to test that the change was made.
+	 */
+	if (ret == 0) {
+		ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
+		des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
+		ret = ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
+	}
+	if (ret < 0) {
+		dev_err(me->dev, "error initializing serializer: %d\n", ret);
+		power_down_remote(me);
+		return ret;
+	}
+
+	/*
+	 * Don't care about I2C retries during setup, so clear the counts
+	 */
+	atomic_xchg(&me->i2c_error_count, 0);
+	for (i = 0; i < ARRAY_SIZE(me->i2c_retry_counts); i++)
+		atomic_xchg(&me->i2c_retry_counts[i], 0);
+
+	ret = des_update(me, MAX9272_DBL, 1);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_DRS, MAX927X_DRS_HIGH);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_BWS, MAX927X_BWS_24BIT);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_ES, MAX927X_ES_FALLING);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_HVTRACK, 0);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_HVEN, 1);
+	if (ret < 0) {
+		dev_err(me->dev, "error finalizing deserializer config: %d\n", ret);
+		power_down_remote(me);
+		return ret;
+	}
+
+	/*
+	 * Don't need automatic I2C acks any longer
+	 */
+	return des_update(me, MAX9271_I2CLOCACK, 0);
+}
+
+/*
+ * GPIO support - only available after we have initialized
+ * the control link, as some GPIOs are on the remote device.
+ *
+ * 8 GPIOs provided (but GPIO 0 is the special ser-GPO/des-GPI
+ * and should not be used - not implemented).
+ * GPIOs 1-5 are on the serializer, GPIOs 6 and 7 are on the
+ * deserializer (numbered 0 & 1 in the MAX9272 data sheet).
+ *
+ * Per the data sheet, all of the GPIOs are open drain and
+ * should be set when used for input.
+ */
+
+static int gpio_dir_in(struct gpio_chip *gc, unsigned num)
+{
+	struct max927x *me = container_of(gc, struct max927x, gc);
+	int ret;
+
+	if (num < 1 || num > 7)
+		return -EINVAL;
+
+	if (num < 6) {
+		u8 gpio_en, gpio_set;
+		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
+		if (ret < 0)
+			return ret;
+		ret = ser_read(me, MAX9271_GPIO_SET, &gpio_set);
+		if (ret < 0)
+			return ret;
+		gpio_set |= (1 << num);
+		gpio_en |= (1 << num);
+		ret = ser_update(me, MAX9271_GPIO_SET, gpio_set);
+		if (ret == 0)
+			ret = ser_update(me, MAX9271_GPIO_EN, gpio_en);
+		if (ret == 0) {
+			atomic_xchg(&me->ser_gpios_set, gpio_set);
+			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
+		}
+	} else {
+		max9272_setting_t which = (num == 6 ? MAX9272_GPIO0_SET : MAX9272_GPIO1_SET);
+		ret = des_update(me, which, 1);
+	}
+
+	return ret;
+}
+
+static int gpio_dir_out(struct gpio_chip *gc, unsigned num, int outval)
+{
+	struct max927x *me = container_of(gc, struct max927x, gc);
+	int ret;
+
+	if (num < 1 || num > 7)
+		return -EINVAL;
+
+	if (num < 6) {
+		u8 gpio_en, gpio_set;
+		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
+		if (ret < 0)
+			return ret;
+		ret = ser_read(me, MAX9271_GPIO_SET, &gpio_set);
+		if (ret < 0)
+			return ret;
+		if (outval)
+			gpio_set |= (1 << num);
+		else
+			gpio_set &= ~(1 << num);
+		gpio_en |= (1 << num);
+		ret = ser_update(me, MAX9271_GPIO_SET, gpio_set);
+		if (ret == 0)
+			ret = ser_update(me, MAX9271_GPIO_EN, gpio_en);
+		if (ret == 0) {
+			atomic_xchg(&me->ser_gpios_set, gpio_set);
+			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
+		}
+	} else {
+		max9272_setting_t which = (num == 6 ? MAX9272_GPIO0_SET : MAX9272_GPIO1_SET);
+		ret = des_update(me, which, (outval ? 1 : 0));
+	}
+
+	return ret;
+}
+
+static void gpio_set(struct gpio_chip *gc, unsigned num, int setval)
+{
+	struct max927x *me = container_of(gc, struct max927x, gc);
+	int ret;
+
+	if (num < 1 || num > 7) {
+		dev_err(me->dev, "invalid GPIO index: %u\n", num);
+		return;
+	}
+
+	if (num < 6) {
+		u8 gpio_en, gpio_set;
+		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
+		if (ret == 0) {
+			if ((gpio_en & (1 << num)) == 0)
+				ret = -EINVAL;
+		}
+		if (ret == 0) {
+			ret = ser_read(me, MAX9271_GPIO_SET, &gpio_set);
+			if (ret == 0) {
+				if (setval)
+					gpio_set |= (1 << num);
+				else
+					gpio_set &= ~(1<<num);
+				ret = ser_update(me, MAX9271_GPIO_SET, gpio_set);
+				if (ret == 0)
+					atomic_xchg(&me->ser_gpios_set, gpio_set);
+			}
+		}
+	} else {
+		max9272_setting_t which = (num == 6 ? MAX9272_GPIO0_SET : MAX9272_GPIO1_SET);
+		ret = des_update(me, which, (setval ? 1 : 0));
+	}
+
+	if (ret < 0)
+		dev_err(me->dev, "error setting GPIO %u: %d\n", num, ret);
+}
+
+static int gpio_read(struct gpio_chip *gc, unsigned num)
+{
+	struct max927x *me = container_of(gc, struct max927x, gc);
+	int ret;
+	u8 gpio_val;
+
+	if (num < 1 || num > 7)
+		return -EINVAL;
+
+	if (num < 6) {
+		u8 gpio_en;
+		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
+		if (ret < 0)
+			return ret;
+		if ((gpio_en & (1 << num)) == 0)
+			return -EINVAL;
+		ret = ser_read(me, MAX9271_GPIO_READ, &gpio_val);
+		if (ret < 0)
+			return ret;
+		ret = (gpio_val & (1 << num)) ? 1 : 0;
+	} else {
+		max9272_setting_t which = (num == 6 ? MAX9272_GPIO0_READ : MAX9272_GPIO1_READ);
+		ret = des_read(me, which, &gpio_val);
+		if (ret == 0)
+			ret = gpio_val;
+	}
+
+	return ret;
+}
+
+static int setup_gpiochip(struct max927x *me)
+{
+	struct gpio_chip *gc = &me->gc;
+
+	gc->direction_input = gpio_dir_in;
+	gc->direction_output = gpio_dir_out;
+	gc->get = gpio_read;
+	gc->set = gpio_set;
+	gc->can_sleep = 1;
+	gc->ngpio = 8;
+	gc->label = me->local->name;
+	gc->dev = &me->local->dev;
+	gc->owner = THIS_MODULE;
+	gc->base = -1;
+	return gpiochip_add(gc);
+}
+
+/*
+ * Enabling or disabling the serial link for data should
+ * be sufficient for stream on/off control.
+ * XXX - May want to see about also enabling
+ * and disabling outputs from the deserializer.
+ */
+static int stream_control(struct v4l2_subdev *sd, int enable)
+{
+	struct max927x *me = to_max927x_from_v4l2_subdev(sd);
+	int ret;
+	u8 newval = (enable ? 1 : 0);
+
+	ret = ser_update(me, MAX9271_SEREN, newval);
+	if (ret == 0) {
+		u8 val = 1 - newval;
+		int i;
+		for (i = 0; i < 3; i++) {
+			ret = des_read(me, MAX9272_LOCKED, &val);
+			if (ret == 0 && val == newval)
+				break;
+			msleep(5);
+		}
+		if (ret == 0 && val != newval) {
+			dev_err(me->dev, "video lock status did not change\n");
+			ret = -EBUSY;
+		}
+	}
+	return ret;
+}
+
+/*
+ * More device attributes, for compatibility with old driver
+ */
+static ssize_t clear_i2c_retry_counts(struct device *dev,
+				      struct device_attribute *attr,
+				      const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	int i;
+	for (i = 0; i < ARRAY_SIZE(me->i2c_retry_counts); i++)
+		atomic_xchg(&me->i2c_retry_counts[i], 0);
 	return count;
 }
 
-static ssize_t max927x_operational_show(struct device *dev,
-                                  struct device_attribute *attr, char *buf)
+static ssize_t show_i2c_retry_counts(struct device *dev, struct device_attribute *attr, char *buf)
 {
-	struct max927x_data* data = to_max927x_from_dev(dev);
-	return sprintf(buf, "%d\n",data->operational);
-}
-static DEVICE_ATTR(operational, 0666, (void *)max927x_operational_show, (void *)max927x_operational_store);
+	struct max927x *me = to_max927x_from_dev(dev);
+	ssize_t count = 0;
+	int i;
 
-static ssize_t max927x_error_count_show(struct device *dev,
-                                  struct device_attribute *attr, char *buf)
+	for (i = 0; i < ARRAY_SIZE(me->i2c_retry_counts); i++)
+		count += scnprintf(buf+count, PAGE_SIZE-count, "%u:%u\n",
+				   i, atomic_read(&me->i2c_retry_counts[i]));
+	return count;
+}
+static DEVICE_ATTR(i2c_retry_counts, 0644, show_i2c_retry_counts, clear_i2c_retry_counts);
+
+static ssize_t set_operational(struct device *dev, struct device_attribute *attr,
+			       const char *buf, size_t count)
 {
-       struct max927x_data* data = to_max927x_from_dev(dev);
-       return sprintf(buf, "%d\n",data->error_count);
-}
-static DEVICE_ATTR(i2c_error_count, 0444, (void *)max927x_error_count_show, NULL);
+	struct max927x *me = to_max927x_from_dev(dev);
+	unsigned int enable;
+	int ret;
 
-static struct attribute *init_attributes[] = {
+	ret = kstrtouint(buf, 10, &enable);
+	if (ret < 0)
+		return ret;
+	ret = stream_control(&me->subdev, enable);
+	return (ret < 0 ? ret : count);
+}
+
+static ssize_t show_operational(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	u8 val;
+	int ret;
+
+	ret = des_read(me, MAX9272_LOCKED, &val);
+	if (ret < 0)
+		return ret;
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+}
+static DEVICE_ATTR(operational, 0666, show_operational, set_operational);
+
+static ssize_t show_corrected_errs(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	u8 val;
+	int ret;
+
+	ret = des_read(me, MAX9272_CORRERR, &val);
+	if (ret < 0)
+		return ret;
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+}
+static DEVICE_ATTR(corrected_link_errors, 0444, show_corrected_errs, NULL);
+
+static ssize_t show_detected_errs(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	u8 val;
+	int ret;
+
+	ret = des_read(me, MAX9272_DETERR, &val);
+	if (ret < 0)
+		return ret;
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+}
+static DEVICE_ATTR(detected_link_errors, 0444, show_detected_errs, NULL);
+
+static ssize_t show_remote_i2c_errs(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", atomic_read(&me->i2c_error_count));
+}
+static DEVICE_ATTR(i2c_error_count, 0444, show_remote_i2c_errs, NULL);
+
+
+static struct attribute *misc_attributes[] = {
+	&dev_attr_i2c_retry_counts.attr,
 	&dev_attr_operational.attr,
+	&dev_attr_corrected_link_errors.attr,
+	&dev_attr_detected_link_errors.attr,
 	&dev_attr_i2c_error_count.attr,
-	&dev_attr_magic_rev_trf.attr,
-	&dev_attr_magic_rev_amp.attr,
-	&dev_attr_magic_rev_dig_flt.attr,
-	&dev_attr_magic_rev_logain.attr,
-	&dev_attr_magic_rev_higain.attr,
-	&dev_attr_magic_rev_hibw.attr,
-	&dev_attr_magic_rev_hivth.attr,
-	&dev_attr_i2c_slvsh.attr,
-	&dev_attr_i2c_mstbt.attr,
-	&dev_attr_cmllvl.attr,
-	&dev_attr_preemp.attr,
-	&dev_attr_spread.attr,
-	&dev_attr_max9272_i2c_test.attr,
-	&dev_attr_max9272_regs.attr,
 	NULL,
 };
 
-static const struct attribute_group init_attr_group = {
-	.attrs	= init_attributes,
+static const struct attribute_group misc_attr_group = {
+	.attrs = misc_attributes,
 };
 
-static const struct v4l2_subdev_video_ops max927x_subdev_video_ops = {
-	.s_stream = max927x_video_s_stream,
+/*
+ * I2C adapter data
+ */
+static u32 remote_i2c_functionality(struct i2c_adapter *adap) {
+	return (I2C_FUNC_I2C | I2C_FUNC_SMBUS_EMUL);
 };
 
-static const struct v4l2_subdev_ops max927x_subdev_ops = {
-	.video	= &max927x_subdev_video_ops,
+static struct i2c_algorithm remote_i2c_algo = {
+	.master_xfer = remote_i2c_xfer,
+	.functionality = remote_i2c_functionality,
 };
 
+/*
+ * All attribute groups collected here
+ */
+static const struct attribute_group *attr_groups[] = {
+	&properties_attr_group,
+	&misc_attr_group,
+	NULL,
+};
 
-static void _max927x_subdev_init(struct max927x_data* data)
-{
-	struct i2c_client *client = data->master;
-	struct device_driver *drv = client->dev.driver;
-	struct v4l2_subdev *subdev = &data->subdev;
-	snprintf(subdev->name, sizeof(subdev->name), "%s %d-%04x",
-		drv->name, i2c_adapter_id(client->adapter),
-		client->addr);
-	subdev->name[sizeof(subdev->name)-1] = 0;
-}
+/*
+ * V4L2 supported operations
+ */
+static const struct v4l2_subdev_video_ops subdev_video_ops = {
+	.s_stream = stream_control,
+};
 
-static void _max927x_subdev_clear(struct max927x_data* data)
-{
-	struct v4l2_subdev *subdev = &data->subdev;
-	subdev->name[0] = 0;
-}
+static const struct v4l2_subdev_ops subdev_ops = {
+	.video = &subdev_video_ops,
+};
 
+/*
+ * Driver initialization and shutdown
+ */
 static int max927x_probe(struct i2c_client *client,
-			const struct i2c_device_id *id)
+			 const struct i2c_device_id *id)
 {
 	struct device *dev = &client->dev;
-	struct device_driver *drv = dev->driver;
-	struct device_node	*np = dev->of_node;
-	struct max927x_data* data;
-	struct gpio_chip *gc;
-	bool deserializer_master;
-	u8 client_id;
-	struct v4l2_subdev *subdev;
-	int ret;
-
-	dev_dbg(dev, "max927x probe, drv=%p", drv);
-
-	if (!drv)
-		return -EPROBE_DEFER;
+	struct device_node *np = dev->of_node;
+	struct device_node *child;
+	struct max927x *me;
+	u32 remote_reg;
+	u8 chipid = 0;
+	int i, ret;
 
 	ret = device_reset(dev);
 	if (ret == -ENODEV)
 		return -EPROBE_DEFER;
-
 	if (ret < 0)
-		dev_dbg(dev, "device_reset returned %d", ret);
-
+		dev_dbg(dev, "device_reset returned %d\n", ret);
 	msleep(5);
 
-	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
-	if(!data)
+	/* Chip ID is in same register for both 9271 & 9272 */
+	ret = i2c_reg_read(client, max9271_settings[MAX9271_ID].reg, &chipid);
+	if (ret < 0 || (chipid != MAX9271_CHIPID &&
+			chipid != MAX9272_CHIPID)) {
+		dev_err(dev, "chip id read failed, ret=%d, id=0x%x\n",
+			ret, chipid);
+		return -ENODEV;
+	}
+	dev_dbg(dev, "found %s\n", (chipid == MAX9271_CHIPID ? "max9271" : "max9272"));
+
+	me = devm_kzalloc(dev, sizeof(*me), GFP_KERNEL);
+	if (me == NULL)
 		return -ENOMEM;
 
+	dev_dbg(dev, "private data address: %p\n", me);
 
-	ret = of_property_read_u32(np,"slave-on-delay-ms", &data->slave_on_ms);
-	if(ret < 0) {
-		dev_err(dev,"Missing %s\n","slave-on-delay-ms");
-		return ret;
+	atomic_set(&me->i2c_error_count, 0);
+	for (i = 0; i < ARRAY_SIZE(me->i2c_retry_counts); i++)
+		atomic_set(&me->i2c_retry_counts[i], 0);
+	atomic_set(&me->ser_gpios_enabled, 0);
+	atomic_set(&me->ser_gpios_set, 0);
+
+	me->dev = dev;
+	me->local = client;
+	me->parent = to_i2c_adapter(client->dev.parent);
+	snprintf(me->adap.name, sizeof(me->adap.name), "max927x-%d", i2c_adapter_id(me->parent));
+	snprintf(me->dummy_adapter.name, sizeof(me->adap.name), "max927x-d-%d",
+		 i2c_adapter_id(me->parent));
+	me->dummy_adapter.owner = me->adap.owner = THIS_MODULE;
+	me->dummy_adapter.algo = me->adap.algo = &remote_i2c_algo;
+	me->dummy_adapter.algo_data = me->adap.algo_data = me;
+	me->dummy_adapter.dev.parent = me->adap.dev.parent = &me->parent->dev;
+	me->dummy_adapter.class = me->adap.class = 0;
+	ret = of_property_read_u32(np, "i2c-nr", &me->adap.nr);
+	if (ret < 0)
+		dev_err(dev, "could not read i2c-nr property\n");
+
+	ret = of_property_read_u32(np, "remote-reg", &remote_reg);
+	if (ret < 0) {
+		dev_warn(dev, "missing remote-reg property, assuming default\n");
+		remote_reg = (chipid == MAX9271_CHIPID ? 0x48 : 0x40);
+	}
+	ret = of_property_read_u32(np, "dummy-i2c-nr", &me->dummy_adapter.nr);
+	if (ret < 0) {
+		me->dummy_adapter.nr = me->adap.nr + 5;
+		dev_warn(dev, "could not read dummy-i2c-nr property, using default: %d\n",
+			 me->dummy_adapter.nr);
 	}
 
-	ret = of_property_read_u32(np,"slave-off-delay-ms", &data->slave_off_ms);
-	if(ret < 0) {
-		dev_err(dev,"Missing %s\n","slave-off-delay-ms");
-		return ret;
-	}
-
-	data->slave_supply = devm_regulator_get(dev, "slave");
-	if(!data->slave_supply) {
-		dev_err(dev,"Missing slave supply\n");
-		return ret;
-	}
-
-	ret = _max927x_of_get_config(data,np,0);
-	if(ret < 0) {
-		dev_err(dev,"Missing or incorrect cfg-0 property\n");
-		return ret;
-	}
-
-	data->master = client;
-	data->dev = dev;
-
-	mutex_init(&data->data_lock);
-	mutex_init(&data->gpio_lock);
-
-	gc = &data->gpio_chip;
-	gc->direction_output = max9721_gpio_direction_output;
-	gc->direction_input = max9721_gpio_direction_input;
-	gc->get = max9271_gpio_get_value;
-	gc->set = max9271_gpio_set_value;
-	gc->can_sleep = 1;
-	gc->ngpio = 8;
-	gc->label = client->name;
-	gc->dev = &client->dev;
-	gc->owner = THIS_MODULE;
-	gc->base = -1;
-	ret = gpiochip_add(gc);
-	if (ret) {
-		dev_err(dev,"Failed to add gpio\n");
-		return ret;
-	}
-
-	ret = _max927x_read_reg(client, 0x1e, &client_id, NULL);
-	if(ret < 0) {
-		dev_err(dev,"Missing client\n");
-		return ret;
-	}
-	switch(client_id) {
-	case 0x09:
-		deserializer_master = false;
-		break;
-	case 0x0A:
-		deserializer_master = true;
-		break;
-	default:
-		dev_err(dev,"Unknown client id 0x%02x", (unsigned)client_id);
-		return -ENODEV;
-	};
-
-	data->deserializer_master = deserializer_master;
-
-	ret = _max927x_slave_power_on(data);
-	if(ret < 0)
-		return ret;
-	/*Not using v4l2_i2c_subdev_init because we don't want i2c devices to be
-	 * automatically removed
+	/*
+	 * Start with the remote powered down, if we control it
 	 */
-	subdev = &data->subdev;
-	v4l2_subdev_init(subdev, &max927x_subdev_ops);
-	subdev->owner = to_i2c_driver(drv)->driver.owner;
-	v4l2_set_subdevdata(subdev, client);
-	i2c_set_clientdata(client, subdev);
+	me->remote_power = devm_regulator_get(dev, "slave");
+	of_property_read_u32(np, "slave-on-delay-ms", &me->power_on_mdelay);
+	of_property_read_u32(np, "slave-off-delay-ms", &me->power_off_mdelay);
 
-	ret = sysfs_create_group(&dev->kobj, &init_attr_group);
-	if(ret < 0) {
-	   dev_err(dev,"Could not create sysfs file.\n");
-	   return ret;
-   }
+	for_each_child_of_node(np, child) {
+		if (of_property_read_bool(child, "i2c")) {
+			me->adap.dev.of_node = child;
+			break;
+		}
+	}
 
-	return 0;
+	/*
+	 * Register settings from the device tree
+	 */
+	ret = of_property_read_u32_array(np, "cfg-0", me->of_cfg_settings, NUM_CFG_PROPS);
+	if (ret < 0) {
+		dev_err(dev, "missing required cfg-0 property\n");
+		return -EINVAL;
+	}
+	for (i = 0; i < NUM_CFG_PROPS; i++) {
+		if (me->of_cfg_settings[i] >= (1 << properties[i].setting->width)) {
+			dev_err(dev, "cfg setting for %s too large\n",
+				properties[i].dev_attr.attr.name);
+			return -EINVAL;
+		}
+	}
+
+	/*
+	 * Create a separate i2c_adapter just for addressing the
+	 * remote end of the link, to prevent premature probing
+	 * of other devices that might be beyond
+	 */
+	ret = i2c_add_numbered_adapter(&me->dummy_adapter);
+	if (ret < 0) {
+		dev_err(dev, "failed to register dummy I2C adapter: %d\n", ret);
+		return ret;
+	}
+	dev_dbg(dev, "dummy adapter registered, number %d\n", me->dummy_adapter.nr);
+	me->remote = i2c_new_dummy(&me->dummy_adapter, remote_reg);
+	if (me->remote == NULL) {
+		dev_err(dev, "could not create I2C client for remote\n");
+		i2c_del_adapter(&me->dummy_adapter);
+		return -EINVAL;
+	}
+
+	if (chipid == MAX9271_CHIPID) {
+		me->ser = me->local;
+		me->des = me->remote;
+		me->ctrl_link_init = ser_control_init;
+	} else {
+		me->des = me->local;
+		me->ser = me->remote;
+		me->ctrl_link_init = des_control_init;
+	}
+
+	ret = me->ctrl_link_init(me);
+	if (ret < 0) {
+		dev_err(dev, "control link initialization failed\n");
+		i2c_del_adapter(&me->dummy_adapter);
+		return ret;
+	}
+
+	/*
+	 * Now that the serializer/deserializer pair is fully up
+	 * and running, we can enable the GPIOs and I2C communication
+	 * to the devices that may be attached to the other side of
+	 * the link.
+	 */
+	ret = setup_gpiochip(me);
+	if (ret < 0) {
+		dev_err(dev, "GPIO setup failed\n");
+		power_down_remote(me);
+		i2c_del_adapter(&me->dummy_adapter);
+		return ret;
+	}
+
+	ret = i2c_add_numbered_adapter(&me->adap);
+	if (ret < 0) {
+		int gcret = gpiochip_remove(&me->gc);
+		dev_err(dev, "failed to register I2C adapter: %d\n", ret);
+		if (gcret < 0)
+			dev_warn(dev, "error %d removing gpiochip\n", ret);
+		i2c_del_adapter(&me->dummy_adapter);
+		return ret;
+	}
+
+	/*
+	 * And now set up our V4L2 subdevice.  The
+	 * mxc_subdev_pipeline driver makes assumptions
+	 * about the subdevdata and I2C client data,
+	 * so set that up here.
+	 */
+	v4l2_subdev_init(&me->subdev, &subdev_ops);
+	me->subdev.owner = THIS_MODULE;
+	v4l2_set_subdevdata(&me->subdev, client);
+	i2c_set_clientdata(client, &me->subdev);	
+	scnprintf(me->subdev.name, sizeof(me->subdev.name), "%s %d-%04x",
+		  dev->driver->name, i2c_adapter_id(client->adapter), client->addr);
+
+	ret = sysfs_create_groups(&dev->kobj, attr_groups);
+	if (ret < 0)
+		dev_err(dev, "could not create sysfs groups\n");
+
+	return ret;
 }
 
 static int max927x_remove(struct i2c_client *client)
 {
-	int ret = 0;
-	struct max927x_data* data = to_max927x_from_i2c(client);
+	struct max927x *me = to_max927x_from_v4l2_subdev(i2c_get_clientdata(client));
+	int ret;
 
-	dev_dbg(data->dev, "in max927x_remove");
+	stream_control(&me->subdev, 0);
+	sysfs_remove_groups(&me->dev->kobj, attr_groups);
+	i2c_del_adapter(&me->adap);
+	ret = gpiochip_remove(&me->gc);
+	if (ret < 0)
+		dev_err(me->dev, "error %d removing gpiochip\n", ret);
+	i2c_del_adapter(&me->dummy_adapter);
+	power_down_remote(me);
 
-	if(data->subdev.v4l2_dev != NULL) {
-		dev_err(data->dev,"v4l2 subdev still in use; please shut down %s.\n",
-				data->subdev.v4l2_dev->name);
-		return -EBUSY;
-	}
-
-	if (data->operational)
-		ret = _max927x_remove(data);
-
-	if(ret < 0)
-		return ret;
-
-	_max927x_slave_power_off(data);
-
-	ret = gpiochip_remove(&data->gpio_chip);
-	if (ret < 0) {
-		dev_err(data->dev, "gpiochip_remove failed, %d\n", ret);
-		return ret;
-	}
-
-	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
 	return 0;
 }
 
@@ -1744,10 +1250,10 @@ MODULE_DEVICE_TABLE(i2c, max927x_i2c_id);
 
 static struct i2c_driver max927x_driver = {
 	.driver = {
-		   .name = "max927x",
-		   .owner = THIS_MODULE,
-		   .of_match_table = of_match_ptr(max927x_dt_ids),
-		   },
+		.name = "max927x",
+		.owner = THIS_MODULE,
+		.of_match_table = of_match_ptr(max927x_dt_ids),
+	},
 	.probe = max927x_probe,
 	.remove = max927x_remove,
 	.id_table = max927x_i2c_id,
@@ -1757,6 +1263,7 @@ module_i2c_driver(max927x_driver);
 
 MODULE_AUTHOR("Leopard Imaging, Inc.");
 MODULE_AUTHOR("Sarah Newman <sarah.newman@computer.org>");
+MODULE_AUTHOR("Matt Madison <mmadison@sensity.com>");
 MODULE_DESCRIPTION("max927x Driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION("1.0");
