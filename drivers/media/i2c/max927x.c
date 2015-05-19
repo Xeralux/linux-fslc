@@ -139,6 +139,7 @@ struct max927x {
 	struct i2c_client *ser, *des;
 	link_init_fn ctrl_link_init;
 	struct regulator *remote_power;
+	atomic_t remote_power_enabled;
 	u32 power_on_mdelay, power_off_mdelay;
 	atomic_t ser_gpios_enabled;
 	atomic_t ser_gpios_set;
@@ -329,19 +330,23 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 static void power_up_remote(struct max927x *me)
 {
 	int ret;
-	if (me->remote_power) {
-		ret = regulator_enable(me->remote_power);
-		dev_dbg(me->dev, "powering up remote %s (%d), now waiting %u msec\n",
-			(ret < 0 ? "failed" : "succeeded"), ret, me->power_on_mdelay);
-		if (me->power_on_mdelay != 0)
-			msleep(me->power_on_mdelay);
-	}
+	if (me->remote_power == NULL)
+		return;
+	ret = regulator_enable(me->remote_power);
+	dev_dbg(me->dev, "powering up remote %s (%d), now waiting %u msec\n",
+		(ret < 0 ? "failed" : "succeeded"), ret, me->power_on_mdelay);
+	if (me->power_on_mdelay != 0)
+		msleep(me->power_on_mdelay);
+	atomic_xchg(&me->remote_power_enabled, 1);
 }
 
 static void power_down_remote(struct max927x *me)
 {
 	int ret;
-	if (me->remote_power) {
+	if (me->remote_power == NULL)
+		return;
+
+	if (atomic_cmpxchg(&me->remote_power_enabled, 1, 0)) {
 		ret = regulator_disable(me->remote_power);
 		if (ret < 0)
 			dev_dbg(me->dev, "powering down remote failed: %d\n", ret);
@@ -450,6 +455,13 @@ static int ser_control_init(struct max927x *me)
 	int i, ret;
 
 	/*
+	 * Reset so we're starting from a known state
+	 */
+	device_reset(me->dev);
+	msleep(5);
+	power_down_remote(me);
+
+	/*
 	 * Start by disabling SEREN and enabling CLINKEN in one register access.
 	 */
 	ret = i2c_reg_write(me->ser, 0x04, 0x47);
@@ -477,6 +489,8 @@ static int ser_control_init(struct max927x *me)
 		ret = ser_update(me, MAX9271_INVHS, 0);
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_GPIO_EN, atomic_read(&me->ser_gpios_enabled));
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_GPIO_SET, 0);
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_GPIO_SET, atomic_read(&me->ser_gpios_set));
 	if (ret < 0)
@@ -574,6 +588,12 @@ static int ser_control_init(struct max927x *me)
 static int des_control_init(struct max927x *me)
 {
 	int i, ret;
+	/*
+	 * Reset so we're starting from a known state
+	 */
+	device_reset(me->dev);
+	msleep(5);
+	power_down_remote(me);
 
 	/*
 	 * According to the comments in the old driver, these settings (which are
@@ -640,6 +660,8 @@ static int des_control_init(struct max927x *me)
 		ret = ser_update(me, MAX9271_INVHS, 0);
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_GPIO_EN, atomic_read(&me->ser_gpios_enabled));
+	if (ret == 0)
+		ret = ser_update(me, MAX9271_GPIO_SET, 0);
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_GPIO_SET, atomic_read(&me->ser_gpios_set));
 	if (ret < 0)
@@ -961,6 +983,20 @@ static ssize_t show_operational(struct device *dev, struct device_attribute *att
 }
 static DEVICE_ATTR(operational, 0666, show_operational, set_operational);
 
+static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
+			const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	int ret;
+
+	dev_dbg(dev, "device reset requested\n");
+
+	ret = me->ctrl_link_init(me);
+
+	return (ret < 0 ? ret : count);
+}
+static DEVICE_ATTR(reset, 0222, NULL, do_reset);
+
 static ssize_t show_corrected_errs(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct max927x *me = to_max927x_from_dev(dev);
@@ -998,6 +1034,7 @@ static DEVICE_ATTR(i2c_error_count, 0444, show_remote_i2c_errs, NULL);
 static struct attribute *misc_attributes[] = {
 	&dev_attr_i2c_retry_counts.attr,
 	&dev_attr_operational.attr,
+	&dev_attr_reset.attr,
 	&dev_attr_corrected_link_errors.attr,
 	&dev_attr_detected_link_errors.attr,
 	&dev_attr_i2c_error_count.attr,
@@ -1082,6 +1119,7 @@ static int max927x_probe(struct i2c_client *client,
 		atomic_set(&me->i2c_retry_counts[i], 0);
 	atomic_set(&me->ser_gpios_enabled, 0);
 	atomic_set(&me->ser_gpios_set, 0);
+	atomic_set(&me->remote_power_enabled, 0);
 
 	me->dev = dev;
 	me->local = client;
