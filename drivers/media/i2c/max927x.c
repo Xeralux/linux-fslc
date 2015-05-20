@@ -73,9 +73,10 @@ static const struct max927x_setting max9272_settings[MAX9272_NUM_SETTINGS] = { M
 
 /*
  * Device tree and sysfs-accessible configuration controls, named
- * for backward compatibility with old driver.
+ * for backward compatibility with old driver.  ORDER IS IMPORTANT
+ * to maintain that compatibility.
  *
- * MAX927x_PROPERTY(<name>, <attribute-name>, <setting-name>
+ * MAX927x_PROPERTY(<name>, <attribute-name>, <setting-name>)
  */
 #define MAX9272_PROPERTIES \
 	MAX9272_PROPERTY(REV_AMP, magic_rev_amp, REV_AMP) \
@@ -141,6 +142,8 @@ struct max927x {
 	struct regulator *remote_power;
 	atomic_t remote_power_enabled;
 	u32 power_on_mdelay, power_off_mdelay;
+	bool remote_quirk_enabled;
+	bool skip_remote_checks;
 	atomic_t ser_gpios_enabled;
 	atomic_t ser_gpios_set;
 	struct gpio_chip gc;
@@ -588,6 +591,7 @@ static int ser_control_init(struct max927x *me)
 static int des_control_init(struct max927x *me)
 {
 	int i, ret;
+	bool ignore_errors = me->skip_remote_checks;
 	/*
 	 * Reset so we're starting from a known state
 	 */
@@ -623,7 +627,6 @@ static int des_control_init(struct max927x *me)
 		dev_err(me->dev, "deserializer I2C setup error: %d\n", ret);
 
 	power_up_remote(me);
-
 	/*
 	 * Disable SEREN and enable CLINKEN on the serializer in a single register
 	 * write.  If we can read back the setting, we know the control channel is good.
@@ -633,14 +636,16 @@ static int des_control_init(struct max927x *me)
 		dev_dbg(me->dev, "setting up control link on serializer (attempt #%d)\n", i);
 		ret = i2c_reg_write(me->ser, 0x04, 0x47);
 		if (ret == 0) {
-			u8 val;
+			u8 val = 0;
+			msleep(10);
 			ret = i2c_reg_read(me->ser, 0x04, &val);
 			if (ret == 0 && val == 0x47)
 				break;
 		}
-		msleep(5);
 	}
-	if (ret < 0) {
+	if (ret == 0)
+		me->skip_remote_checks = ignore_errors = false;
+	else if (!ignore_errors) {
 		dev_err(me->dev, "could not initialize control link in serializer, ret=%d\n", ret);
 		return ret;
 	}
@@ -649,7 +654,7 @@ static int des_control_init(struct max927x *me)
 		property_id_t which = ser_init_properties[i];
 		ret = ser_update(me, properties[which].setting->idx,
 				 me->of_cfg_settings[which]);
-		if (ret < 0) {
+		if (ret < 0 && !ignore_errors) {
 			dev_err(me->dev, "could not set initial value for %s\n",
 				properties[which].dev_attr.attr.name);
 		}
@@ -664,7 +669,7 @@ static int des_control_init(struct max927x *me)
 		ret = ser_update(me, MAX9271_GPIO_SET, 0);
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_GPIO_SET, atomic_read(&me->ser_gpios_set));
-	if (ret < 0)
+	if (ret < 0 && !ignore_errors)
 		dev_err(me->dev, "error initializing serializer: %d\n", ret);
 
 	if (ret == 0)
@@ -696,7 +701,7 @@ static int des_control_init(struct max927x *me)
 		des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
 		ret = ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
 	}
-	if (ret < 0) {
+	if (ret < 0 && !ignore_errors) {
 		dev_err(me->dev, "error initializing serializer: %d\n", ret);
 		power_down_remote(me);
 		return ret;
@@ -729,11 +734,11 @@ static int des_control_init(struct max927x *me)
 	/*
 	 * Don't need automatic I2C acks any longer
 	 */
-	return des_update(me, MAX9271_I2CLOCACK, 0);
+	return (ignore_errors ? 0 : des_update(me, MAX9271_I2CLOCACK, 0));
 }
 
 /*
- * GPIO support - only available after we have initialized
+ * GPIO support - normally only available after we have initialized
  * the control link, as some GPIOs are on the remote device.
  *
  * 8 GPIOs provided (but GPIO 0 is the special ser-GPO/des-GPI
@@ -743,6 +748,17 @@ static int des_control_init(struct max927x *me)
  *
  * Per the data sheet, all of the GPIOs are open drain and
  * should be set when used for input.
+ *
+ * The serializer's GPIO state is tracked in our private data
+ * structure and re-played into the hardware when we reset the
+ * control link (toggling the GPIOs off/on).
+ *
+ * When the ignore-remote-errors-on-init quirk is enabled, we
+ * fake success returns and just track the requested changes
+ * in our data structure so that we can set the GPIOs up
+ * when we eventually get to talk to the serializer.
+ *
+ * XXX - should do similar tracking for deserializer
  */
 
 static int gpio_dir_in(struct gpio_chip *gc, unsigned num)
@@ -755,6 +771,18 @@ static int gpio_dir_in(struct gpio_chip *gc, unsigned num)
 
 	if (num < 6) {
 		u8 gpio_en, gpio_set;
+
+		if (me->skip_remote_checks && me->ser == me->remote) {
+			gpio_en = atomic_read(&me->ser_gpios_enabled) | (1 << num);
+			i2c_reg_write(me->ser, 0xE, gpio_en);
+			gpio_set = atomic_read(&me->ser_gpios_set) | (1 << num);
+			i2c_reg_write(me->ser, 0xF, gpio_set);
+			atomic_xchg(&me->ser_gpios_set, gpio_set);
+			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
+			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
+				__func__, num);
+			return 0;
+		}
 		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
 		if (ret < 0)
 			return ret;
@@ -788,6 +816,17 @@ static int gpio_dir_out(struct gpio_chip *gc, unsigned num, int outval)
 
 	if (num < 6) {
 		u8 gpio_en, gpio_set;
+		if (me->skip_remote_checks && me->ser == me->remote) {
+			gpio_en = atomic_read(&me->ser_gpios_enabled) | (1 << num);
+			i2c_reg_write(me->ser, 0xE, gpio_en);
+			gpio_set = atomic_read(&me->ser_gpios_set) &= ~(1 << num);
+			i2c_reg_write(me->ser, 0xF, gpio_set);
+			atomic_xchg(&me->ser_gpios_set, gpio_set);
+			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
+			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
+				__func__, num);
+			return 0;
+		}
 		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
 		if (ret < 0)
 			return ret;
@@ -826,6 +865,14 @@ static void gpio_set(struct gpio_chip *gc, unsigned num, int setval)
 
 	if (num < 6) {
 		u8 gpio_en, gpio_set;
+		if (me->skip_remote_checks && me->ser == me->remote) {
+			gpio_set = atomic_read(&me->ser_gpios_set) | (1 << num);
+			i2c_reg_write(me->ser, 0xF, gpio_set);
+			atomic_xchg(&me->ser_gpios_set, gpio_set);
+			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
+				__func__, num);
+			return;
+		}
 		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
 		if (ret == 0) {
 			if ((gpio_en & (1 << num)) == 0)
@@ -863,6 +910,13 @@ static int gpio_read(struct gpio_chip *gc, unsigned num)
 
 	if (num < 6) {
 		u8 gpio_en;
+		if (me->skip_remote_checks && me->ser == me->remote) {
+			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
+				__func__, num);
+			if ((atomic_read(&me->ser_gpios_enabled) & (1 << num)) == 0)
+				return -EINVAL;
+			return ((atomic_read(&me->ser_gpios_set) & (1 << num)) != 0);
+		}
 		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
 		if (ret < 0)
 			return ret;
@@ -991,6 +1045,8 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 
 	dev_dbg(dev, "device reset requested\n");
 
+	me->skip_remote_checks = me->remote_quirk_enabled;
+
 	ret = me->ctrl_link_init(me);
 
 	return (ret < 0 ? ret : count);
@@ -1085,6 +1141,7 @@ static int max927x_probe(struct i2c_client *client,
 {
 	struct device *dev = &client->dev;
 	struct device_node *np = dev->of_node;
+	struct i2c_driver *i2cdrv = to_i2c_driver(dev->driver);
 	struct device_node *child;
 	struct max927x *me;
 	u32 remote_reg;
@@ -1112,7 +1169,17 @@ static int max927x_probe(struct i2c_client *client,
 	if (me == NULL)
 		return -ENOMEM;
 
-	dev_dbg(dev, "private data address: %p\n", me);
+	/*
+	 * XXX
+	 * We may get probed before our driver's I2C client list
+	 * gets initialized, so if we encounter an error and
+	 * need to delete our I2C adapter structures, we need
+	 * to do the list initialization ourselves to prevent
+	 * a crash.
+	 * XXX
+	 */
+	if (i2cdrv->clients.next == NULL && i2cdrv->clients.prev == NULL)
+		INIT_LIST_HEAD(&i2cdrv->clients);
 
 	atomic_set(&me->i2c_error_count, 0);
 	for (i = 0; i < ARRAY_SIZE(me->i2c_retry_counts); i++)
@@ -1125,7 +1192,7 @@ static int max927x_probe(struct i2c_client *client,
 	me->local = client;
 	me->parent = to_i2c_adapter(client->dev.parent);
 	snprintf(me->adap.name, sizeof(me->adap.name), "max927x-%d", i2c_adapter_id(me->parent));
-	snprintf(me->dummy_adapter.name, sizeof(me->adap.name), "max927x-d-%d",
+	snprintf(me->dummy_adapter.name, sizeof(me->dummy_adapter.name), "max927x-d-%d",
 		 i2c_adapter_id(me->parent));
 	me->dummy_adapter.owner = me->adap.owner = THIS_MODULE;
 	me->dummy_adapter.algo = me->adap.algo = &remote_i2c_algo;
@@ -1149,8 +1216,18 @@ static int max927x_probe(struct i2c_client *client,
 	}
 
 	/*
-	 * Start with the remote powered down, if we control it
+	 * Allow for sloppy hardware designs that prevent us from initializing
+	 * the serdes pair fully without brining up other surrounding devices.
+	 * With this quirk enabled, we discard any remote read errors and finish
+	 * initializing our I2C and GPIO structures so other devices that
+	 * depend on them can be probed.  If we then get through a control-link
+	 * initialization successfully, we start paying attention to errors again.
 	 */
+	if (of_get_property(np, "ignore-remote-errors-on-init-quirk", NULL)) {
+		dev_dbg(dev, "enabling ignore-remote-errors-on-init-quirk\n");
+		me->remote_quirk_enabled = me->skip_remote_checks = true;
+	}
+
 	me->remote_power = devm_regulator_get(dev, "slave");
 	of_property_read_u32(np, "slave-on-delay-ms", &me->power_on_mdelay);
 	of_property_read_u32(np, "slave-off-delay-ms", &me->power_off_mdelay);
@@ -1163,7 +1240,8 @@ static int max927x_probe(struct i2c_client *client,
 	}
 
 	/*
-	 * Register settings from the device tree
+	 * Register settings from the device tree.  See the property definitions
+	 * at the top of this module.
 	 */
 	ret = of_property_read_u32_array(np, "cfg-0", me->of_cfg_settings, NUM_CFG_PROPS);
 	if (ret < 0) {
@@ -1181,7 +1259,8 @@ static int max927x_probe(struct i2c_client *client,
 	/*
 	 * Create a separate i2c_adapter just for addressing the
 	 * remote end of the link, to prevent premature probing
-	 * of other devices that might be beyond
+	 * of other devices that might be attached to the remote
+	 * device.
 	 */
 	ret = i2c_add_numbered_adapter(&me->dummy_adapter);
 	if (ret < 0) {
@@ -1210,7 +1289,7 @@ static int max927x_probe(struct i2c_client *client,
 	if (ret < 0) {
 		dev_err(dev, "control link initialization failed\n");
 		i2c_del_adapter(&me->dummy_adapter);
-		return ret;
+		return -ENODEV;
 	}
 
 	/*
