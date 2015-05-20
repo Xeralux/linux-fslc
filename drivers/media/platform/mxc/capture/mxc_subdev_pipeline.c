@@ -245,12 +245,15 @@ static int _parse_mbus_framefmt(struct v4l2_mbus_framefmt *mf, struct mxc_pipeli
 static int _input_device_to_sensor(struct mxc_pipeline_data *data)
 {
 	struct sensor_data *sensor = &data->sensor;
-	struct v4l2_subdev *input_device = data->subdevs[0];
+	struct v4l2_subdev *input_device = (data->subdevs == NULL ? NULL : data->subdevs[0]);
 	struct v4l2_subdev_format format;
 	struct v4l2_subdev_frame_interval fi;
 	struct v4l2_dv_timings timings;
 	int i;
 	int ret;
+
+	if (input_device == NULL)
+		return -ENODEV;
 
 	ret = v4l2_subdev_call(input_device, video, g_mbus_fmt, &format.format);
 	if(ret < 0){
