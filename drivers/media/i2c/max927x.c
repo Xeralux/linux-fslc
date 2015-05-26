@@ -73,7 +73,7 @@ static const struct max927x_setting max9272_settings[MAX9272_NUM_SETTINGS] = { M
 
 /*
  * Device tree and sysfs-accessible configuration controls, named
- * for backward compatibility with old driver.  ORDER IS IMPORTANT
+ * for backward compatibility with old driver.	ORDER IS IMPORTANT
  * to maintain that compatibility.
  *
  * MAX927x_PROPERTY(<name>, <attribute-name>, <setting-name>)
@@ -211,21 +211,28 @@ static int ser_read(struct max927x *me, max9271_setting_t which, u8 *valp)
 	return ret;
 }
 
-static int ser_update(struct max927x *me, max9271_setting_t which, u8 newval)
+static int ser_update_internal(struct max927x *me, max9271_setting_t which, u8 newval, bool docheck)
 {
 	const struct max927x_setting *s = &max9271_settings[which];
 	u8 val,	 mask, updval, checkval = 0;
 	int ret = i2c_reg_read(me->ser, s->reg, &val);
 
-	dev_dbg(me->dev, "%s: %s = %d\n", __func__, s->name, newval);
 	if (ret < 0) {
-		dev_dbg(me->dev, "%s: which=%s, read status=%d\n", __func__, s->name, ret);
+		dev_warn(me->dev, "error %d reading register 0x%x for updating %s\n",
+			 ret, s->reg, s->name);
 		return ret;
 	}
 	mask = ~(~(0xFF << s->width) << s->pos);
 	updval = (val & mask) | ((newval << s->pos) & ~mask);
+	if (val == updval) {
+		dev_dbg(me->dev, "%s: skipping update of %s (reg 0x%x): no value change\n",
+			__func__, s->name, s->reg);
+		return 0;
+	}
 	ret = i2c_reg_write(me->ser, s->reg, updval);
 	if (ret >= 0) {
+		if (!docheck)
+			return ret;
 		/*
 		 * If the serializer is remote, and we're touching register 4,
 		 * we may not be able to access the remote for some time after
@@ -241,19 +248,30 @@ static int ser_update(struct max927x *me, max9271_setting_t which, u8 newval)
 			msleep(5);
 		ret = i2c_reg_read(me->ser, s->reg, &checkval);
 		if (ret < 0) {
-			dev_warn(me->dev, "error %d reading back register 0x%x\n", ret, s->reg);
+			dev_warn(me->dev, "error %d reading back register 0x%x for %s update\n",
+				 ret, s->reg, s->name);
 			if (me->ser == me->remote && s->reg == 4)
 				i2c_reg_write(me->ser, s->reg, val);
 		}
 	} else {
-		dev_warn(me->dev, "error %d writing register 0x%x\n", ret, s->reg);
+		dev_warn(me->dev, "error %d updating %s in register 0x%x\n", ret, s->name, s->reg);
 	}
 	if (ret >=0 && checkval != updval) {
-		dev_dbg(me->dev, "%s: which=%s read back val 0x%x mismatch with desired 0x%x\n",
-			__func__, s->name, val, updval);
+		dev_warn(me->dev, "%s: read back val 0x%x mismatch with desired 0x%x updating %s\n",
+			 __func__, val, updval, s->name);
 		ret = -EIO;
 	}
 	return ret;
+}
+
+static int ser_update_nocheck(struct max927x *me, max9272_setting_t which, u8 newval)
+{
+	return ser_update_internal(me, which, newval, false);
+}
+
+static int ser_update(struct max927x *me, max9272_setting_t which, u8 newval)
+{
+	return ser_update_internal(me, which, newval, true);
 }
 
 /*
@@ -273,7 +291,7 @@ static int des_read(struct max927x *me, max9272_setting_t which, u8 *valp)
 	return ret;
 }
 
-static int des_update(struct max927x *me, max9272_setting_t which, u8 newval)
+static int des_update_internal(struct max927x *me, max9272_setting_t which, u8 newval, bool docheck)
 {
 	const struct max927x_setting *s = &max9272_settings[which];
 	u8 val, mask, updval;
@@ -284,15 +302,34 @@ static int des_update(struct max927x *me, max9272_setting_t which, u8 newval)
 		return ret;
 	mask = ~(~(0xFF << s->width) << s->pos);
 	updval = (val & mask) | ((newval << s->pos) & ~mask);
+	updval = (val & mask) | ((newval << s->pos) & ~mask);
+	if (val == updval) {
+		dev_dbg(me->dev, "%s: skipping update of %s (reg 0x%x): no value change\n",
+			 __func__, s->name, s->reg);
+		return 0;
+	}
 	ret = i2c_reg_write(me->des, s->reg, updval);
-	if (ret >= 0)
+	if (ret >= 0) {
+		if (!docheck)
+			return ret;
 		ret = i2c_reg_read(me->des, s->reg, &val);
+	}
 	if (ret >=0 && val != updval) {
-		dev_dbg(me->dev, "%s: which=%s read back val 0x%x mismatch with desired 0x%x\n",
-			__func__, s->name, val, updval);
+		dev_warn(me->dev, "%s: read back val 0x%x mismatch with desired 0x%x updating %s\n",
+			 __func__, val, updval, s->name);
 		ret = -EIO;
 	}
 	return ret;
+}
+
+static int des_update_nocheck(struct max927x *me, max9272_setting_t which, u8 newval)
+{
+	return des_update_internal(me, which, newval, false);
+}
+
+static int des_update(struct max927x *me, max9272_setting_t which, u8 newval)
+{
+	return des_update_internal(me, which, newval, true);
 }
 
 /*
@@ -307,15 +344,13 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 	int ret;
 
 	for (ntries = 0; ntries < i2c_retries; ntries += 1) {
-		ret = me->parent->algo->master_xfer(me->parent, msgs, num);
-		if (ret >= 0)
-			break;
-
 		for (delay = i2c_udelay; delay > 1000; delay -= 1000)
 			udelay(1000);
 		if (delay > 0)
 			udelay(delay);
-
+		ret = me->parent->algo->master_xfer(me->parent, msgs, num);
+		if (ret >= 0)
+			break;
 	}
 
 	atomic_inc(&me->i2c_retry_counts[(ntries > I2C_RETRIES_MAX ? I2C_RETRIES_MAX : ntries)]);
@@ -541,11 +576,21 @@ static int ser_control_init(struct max927x *me)
 	 * Changing EDC on the remote causes loss of communication
 	 * until we update the local side to match, so update both,
 	 * then re-update the remote to test that the change was made.
+	 * Also need to wait before trying to update the local side.
 	 */
 	if (ret == 0) {
-		des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
-		ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
-		ret = des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
+		des_update_nocheck(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
+		msleep(5);
+		for (i = 1; i < 3; i++) {
+			ret = ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
+			if (ret >= 0)
+				break;
+			msleep(5);
+		}
+		if (ret >= 0)
+			ret = des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
+		else
+			dev_err(me->dev, "could not update EDC on serializer: %d\n", ret);
 	}
 	if (ret < 0) {
 		dev_err(me->dev, "error initializing deserializer: %d\n", ret);
@@ -569,8 +614,6 @@ static int ser_control_init(struct max927x *me)
 		ret = ser_update(me, MAX9271_ES, MAX927X_ES_RISING);
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_HVEN, 1);
-	if (ret == 0)
-		ret = ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
 	if (ret < 0) {
 		dev_err(me->dev, "error finalizing serializer config: %d\n", ret);
 		power_down_remote(me);
@@ -596,7 +639,7 @@ static int des_control_init(struct max927x *me)
 	 * Reset so we're starting from a known state
 	 */
 	device_reset(me->dev);
-	msleep(5);
+	msleep(10);
 	power_down_remote(me);
 
 	/*
@@ -669,9 +712,6 @@ static int des_control_init(struct max927x *me)
 		ret = ser_update(me, MAX9271_GPIO_SET, 0);
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_GPIO_SET, atomic_read(&me->ser_gpios_set));
-	if (ret < 0 && !ignore_errors)
-		dev_err(me->dev, "error initializing serializer: %d\n", ret);
-
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_I2CLOCACK, 1);
 	if (ret == 0)
@@ -695,11 +735,21 @@ static int des_control_init(struct max927x *me)
 	 * Changing EDC on the remote causes loss of communication
 	 * until we update the local side to match, so update both,
 	 * then re-update the remote to test that the change was made.
+	 * Must also wait (and possibly retry) to update the local side.
 	 */
 	if (ret == 0) {
-		ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
-		des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
-		ret = ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
+		ser_update_nocheck(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
+		msleep(5);
+		for (i = 1; i <= 3; i++) {
+			ret = des_update(me, MAX9272_EDC, MAX927X_EDC_HAMMING);
+			if (ret >= 0)
+				break;
+			msleep(5);
+		}
+		if (ret >= 0)
+			ret = ser_update(me, MAX9271_EDC, MAX927X_EDC_HAMMING);
+		else
+			dev_err(me->dev, "could not update EDC on deserializer: %d\n", ret);
 	}
 	if (ret < 0 && !ignore_errors) {
 		dev_err(me->dev, "error initializing serializer: %d\n", ret);
