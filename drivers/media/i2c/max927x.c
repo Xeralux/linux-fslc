@@ -388,7 +388,7 @@ static void power_down_remote(struct max927x *me)
 		ret = regulator_disable(me->remote_power);
 		if (ret < 0)
 			dev_dbg(me->dev, "powering down remote failed: %d\n", ret);
-		if (me->power_on_mdelay != 0)
+		if (me->power_off_mdelay != 0)
 			msleep(me->power_off_mdelay);
 	}
 }
