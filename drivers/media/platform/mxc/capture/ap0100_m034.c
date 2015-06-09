@@ -2284,7 +2284,6 @@ static int _ap0100_reset(struct ap0100_m034_data* data)
 	return ret;
 }
 
-static void _ap0100_subdev_init(struct ap0100_m034_data* data);
 static int _ap0100_m034_probe(struct ap0100_m034_data* data)
 {
 	struct device *dev = data->dev;
@@ -2310,7 +2309,6 @@ static int _ap0100_m034_probe(struct ap0100_m034_data* data)
 
 	data->error_count = 0;
 	data->operational = true;
-	_ap0100_subdev_init(data);
 	return ret;
 error:
 	tmpret = _ap0100_host_config_mode(data);
@@ -2319,10 +2317,8 @@ error:
 	return ret;
 }
 
-static void _ap0100_subdev_clear(struct ap0100_m034_data* data);
 static int _ap0100_m034_remove(struct ap0100_m034_data *data)
 {
-	_ap0100_subdev_clear(data);
 	data->operational = false;
 	sysfs_remove_group(&data->dev->kobj, &attr_group);
 	return 0;
@@ -2343,12 +2339,6 @@ static ssize_t ap0100_m034_operational_store(struct device *dev,
 	mutex_lock(&data->lock);
 	if(!!val == data->operational)
 		goto out;
-
-	if(data->subdev.v4l2_dev != NULL) {
-		dev_err(dev,"v4l2 subdev still in use; please shut down %s.\n",
-				data->subdev.v4l2_dev->name);
-		goto out;
-	}
 
 	if(data->operational)
 		_ap0100_m034_remove(data);
@@ -2412,25 +2402,6 @@ static struct v4l2_subdev_ops ap0100_m034_subdev_ops = {
 	.video	= &ap0100_m034_subdev_video_ops,
 };
 
-static void _ap0100_subdev_init(struct ap0100_m034_data* data)
-{
-	struct i2c_client *client = data->client;
-	struct device_driver *drv = client->dev.driver;
-	struct v4l2_subdev *subdev = &data->subdev;
-	snprintf(subdev->name, sizeof(subdev->name), "%s %d-%04x",
-		drv->name, i2c_adapter_id(client->adapter),
-		client->addr);
-	subdev->name[sizeof(subdev->name)-1] = 0;
-	subdev->flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
-}
-
-static void _ap0100_subdev_clear(struct ap0100_m034_data* data)
-{
-	struct v4l2_subdev *subdev = &data->subdev;
-	subdev->name[0] = 0;
-}
-
-
 static int ap0100_m034_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
@@ -2452,6 +2423,7 @@ static int ap0100_m034_probe(struct i2c_client *client,
 	data->dev = dev;
 
 	v4l2_i2c_subdev_init(&data->subdev, client, &ap0100_m034_subdev_ops);
+	data->subdev.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	data->subdev.entity.type = MEDIA_ENT_T_V4L2_SUBDEV_SENSOR;
 	data->pad.flags = MEDIA_PAD_FL_SOURCE;
 	ret = media_entity_init(&data->subdev.entity, 1, &data->pad, 0);
