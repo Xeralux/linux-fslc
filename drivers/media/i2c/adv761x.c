@@ -125,7 +125,7 @@ static s32 adv_smbus_read_byte_data(struct i2c_client *client, u8 command)
 			return ret;
 	}
 
-	v4l_err(client, "Reading addr:%02x reg:%02x\n failed",
+	v4l_err(client, "Reading addr:%02x reg:%02x failed\n",
 		client->addr, command);
 	return ret;
 }
@@ -930,13 +930,13 @@ static inline int adv761x_check_rev(struct i2c_client *client)
 {
 	int msb, rev;
 
-	msb = adv_smbus_read_byte_data(client, 0xea);
+	msb = i2c_smbus_read_byte_data(client, 0xea);
 	if (msb < 0)
-		return msb;
+		return -ENODEV;
 
-	rev = adv_smbus_read_byte_data(client, 0xeb);
+	rev = i2c_smbus_read_byte_data(client, 0xeb);
 	if (rev < 0)
-		return rev;
+		return -ENODEV;
 
 	rev |= msb << 8;
 
