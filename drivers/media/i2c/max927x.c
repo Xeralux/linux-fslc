@@ -820,12 +820,18 @@ static int gpio_dir_in(struct gpio_chip *gc, unsigned num)
 	struct max927x *me = container_of(gc, struct max927x, gc);
 	int ret;
 
+	dev_dbg(me->dev, "%s(%d)\n", __func__, num);
+
 	if (num < 1 || num > 7)
 		return -EINVAL;
 
 	if (num < 6) {
 		u8 gpio_en, gpio_set;
 
+		/*
+		 * Switch from 1-based to zero-based to match the regs
+		 */
+		num -= 1;
 		if (me->skip_remote_checks && me->ser == me->remote) {
 			gpio_en = atomic_read(&me->ser_gpios_enabled) | (1 << num);
 			i2c_reg_write(me->ser, 0xE, gpio_en);
@@ -843,8 +849,12 @@ static int gpio_dir_in(struct gpio_chip *gc, unsigned num)
 		ret = ser_read(me, MAX9271_GPIO_SET, &gpio_set);
 		if (ret < 0)
 			return ret;
+		dev_dbg(me->dev, "%s: old gpio_set=0x%x, gpio_en=0x%x\n",
+			__func__, gpio_set, gpio_en);
 		gpio_set |= (1 << num);
 		gpio_en |= (1 << num);
+		dev_dbg(me->dev, "%s: new gpio_set=0x%x, gpio_en=0x%x\n",
+			__func__, gpio_set, gpio_en);
 		ret = ser_update(me, MAX9271_GPIO_SET, gpio_set);
 		if (ret == 0)
 			ret = ser_update(me, MAX9271_GPIO_EN, gpio_en);
@@ -865,11 +875,17 @@ static int gpio_dir_out(struct gpio_chip *gc, unsigned num, int outval)
 	struct max927x *me = container_of(gc, struct max927x, gc);
 	int ret;
 
+	dev_dbg(me->dev, "%s(%d)\n", __func__, num);
+
 	if (num < 1 || num > 7)
 		return -EINVAL;
 
 	if (num < 6) {
 		u8 gpio_en, gpio_set;
+		/*
+		 * Switch from 1-based to zero-based to match the regs
+		 */
+		num -= 1;
 		if (me->skip_remote_checks && me->ser == me->remote) {
 			gpio_en = atomic_read(&me->ser_gpios_enabled) | (1 << num);
 			i2c_reg_write(me->ser, 0xE, gpio_en);
@@ -887,11 +903,15 @@ static int gpio_dir_out(struct gpio_chip *gc, unsigned num, int outval)
 		ret = ser_read(me, MAX9271_GPIO_SET, &gpio_set);
 		if (ret < 0)
 			return ret;
+		dev_dbg(me->dev, "%s: old gpio_set=0x%x, gpio_en=0x%x\n",
+			__func__, gpio_set, gpio_en);
 		if (outval)
 			gpio_set |= (1 << num);
 		else
 			gpio_set &= ~(1 << num);
 		gpio_en |= (1 << num);
+		dev_dbg(me->dev, "%s: new gpio_set=0x%x, gpio_en=0x%x\n",
+			__func__, gpio_set, gpio_en);
 		ret = ser_update(me, MAX9271_GPIO_SET, gpio_set);
 		if (ret == 0)
 			ret = ser_update(me, MAX9271_GPIO_EN, gpio_en);
@@ -912,6 +932,8 @@ static void gpio_set(struct gpio_chip *gc, unsigned num, int setval)
 	struct max927x *me = container_of(gc, struct max927x, gc);
 	int ret;
 
+	dev_dbg(me->dev, "%s(%d)\n", __func__, num);
+
 	if (num < 1 || num > 7) {
 		dev_err(me->dev, "invalid GPIO index: %u\n", num);
 		return;
@@ -919,6 +941,10 @@ static void gpio_set(struct gpio_chip *gc, unsigned num, int setval)
 
 	if (num < 6) {
 		u8 gpio_en, gpio_set;
+		/*
+		 * Switch from 1-based to zero-based to match the regs
+		 */
+		num -= 1;
 		if (me->skip_remote_checks && me->ser == me->remote) {
 			gpio_set = atomic_read(&me->ser_gpios_set) | (1 << num);
 			i2c_reg_write(me->ser, 0xF, gpio_set);
@@ -935,10 +961,14 @@ static void gpio_set(struct gpio_chip *gc, unsigned num, int setval)
 		if (ret == 0) {
 			ret = ser_read(me, MAX9271_GPIO_SET, &gpio_set);
 			if (ret == 0) {
+				dev_dbg(me->dev, "%s: old gpio_set=0x%x\n",
+					__func__, gpio_set);
 				if (setval)
 					gpio_set |= (1 << num);
 				else
 					gpio_set &= ~(1<<num);
+				dev_dbg(me->dev, "%s: new gpio_set=0x%x\n",
+					__func__, gpio_set);
 				ret = ser_update(me, MAX9271_GPIO_SET, gpio_set);
 				if (ret == 0)
 					atomic_xchg(&me->ser_gpios_set, gpio_set);
@@ -959,11 +989,17 @@ static int gpio_read(struct gpio_chip *gc, unsigned num)
 	int ret;
 	u8 gpio_val;
 
+	dev_dbg(me->dev, "%s(%d)\n", __func__, num);
+
 	if (num < 1 || num > 7)
 		return -EINVAL;
 
 	if (num < 6) {
 		u8 gpio_en;
+		/*
+		 * Switch from 1-based to zero-based to match the regs
+		 */
+		num -= 1;
 		if (me->skip_remote_checks && me->ser == me->remote) {
 			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
 				__func__, num);
@@ -980,6 +1016,8 @@ static int gpio_read(struct gpio_chip *gc, unsigned num)
 		if (ret < 0)
 			return ret;
 		ret = (gpio_val & (1 << num)) ? 1 : 0;
+		dev_dbg(me->dev, "%s: gpio_set=0x%x, returning %d\n",
+			__func__, gpio_val, ret);
 	} else {
 		max9272_setting_t which = (num == 6 ? MAX9272_GPIO0_READ : MAX9272_GPIO1_READ);
 		ret = des_read(me, which, &gpio_val);
