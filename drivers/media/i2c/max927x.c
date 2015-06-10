@@ -43,7 +43,10 @@
 #include <linux/reset.h>
 #include <linux/gpio.h>
 #include <linux/atomic.h>
+#include <linux/media.h>
+#include <media/v4l2-device.h>
 #include <media/v4l2-subdev.h>
+#include <media/media-entity.h>
 #include "max927x.h"
 
 /*
@@ -150,6 +153,7 @@ struct max927x {
 	struct i2c_adapter dummy_adapter;
 	struct i2c_adapter adap;
 	struct v4l2_subdev subdev;
+	struct media_pad pads[2]; /* 0=serializer, 1=deserializer */
 	atomic_t i2c_error_count;
 	atomic_t i2c_retry_counts[I2C_RETRIES_MAX+1];
 	u32 of_cfg_settings[NUM_CFG_PROPS];
@@ -1329,10 +1333,14 @@ static int max927x_probe(struct i2c_client *client,
 		me->ser = me->local;
 		me->des = me->remote;
 		me->ctrl_link_init = ser_control_init;
+		me->pads[0].flags = MEDIA_PAD_FL_SOURCE;
+		me->pads[1].flags = MEDIA_PAD_FL_SINK;
 	} else {
 		me->des = me->local;
 		me->ser = me->remote;
 		me->ctrl_link_init = des_control_init;
+		me->pads[0].flags = MEDIA_PAD_FL_SINK;
+		me->pads[1].flags = MEDIA_PAD_FL_SOURCE;
 	}
 
 	ret = me->ctrl_link_init(me);
@@ -1375,10 +1383,14 @@ static int max927x_probe(struct i2c_client *client,
 	v4l2_subdev_init(&me->subdev, &subdev_ops);
 	me->subdev.owner = THIS_MODULE;
 	v4l2_set_subdevdata(&me->subdev, client);
-	i2c_set_clientdata(client, &me->subdev);	
+	i2c_set_clientdata(client, &me->subdev);
 	scnprintf(me->subdev.name, sizeof(me->subdev.name), "%s %d-%04x",
 		  dev->driver->name, i2c_adapter_id(client->adapter), client->addr);
-
+	ret = media_entity_init(&me->subdev.entity, 2, me->pads, 0);
+	if (ret < 0) {
+		dev_err(dev, "could not initialize media entity: %d\n", ret);
+		return ret;
+	}
 	ret = sysfs_create_groups(&dev->kobj, attr_groups);
 	if (ret < 0)
 		dev_err(dev, "could not create sysfs groups\n");
@@ -1393,6 +1405,8 @@ static int max927x_remove(struct i2c_client *client)
 
 	stream_control(&me->subdev, 0);
 	sysfs_remove_groups(&me->dev->kobj, attr_groups);
+	v4l2_device_unregister_subdev(&me->subdev);
+	media_entity_cleanup(&me->subdev.entity);
 	i2c_del_adapter(&me->adap);
 	ret = gpiochip_remove(&me->gc);
 	if (ret < 0)
