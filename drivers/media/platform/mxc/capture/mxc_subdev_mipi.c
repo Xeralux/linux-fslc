@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Xeralux, Inc. All Rights Reserved.
+ * Copyright (C) 2014-2015 Sensity Systems, Inc. All Rights Reserved.
  */
 
 /*
@@ -25,8 +25,10 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/of_device.h>
+#include <linux/media.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-device.h>
+#include <media/media-entity.h>
 #include <linux/mfd/syscon.h>
 #include <linux/mfd/syscon/imx6q-iomuxc-gpr.h>
 #include <linux/regmap.h>
@@ -35,7 +37,8 @@
 struct mxc_subdev_mipi_cam {
 	struct device *dev;
 	struct regmap *gpr;
-	struct v4l2_subdev	subdev;
+	struct v4l2_subdev subdev;
+	struct media_pad pad;
 	void *mipi_csi2_info;
 	struct clk *sensor_clk;
 };
@@ -285,7 +288,7 @@ static int mxc_subdev_mipi_probe(struct platform_device *pdev)
 		dev_err(dev, "%s: Fail to get mipi_csi2_info!\n",
 		       __func__);
 		return -ENODEV;
-     }
+	}
 
 	if (!mipi_csi2_get_status(data->mipi_csi2_info)) {
 		dev_dbg(dev, "mipi_csi2_enable");
@@ -323,19 +326,23 @@ static int mxc_subdev_mipi_probe(struct platform_device *pdev)
 	}
 
 	retval = sysfs_create_group(&dev->kobj, &attr_group);
-	if(retval < 0) {
+	if (retval < 0) {
 	   dev_err(dev,"Could not create sysfs file.\n");
 	   return retval;
-   }
+	}
 
 	subdev = &data->subdev;
 	v4l2_subdev_init(subdev, &mxc_subdev_mipi_subdev_ops);
-	subdev->owner = pdev->dev.driver->owner;
+	subdev->owner = THIS_MODULE;
 	v4l2_set_subdevdata(subdev, data);
 	platform_set_drvdata(pdev, subdev);
 	snprintf(subdev->name, sizeof(subdev->name), "%s-%d",
 		dev->driver->name,csi);
 	subdev->name[sizeof(subdev->name)-1] = 0;
+	data->pad.flags = MEDIA_PAD_FL_SINK;
+	retval = media_entity_init(&subdev->entity, 1, &data->pad, 0);
+	if (retval < 0)
+		dev_err(dev, "Error initializing media entity: %d\n", retval);
 
 	return retval;
 }
@@ -345,16 +352,14 @@ static int mxc_subdev_mipi_remove(struct platform_device *pdev)
 	struct v4l2_subdev	*sd = platform_get_drvdata(pdev);
 	struct mxc_subdev_mipi_cam *data = to_mxc_subdev_mipi_from_v4l2(sd);
 
-	if(data->subdev.v4l2_dev != NULL) {
-		dev_err(&pdev->dev,"v4l2 subdev still in use; please shut down %s.\n",
-				data->subdev.v4l2_dev->name);
-	}
+	v4l2_device_unregister_subdev(&data->subdev);
+	media_entity_cleanup(&data->subdev.entity);
+	sysfs_remove_group(&data->dev->kobj, &attr_group);
 
 	mxc_csi1_mipicsi0_input_enable(data, 0);
 	if(mipi_csi2_get_status(data->mipi_csi2_info))
 		mipi_csi2_disable(data->mipi_csi2_info);
 
-	sysfs_remove_group(&data->dev->kobj, &attr_group);
 	return 0;
 }
 
