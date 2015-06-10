@@ -25,8 +25,10 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/of_device.h>
+#include <linux/media.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-device.h>
+#include <media/media-entity.h>
 #include <linux/mfd/syscon.h>
 #include <linux/mfd/syscon/imx6q-iomuxc-gpr.h>
 #include <linux/regmap.h>
@@ -35,7 +37,8 @@
 struct mxc_subdev_parallel_cam {
 	struct device *dev;
 	struct regmap *gpr;
-	struct v4l2_subdev	subdev;
+	struct v4l2_subdev subdev;
+	struct media_pad pad;
 	struct clk *sensor_clk;
 	int ipu;
 	int csi;
@@ -52,7 +55,7 @@ static struct mxc_subdev_parallel_cam *to_mxc_subdev_parallel_from_v4l2(const st
 
 static void mxc_subdev_parallel_powerdown(struct mxc_subdev_parallel_cam *data, int powerdown)
 {
-	pr_debug("ssmn_camera_parallel: powerdown %d\n", powerdown);
+	dev_dbg(data->dev, "powerdown: %d\n", powerdown);
 	if (powerdown) {
 		if (of_machine_is_compatible("fsl,imx6q")) {
 			if (data->ipu == 0)
@@ -182,14 +185,18 @@ static int mxc_subdev_parallel_probe(struct platform_device *pdev)
 
 	subdev = &data->subdev;
 	v4l2_subdev_init(subdev, &mxc_subdev_parallel_subdev_ops);
-	subdev->owner = pdev->dev.driver->owner;
+	subdev->owner = THIS_MODULE;
 	v4l2_set_subdevdata(subdev, data);
 	platform_set_drvdata(pdev, subdev);
 	snprintf(subdev->name, sizeof(subdev->name), "%s-%d",
 		dev->driver->name,csi);
 	subdev->name[sizeof(subdev->name)-1] = 0;
 
-	pr_debug("ssmn_camera_parallel: clk_prepare_enable\n");
+	data->pad.flags = MEDIA_PAD_FL_SINK;
+	ret = media_entity_init(&subdev->entity, 1, &data->pad, 0);
+	if (ret < 0)
+		dev_err(dev, "error initializing media entity: %d\n", ret);
+
 	return ret;
 }
 
