@@ -598,7 +598,8 @@ static int find_all_subdevs(struct mxc_pipeline_data *data,
 					if (i2c_get_clientdata(client) != NULL)
 						remote_node = of_node_get(possible_remotes[i]);
 					else
-						dev_dbg(dev, "Skipping inactive remote: %s\n", of_node_full_name(possible_remotes[i]));
+						dev_dbg(dev, "Skipping inactive remote: %s\n",
+							of_node_full_name(possible_remotes[i]));
 					module_put(client->dev.driver->owner);
 				}
 				device_unlock(&client->dev);
@@ -626,6 +627,36 @@ static int find_all_subdevs(struct mxc_pipeline_data *data,
 		of_node_put(cur_node);
 	}
 	dev_dbg(dev, "%s: exiting, subdev_count is %d\n", __func__, data->subdev_count);
+
+	return 0;
+}
+
+static int create_links(struct mxc_pipeline_data *data)
+{
+	struct media_entity *source, *sink;
+	u16 source_pad, sink_pad;
+	int i, ret;
+	for (i = 1; i < data->subdev_count; i++) {
+		sink = &data->subdevs[i-1]->entity;
+		for (sink_pad = 0;
+		     sink_pad < sink->num_pads &&
+			     (sink->pads[sink_pad].flags & MEDIA_PAD_FL_SINK) == 0;
+		     sink_pad++);
+		if (sink_pad >= sink->num_pads)
+			return -ENOENT;
+		source = &data->subdevs[i]->entity;
+		for (source_pad = 0;
+		     source_pad < source->num_pads &&
+			     (source->pads[source_pad].flags & MEDIA_PAD_FL_SOURCE) == 0;
+		     source_pad++);
+		if (source_pad >= source->num_pads)
+			return -ENOENT;
+		ret = media_entity_create_link(source, source_pad,
+					       sink, sink_pad,
+					       (MEDIA_LNK_FL_ENABLED|MEDIA_LNK_FL_IMMUTABLE));
+		if (ret < 0)
+			return ret;
+	}
 
 	return 0;
 }
@@ -800,6 +831,11 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 		ret = v4l2_device_register_subdev(&data->v4l2_dev, data->subdevs[i]);
 	if (ret != 0) {
 		dev_err(dev, "error registering v4l2 subdevs: %d\n", ret);
+		goto cleanup_v4l2_device;
+	}
+	ret = create_links(data);
+	if (ret < 0) {
+		dev_err(dev, "error setting up media_links: %d\n", ret);
 		goto cleanup_v4l2_device;
 	}
 	ret = v4l2_device_register_subdev_nodes(&data->v4l2_dev);
