@@ -2269,7 +2269,7 @@ static int _ap0100_reset(struct ap0100_m034_data* data)
 		dev_err(dev, "ap0100 not found=0x%x", val);
 		return -1;
 	} else {
-		dev_err(dev, "ap0100 found=0x%x", val);
+		dev_dbg(dev, "ap0100 found=0x%x", val);
 	}
 
 	ret = -EBUSY;
@@ -2407,11 +2407,20 @@ static int ap0100_m034_probe(struct i2c_client *client,
 {
 	struct device *dev = &client->dev;
 	struct ap0100_m034_data* data;
-	int ret;
+	unsigned chipver = 0;
+	int ret, tries;
 
 	ret = device_reset(dev);
 	if (ret == -ENODEV)
 		return -EPROBE_DEFER;
+
+	for (tries = 1; tries <= 3; tries++) {
+		if (_AM_read_reg(client, REG_CHIP_VERSION, &chipver, 2, NULL) >= 0)
+			break;
+		msleep(5);
+	}
+	if (chipver != 0x0062)
+		return -ENODEV;
 
 	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
 	if(!data)
