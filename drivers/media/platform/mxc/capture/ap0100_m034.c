@@ -1739,7 +1739,7 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 					break;
 				dev_dbg(dev, "%s, cmd retry", __func__);
 			}
-			ret = snprintf(buf, PAGE_SIZE, "%d\n", cmd_status);
+			ret = scnprintf(buf, PAGE_SIZE, "%d\n", cmd_status);
 			break;
 
 		case SSS_IDLE:
@@ -1829,7 +1829,7 @@ static ssize_t ap0100_show_min_temp(struct device *dev,
 		return 0;
 	}
 
-	return snprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
 static DEVICE_ATTR(min_temp, 0444, (void *)ap0100_show_min_temp, NULL);
 
@@ -1848,7 +1848,7 @@ static ssize_t ap0100_show_serial(struct device *dev,
 	if(ret < 0)
 		return 0;
 
-	return snprintf(buf, PAGE_SIZE,"%08llx\n", serial);
+	return scnprintf(buf, PAGE_SIZE,"%08llx\n", serial);
 }
 static DEVICE_ATTR(serial, 0444, (void *)ap0100_show_serial, (void *)NULL);
 
@@ -1862,7 +1862,7 @@ static ssize_t ap0100_show_unavailable(struct device *dev,
 	unavailable = data->unavailable;
 	mutex_unlock(&data->lock);
 
-	return snprintf(buf, PAGE_SIZE,"%d\n", unavailable);
+	return scnprintf(buf, PAGE_SIZE,"%d\n", unavailable);
 }
 static DEVICE_ATTR(unavailable, 0644, (void *)ap0100_show_unavailable, (void *)NULL);
 
@@ -1883,7 +1883,7 @@ static ssize_t ap0100_show_max_temp(struct device *dev,
 		return 0;
 	}
 
-	return snprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
 static DEVICE_ATTR(max_temp, 0444, (void *)ap0100_show_max_temp, NULL);
 
@@ -1904,7 +1904,7 @@ static ssize_t ap0100_show_cur_temp(struct device *dev,
 		return 0;
 	}
 
-	return snprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
 static DEVICE_ATTR(cur_temp, 0444, (void *)ap0100_show_cur_temp, NULL);
 
@@ -1932,31 +1932,31 @@ out:
 	if(ret < 0)
 		return 0;
 
-	offset += snprintf(&buf[offset],PAGE_SIZE-offset, "header_const = 0x%x\n", header.header_const);
-	offset += snprintf(&buf[offset],PAGE_SIZE-offset, "time = %u\n", header.time_stamp);
-	offset += snprintf(&buf[offset],PAGE_SIZE-offset, "hw_version = %d\n", header.hw_version);
-	offset += snprintf(&buf[offset],PAGE_SIZE-offset, "fw_version = %d\n", header.fw_version);
-	offset += snprintf(&buf[offset],PAGE_SIZE-offset, "lens type = %d\n", header.lens_type);
+	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "header_const = 0x%x\n", header.header_const);
+	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "time = %u\n", header.time_stamp);
+	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "hw_version = %d\n", header.hw_version);
+	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "fw_version = %d\n", header.fw_version);
+	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "lens type = %d\n", header.lens_type);
 	switch (header.lens_type) {
 		case LENS_M12_2_6mm:
-			offset += snprintf(&buf[offset],PAGE_SIZE-offset, "lens type: 2.6mm lens\n");
+			offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "lens type: 2.6mm lens\n");
 			break;
 		case LENS_M12_4_2mm:
-			offset += snprintf(&buf[offset],PAGE_SIZE-offset, "lens type: 4.2mm lens\n");
+			offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "lens type: 4.2mm lens\n");
 			break;
 		case LENS_M12_6mm:
-			offset += snprintf(&buf[offset],PAGE_SIZE-offset, "lens type: 6mm lens\n");
+			offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "lens type: 6mm lens\n");
 			break;
 		case LENS_M12_3_6mm:
-			offset += snprintf(&buf[offset],PAGE_SIZE-offset, "lens type: 3.6mm lens\n");
+			offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "lens type: 3.6mm lens\n");
 			break;
 		default:
-			offset += snprintf(&buf[offset],PAGE_SIZE-offset, "error lens type = %d\n", header.lens_type);
+			offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "error lens type = %d\n", header.lens_type);
 			break;
 		}
-	offset += snprintf(&buf[offset],PAGE_SIZE-offset, "bin_size = %d\n", header.bin_size);
-	offset += snprintf(&buf[offset],PAGE_SIZE-offset, "bin crc = 0x%x\n", header.bin_crc);
-	offset += snprintf(&buf[offset],PAGE_SIZE-offset, "header crc = 0x%x\n\n", header.header_crc);
+	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "bin_size = %d\n", header.bin_size);
+	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "bin crc = 0x%x\n", header.bin_crc);
+	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "header crc = 0x%x\n\n", header.header_crc);
 
 	return offset;
 }
@@ -1971,7 +1971,7 @@ static ssize_t ap0100_show_fw_status(struct device *dev,
 	mutex_lock(&data->lock);
 	status = data->fw_status;
 	mutex_unlock(&data->lock);
-	return snprintf(buf, PAGE_SIZE, "%d\n", data->fw_status);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", data->fw_status);
 }
 
 static ssize_t ap0100_write_bin(struct device *dev,
