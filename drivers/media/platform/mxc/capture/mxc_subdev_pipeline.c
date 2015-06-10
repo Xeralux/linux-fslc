@@ -35,37 +35,35 @@
 #include <media/media-device.h>
 #include <media/media-entity.h>
 #include <linux/i2c.h>
+#include <linux/atomic.h>
 #include "mxc_v4l2_capture.h"
 
 static u32 MXC_PIPELINE_XCLK_MIN = 6000000;
 static u32 MXC_PIPELINE_XCLK_MAX = 67500000;
 
-//max_subdev must be no greater than this - 1
-#define MAX_PIPELINE_LENGTH 20
+#define MAX_PIPELINE_LENGTH 8
 
 struct mxc_pipeline_data {
 	struct device *dev;
 
+	/*
+	 * For interfacing with mxc_v4l2_capture
+	 */
 	struct v4l2_int_slave v4l2_int_slave;
 	struct v4l2_int_device v4l2_int_dev;
 
 	struct v4l2_device v4l2_dev;
 	struct media_device media_dev;
-	/*IMPORTANT v4l2_dev keeps an internal representation of all the subdevices, however
-	 * we have no guarantee of the ordering of those devices without making assumptions about
-	 * the implementation which may not be safe to make (for example, switching from list_add_tail
-	 * to list_add.  Therefore keep our own list here.
+	/*
+	 * In-order list of subdevs that make up the pipeline.  We build the list from
+	 * the CPU outward, based on the device tree.
 	 */
-	struct v4l2_subdev **subdevs;
-	/*The first entry will be the source input device (sensor) and the last entry will be the one nearest
-	 * to the processor (the sink.)
-	 */
-	int max_subdev;
+	struct v4l2_subdev *subdevs[MAX_PIPELINE_LENGTH];
+	int subdev_count;
 	struct sensor_data sensor;
-	bool running; /*This is set/unset by the power ioctl.  All other ioctls are only accessed when power is on.*/
-	bool operational; /*Set when v4l2 int device is registered*/
-	struct mutex lock;
-	struct mutex config_lock;
+
+	atomic_t running;
+	atomic_t streaming;
 };
 
 static struct mxc_pipeline_data *v4l2_int_to_mxc_pipeline(struct v4l2_int_device *_dev_)
@@ -127,26 +125,33 @@ static struct mxc_timings_map mxc_timings_map[] = {
 		{ V4L2_DV_BT_CEA_640X480P59_94, { .denominator = 5994, .numerator = 100,}},
 };
 
+static inline struct v4l2_subdev *find_source_subdev(struct mxc_pipeline_data *data)
+{
+	if (data->subdev_count == 0)
+		return NULL;
+	return data->subdevs[data->subdev_count-1];
+}
+
 static int _run_from_sink(struct mxc_pipeline_data *data,
-							int (*dofunc)(struct v4l2_subdev *sd),
-							int (*undofunc)(struct v4l2_subdev *sd))
+			  int (*dofunc)(struct v4l2_subdev *sd),
+			  int (*undofunc)(struct v4l2_subdev *sd))
 {
 	int i, ret = 0;
 	int tmpret;
-	for(i=data->max_subdev; i >= 0; i--) {
+	for (i = 0; i < data->subdev_count; i++) {
 		struct v4l2_subdev *sd = data->subdevs[i];
 		tmpret = dofunc(sd);
-		if(tmpret == -ENOIOCTLCMD || tmpret >= 0)
+		if (tmpret == -ENOIOCTLCMD || tmpret >= 0)
 			continue;
-		if(undofunc != NULL)
+		if (undofunc != NULL)
 			goto unwind;
-		if(ret == 0)
+		if (ret == 0)
 			ret = tmpret;
 	}
 	return ret;
 unwind:
 	ret = tmpret;
-	for(; i <= data->max_subdev; i++ ) {
+	for (; i >= 0; i-- ) {
 		struct v4l2_subdev *sd = data->subdevs[i];
 		undofunc(sd);
 	}
@@ -155,25 +160,25 @@ unwind:
 }
 
 static int _run_from_source(struct mxc_pipeline_data *data,
-							int (*dofunc)(struct v4l2_subdev *sd),
-							int (*undofunc)(struct v4l2_subdev *sd))
+			    int (*dofunc)(struct v4l2_subdev *sd),
+			    int (*undofunc)(struct v4l2_subdev *sd))
 {
 	int i, ret = 0;
 	int tmpret;
-	for(i=0; i <= data->max_subdev; i++) {
+	for (i = data->subdev_count-1; i >= 0; i--) {
 		struct v4l2_subdev *sd = data->subdevs[i];
 		tmpret = dofunc(sd);
-		if(tmpret == -ENOIOCTLCMD || tmpret >= 0)
+		if (tmpret == -ENOIOCTLCMD || tmpret >= 0)
 			continue;
-		if(undofunc != NULL)
+		if (undofunc != NULL)
 			goto unwind;
-		if(ret == 0)
+		if (ret == 0)
 			ret = tmpret;
 	}
 	return ret;
 unwind:
 	ret = tmpret;
-	for(; i >= 0; i--) {
+	for (; i < data->subdev_count; i++) {
 		struct v4l2_subdev *sd = data->subdevs[i];
 		undofunc(sd);
 	}
@@ -250,7 +255,7 @@ static int _parse_mbus_framefmt(struct v4l2_mbus_framefmt *mf, struct mxc_pipeli
 static int _input_device_to_sensor(struct mxc_pipeline_data *data)
 {
 	struct sensor_data *sensor = &data->sensor;
-	struct v4l2_subdev *input_device = (data->subdevs == NULL ? NULL : data->subdevs[0]);
+	struct v4l2_subdev *input_device = find_source_subdev(data);
 	struct v4l2_subdev_format format;
 	struct v4l2_subdev_frame_interval fi;
 	struct v4l2_dv_timings timings;
@@ -335,16 +340,20 @@ static int ioctl_enum_framesizes(struct v4l2_int_device *s,
 				 struct v4l2_frmsizeenum *fsize)
 {
 	struct mxc_pipeline_data *data = v4l2_int_to_mxc_pipeline(s);
-	struct v4l2_subdev *input_device = data->subdevs[0];
+	struct v4l2_subdev *input_device = find_source_subdev(data);
 	int ret;
 	__u32 index = fsize->index;
+
+	if (WARN_ON(input_device == NULL))
+		return -ENODEV;
+
 	ret = v4l2_subdev_call(input_device, video, enum_framesizes, fsize);
-	if (ret < 0 && fsize->index <= (MODE_TEST_START+ data->max_subdev)) {
+	if (ret < 0 && fsize->index < (MODE_TEST_START+ data->subdev_count)) {
 		fsize->index = 0;
 		ret = v4l2_subdev_call(input_device, video, enum_framesizes, fsize);
 		fsize->index = index;
 	}
-	if(ret < 0 && fsize->index <= (MODE_TEST_START+ data->max_subdev)) {
+	if(ret < 0 && fsize->index < (MODE_TEST_START+ data->subdev_count)) {
 		struct sensor_data *sensor = &data->sensor;
 		if(fsize->pixel_format != sensor->pix.pixelformat)
 			return -EINVAL;
@@ -422,7 +431,7 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 
 	if (capturemode >= MODE_TEST_START){
 		test_output = capturemode - MODE_TEST_START;
-		if(test_output > data->max_subdev) {
+		if (test_output >= data->subdev_count) {
 			dev_err(dev,"Invalid test output %d\n", test_output);
 			return -EINVAL;
 		}
@@ -508,12 +517,14 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 	return 0;
 }
 
+/*
+ * XXX - Do we even need this?  Doesn't look like this status
+ *       is used anywhere.
+ */
 static int ioctl_s_power(struct v4l2_int_device *s, int on)
 {
 	struct mxc_pipeline_data *data = v4l2_int_to_mxc_pipeline(s);
-	mutex_lock(&data->lock);
-	data->running = on;
-	mutex_unlock(&data->lock);
+	atomic_xchg(&data->running, (on ? 1 : 0));
 	return 0;
 }
 
@@ -530,6 +541,154 @@ static struct v4l2_int_ioctl_desc mxc_pipeline_ioctl_desc[] =
 	  (v4l2_int_ioctl_func *)ioctl_s_power },
 };
 
+static int find_all_subdevs(struct mxc_pipeline_data *data,
+			    struct device_node *initial_node)
+{
+	struct device *dev = data->dev;
+	struct i2c_client *client;
+	struct device_node *cur_endpoint, *next_endpoint, *cur_node, *remote_node, *visited[8];
+	int visitcount;
+
+	/*
+	 * Trace the path through the device tree.  No branches allowed.
+	 */
+	for (cur_node = initial_node, visitcount = 0;
+	     visitcount < ARRAY_SIZE(visited) && cur_node != NULL;
+	     cur_node = remote_node) {
+		struct device_node *possible_remotes[16];
+		int i, remote_count;
+
+		/*
+		 * Find all possible remotes connected here
+		 */
+		visited[visitcount++] = cur_node;
+		remote_count = 0;
+		remote_node = NULL;
+		for (cur_endpoint = v4l2_of_get_next_endpoint(cur_node, NULL);
+		     cur_endpoint != NULL; cur_endpoint = next_endpoint) {
+			remote_node = v4l2_of_get_remote_port_parent(cur_endpoint);
+			for (i = 0; i < visitcount && remote_node != visited[i]; i++);
+			if (i < visitcount) {
+				of_node_put(remote_node);
+				next_endpoint = v4l2_of_get_next_endpoint(cur_node, cur_endpoint);
+				of_node_put(cur_endpoint);
+				continue;
+			}
+			possible_remotes[remote_count++] = remote_node;
+			if (remote_count >= ARRAY_SIZE(possible_remotes)) {
+				dev_err(data->dev, "device tree problem - too many remotes\n");
+				for (i = 0; i < remote_count; i++)
+					of_node_put(possible_remotes[i]);
+				of_node_put(cur_endpoint);
+				of_node_put(cur_node);
+				return -E2BIG;
+			}
+			next_endpoint = v4l2_of_get_next_endpoint(cur_node, cur_endpoint);
+			of_node_put(cur_endpoint);
+		}
+		/*
+		 * Any of the remotes available?  We need to walk through all of
+		 * the candidates to at least drop the of_node refcount, so no
+		 * early exit from this loop.
+		 */
+		for (remote_node = NULL, i = 0; i < remote_count; i++) {
+			client = of_find_i2c_device_by_node(possible_remotes[i]);
+			if (remote_node == NULL && client != NULL && device_trylock(&client->dev)) {
+				if (client->dev.driver && try_module_get(client->dev.driver->owner)) {
+					if (i2c_get_clientdata(client) != NULL)
+						remote_node = of_node_get(possible_remotes[i]);
+					else
+						dev_dbg(dev, "Skipping inactive remote: %s\n", of_node_full_name(possible_remotes[i]));
+					module_put(client->dev.driver->owner);
+				}
+				device_unlock(&client->dev);
+			}
+			of_node_put(possible_remotes[i]);
+		}
+		/*
+		 * If there was at least one (non-back-link) remote, and none of the
+		 * remotes are available yet; defer until at least one of them is.
+		 */
+		if (remote_count > 0 && remote_node == NULL) {
+			of_node_put(cur_node);
+			return -EPROBE_DEFER;
+		}
+		/*
+		 * Found a remote, stash its subdev pointer
+		 */
+		if (remote_node != NULL) {
+			struct v4l2_subdev *sd = i2c_get_clientdata(of_find_i2c_device_by_node(remote_node));
+			if (data->subdev_count < ARRAY_SIZE(data->subdevs))
+				data->subdevs[data->subdev_count++] = sd;
+			else
+				dev_err(dev, "Too many subdevs in pipeline\n");
+		}
+		of_node_put(cur_node);
+	}
+	dev_dbg(dev, "%s: exiting, subdev_count is %d\n", __func__, data->subdev_count);
+
+	return 0;
+}
+
+static int subdev_init(struct v4l2_subdev *sd)
+{
+	return v4l2_subdev_call(sd, core, init, 0);
+}
+
+static int setup_v4l2_int_device(struct mxc_pipeline_data *data)
+{
+	struct v4l2_int_device *v4l2_int_dev = &data->v4l2_int_dev;
+	struct v4l2_int_slave  *v4l2_int_slave = &data->v4l2_int_slave;
+
+
+	v4l2_int_dev->module = THIS_MODULE;
+	strlcpy(v4l2_int_dev->name, data->v4l2_dev.name, sizeof(v4l2_int_dev->name));
+	v4l2_int_dev->type = v4l2_int_type_slave;
+
+	v4l2_int_slave->ioctls = mxc_pipeline_ioctl_desc;
+	v4l2_int_slave->num_ioctls = ARRAY_SIZE(mxc_pipeline_ioctl_desc);
+	v4l2_int_dev->u.slave = v4l2_int_slave;
+
+	v4l2_int_dev->priv = &data->sensor;
+
+	return v4l2_int_device_register(&data->v4l2_int_dev);
+}
+
+static ssize_t mxc_pipeline_operational_store(struct device *dev, struct device_attribute *attr,
+					      const char *buf, int count)
+{
+	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
+	unsigned long val;
+
+	if (WARN_ON(!data))
+		return -ENODEV;
+
+	if(_kstrtoul(buf, 10, &val) || val > 1)
+		return -EINVAL;
+
+	if (atomic_cmpxchg(&data->streaming, 1-val, val)) {
+		int ret;
+		if (val)
+			ret = _run_from_source(data, subdev_s_stream_on, subdev_s_stream_off);
+		else
+			ret = _run_from_sink(data, subdev_s_stream_off, subdev_s_stream_on);
+		if (ret < 0)
+			return ret;
+	}
+
+	return count;
+}
+
+static ssize_t mxc_pipeline_operational_show(struct device *dev,
+                                  struct device_attribute *attr, char *buf)
+{
+	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
+
+	return scnprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&data->streaming));
+
+}
+static DEVICE_ATTR(operational, 0666, (void *)mxc_pipeline_operational_show, (void *)mxc_pipeline_operational_store);
+
 static ssize_t mxc_pipeline_subdevs_show(struct device *dev,
                                   struct device_attribute *attr, char *buf)
 {
@@ -537,21 +696,16 @@ static ssize_t mxc_pipeline_subdevs_show(struct device *dev,
 	int count = 0;
 	int i;
 
-	mutex_lock(&data->lock);
-
-	if(!data->operational)
-		goto out;
-
-	for(i = 0; i <= data->max_subdev; i++) {
+	for (i = data->subdev_count-1; i >= 0; i--) {
 		count += snprintf(&buf[count], PAGE_SIZE-count,"%s\n", data->subdevs[i]->name);
 	}
-out:
-	mutex_unlock(&data->lock);
+
 	return count;
 }
 static DEVICE_ATTR(subdevs, 0444, (void *)mxc_pipeline_subdevs_show, NULL);
 
 static struct attribute *attributes[] = {
+	&dev_attr_operational.attr,
 	&dev_attr_subdevs.attr,
 	NULL,
 };
@@ -560,364 +714,61 @@ static const struct attribute_group attr_group = {
 	.attrs	= attributes,
 };
 
-static int walk_mxc_pipeline(struct mxc_pipeline_data *data,
-		const struct device_node *prev_node,
-		struct device_node *cur_node,
-		unsigned cur_depth)
-{
-	struct i2c_client *client;
-	struct device_driver *drv;
-	struct device_node *cur_endpoint;
-	int ret;
-	int endpoint_count;
-	struct v4l2_subdev *sd;
-
-	if(cur_node == NULL) {
-		dev_err(data->dev, "endpoint with no remote-port?");
-		return -EINVAL;
-	}
-
-	if(cur_depth >= MAX_PIPELINE_LENGTH) {
-		ret = -E2BIG;
-		goto of_put;
-	}
-	client = of_find_i2c_device_by_node(cur_node);
-	if(!client) {
-		ret = -EPROBE_DEFER;
-		goto of_put;
-	}
-	if(!device_trylock(&client->dev)) {
-		ret = -EPROBE_DEFER;
-		goto of_put;
-	}
-
-	drv = client->dev.driver;
-	if (!drv || !try_module_get(drv->owner)) {
-		ret = -EPROBE_DEFER;
-		goto dev_put;
-	}
-
-	sd = i2c_get_clientdata(client);
-	if(!sd || !sd->name[0]) {
-		ret = -EPROBE_DEFER;
-		goto mod_put;
-	}
-
-	endpoint_count = 1;
-	ret = 0;
-	for(cur_endpoint = v4l2_of_get_next_endpoint(cur_node, NULL);
-		cur_endpoint != NULL;
-		cur_endpoint = v4l2_of_get_next_endpoint(cur_node,cur_endpoint)) {
-
-		struct device_node *remote_node;
-		remote_node = v4l2_of_get_remote_port_parent(cur_endpoint);
-		if(remote_node == prev_node)
-			continue;
-
-		endpoint_count++;
-		ret = walk_mxc_pipeline(data, cur_node, remote_node, cur_depth+1);
-		if(ret == 0)
-			break;
-	}
-	if(endpoint_count == 1) {
-		/*At the end.*/
-		data->max_subdev = cur_depth;
-		data->subdevs = devm_kzalloc(data->dev,
-				sizeof(data->subdevs[0])*(cur_depth+1),
-				GFP_KERNEL);
-		if(!data->subdevs) {
-			ret = -ENOMEM;
-			goto mod_put;
-		}
-	}
-	if(ret == 0) {
-		data->subdevs[data->max_subdev - cur_depth] = sd;
-		data->v4l2_dev.mdev = &data->media_dev;
-		ret = v4l2_device_register_subdev(&data->v4l2_dev, sd);
-		if(ret < 0) {
-			dev_err(data->dev, "%s:unable to register device 0x%hx", __func__, client->addr);
-		} else {
-			dev_dbg(data->dev,"sd name %s, pos %d max_subdev %d",
-					sd->name, data->max_subdev - cur_depth, data->max_subdev);
-		}
-	}
-mod_put:
-	module_put(drv->owner);
-dev_put:
-	device_unlock(&client->dev);
-	put_device(&client->dev);
-of_put:
-	/*Previous call to v4l2_of_get_remote_port_parent
-	 * says we neet to call of_node_put() on the returned port.
-	 */
-	of_node_put(cur_node);
-	return ret;
-}
-
-static int subdev_init(struct v4l2_subdev *sd)
-{
-	return v4l2_subdev_call(sd, core, init, 0);
-}
-
-static int _mxc_pipeline_probe(struct mxc_pipeline_data *data)
-{
-	struct device *dev = data->dev;
-	struct sensor_data *sensor;
-	struct v4l2_device *v4l2_dev;
-	struct device_node *mxc_node;
-	struct platform_device *mxc_plat;
-	struct v4l2_subdev *mxc_subdev;
-	struct device_node *mxc_endpoint;
-	struct v4l2_int_device *v4l2_int_dev;
-	struct v4l2_int_slave *v4l2_int_slave;
-	int ret;
-
-	ret = device_reset(dev);
-	if (ret == -ENODEV)
-		return -EPROBE_DEFER;
-
-	mxc_node = of_parse_phandle(dev->of_node,
-			"mxc-node", 0);
-	if(mxc_node == NULL) {
-		dev_err(dev, "Missing mxc-endpoint node\n");
-		return -EINVAL;
-	}
-	mxc_plat = of_find_device_by_node(mxc_node);
-	if(mxc_plat == NULL) {
-		dev_err(dev, "mxc-node is not a platform device\n");
-		return -EINVAL;
-	}
-
-	/*Grab csi_id early because we use it in the v4l2_dev name.*/
-	sensor = &data->sensor;
-	ret = of_property_read_u32(mxc_node, "csi_id",
-					&(sensor->csi));
-	if (ret <0) {
-		dev_err(dev, "csi id missing or invalid: %d", ret);
-		return ret;
-	}
-
-	v4l2_dev = &data->v4l2_dev;
-	snprintf(v4l2_dev->name,
-			sizeof(v4l2_dev->name),
-			"mxc-pipeline-cam-%d",sensor->csi);
-	v4l2_dev->name[sizeof(v4l2_dev->name)-1] = '\0';
-	ret = v4l2_device_register(dev, v4l2_dev);
-	if(ret < 0)	{
-		dev_err(dev, "Failed to register v4l2_device: %d\n", ret);
-		return ret;
-	}
-
-	device_lock(&mxc_plat->dev);
-	if (!mxc_plat->dev.driver ||
-	    !try_module_get(mxc_plat->dev.driver->owner)) {
-		ret = -EPROBE_DEFER;
-		goto error1;
-	}
-
-	ret = -EINVAL;
-	/*Parse pipeline*/
-	for(mxc_endpoint = v4l2_of_get_next_endpoint(mxc_node, NULL);
-		 mxc_endpoint != NULL;
-		 mxc_endpoint = v4l2_of_get_next_endpoint(mxc_node, mxc_endpoint)) {
-		struct device_node *remote_node;
-		remote_node = v4l2_of_get_remote_port_parent(mxc_endpoint);
-		ret = walk_mxc_pipeline(data, mxc_node, remote_node, 1);
-	}
-	if(ret < 0) {
-		goto error2;
-	}
-	/*Have a valid pipeline.  Add the mxc device to the end.*/
-	mxc_subdev = platform_get_drvdata(mxc_plat);
-	data->subdevs[data->max_subdev] = mxc_subdev;
-	ret = v4l2_device_register_subdev(&data->v4l2_dev, mxc_subdev);
-	if(ret < 0) {
-		dev_err(data->dev, "%s:unable to register mxc-device", __func__);
-		goto error2;
-	}
-	/*Initialize pixel data*/
-	ret = _input_device_to_sensor(data);
-	if(ret < 0) {
-		dev_err(dev, "Unable to get format data from input device\n");
-		goto error2;
-	}
-
-	/*Since we know the mxc device is OK now, parse its clock information.*/
-    /* Not using devm_clk_get because we don't use the clock ourselves.
-	 * It should have been gotten and enabled by the mxc subdevice.
-	 */
-	sensor->sensor_clk = devm_clk_get(&mxc_plat->dev, "csi_mclk");
-	if (IS_ERR(sensor->sensor_clk)) {
-		ret = PTR_ERR(sensor->sensor_clk);
-		dev_err(dev, "clock-frequency missing or invalid: %d\n", ret);
-		goto error2;
-	}
-	ret = of_property_read_u32(mxc_node, "mclk",&sensor->mclk);
-	if(ret < 0) {
-		dev_err(dev, "mclk missing or invalid: %d\n", ret);
-		goto error2;
-	}
-
-	ret = of_property_read_u32(mxc_node, "mclk_source",
-					(u32 *) &(sensor->mclk_source));
-	if (ret < 0) {
-		dev_err(dev, "mclk_source missing or invalid: %d\n", ret);
-		goto error2;
-	}
-
-	ret = of_property_read_u32(mxc_node, "vdev", &sensor->vdev);
-	if (ret) {
-		dev_err(dev, "vdev missing or invalid\n");
-		return ret;
-	}
-
-	ret = _run_from_source(data, subdev_init, NULL);
-	if (ret < 0) {
-		dev_err(dev, "unable to initialize subdevices: %d", ret);
-		goto error2;
-	}
-
-	/*Dont know if capability is meaningful.*/
-	sensor->streamcap.capability = V4L2_MODE_HIGHQUALITY |
-					   V4L2_CAP_TIMEPERFRAME;
-	/*register v4l2_int_dev*/
-	v4l2_int_dev = &data->v4l2_int_dev;
-	v4l2_int_dev->module = THIS_MODULE;
-	snprintf(v4l2_int_dev->name,
-			sizeof(v4l2_int_dev->name),
-			"mxc-pipeline-cam-%d",sensor->csi);
-	v4l2_int_dev->name[sizeof(v4l2_int_dev->name)-1] = '\0';
-	v4l2_int_dev->type = v4l2_int_type_slave;
-
-	v4l2_int_slave= &data->v4l2_int_slave;
-	v4l2_int_slave->ioctls = mxc_pipeline_ioctl_desc;
-	v4l2_int_slave->num_ioctls = ARRAY_SIZE(mxc_pipeline_ioctl_desc);
-	v4l2_int_dev->u.slave = v4l2_int_slave;
-
-	v4l2_int_dev->priv = sensor;
-
-	mutex_unlock(&data->lock);
-	ret = v4l2_int_device_register(&data->v4l2_int_dev);
-	mutex_lock(&data->lock);
-	if(ret < 0) {
-		dev_err(dev,"%s:unable to register v4l2_int device", __func__);
-		goto error2;
-	}
-
-	ret = sysfs_create_group(&dev->kobj, &attr_group);
-	if(ret < 0) {
-		dev_err(dev,"Cannot create sysfs group\n");
-		goto error2;
-	}
-
-	ret = v4l2_device_register_subdev_nodes(&data->v4l2_dev);
-	if(ret < 0) {
-		dev_err(dev,"Cannot register subdev nodes\n");
-		goto error2;
-	}
-	data->operational = true;
-error2:
-	module_put(mxc_plat->dev.driver->owner);
-error1:
-	device_unlock(&mxc_plat->dev);
-	put_device(&mxc_plat->dev);
-	if (ret < 0)
-		v4l2_device_unregister(&data->v4l2_dev);
-	return ret;
-}
-
-static void _mxc_pipeline_remove(struct mxc_pipeline_data *data)
-{
-	int ret;
-
-	data->operational = false;
-	ret = _run_from_sink(data, subdev_s_stream_off, NULL);
-	if(ret < 0) {
-		dev_err(data->dev, "Unable to stop video pipeline, removing anyway:%d\n", ret);
-	}
-	sysfs_remove_group(&data->dev->kobj, &attr_group);
-	dev_dbg(data->dev, "Calling %s", "v4l2_int_device_unregister");
-	v4l2_int_device_unregister(&data->v4l2_int_dev);
-	dev_dbg(data->dev, "Calling %s", "v4l2_device_unregister");
-	v4l2_device_unregister(&data->v4l2_dev);
-	media_device_unregister(&data->media_dev);
-}
-
-static ssize_t mxc_pipeline_operational_store(struct device *dev,
-                                  struct device_attribute *attr, const char *buf, int count)
-{
-	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
-	unsigned long val;
-
-	if (WARN_ON(!data))
-		return -ENODEV;
-
-	if(_kstrtoul(buf, 10, &val) || val > 1) {
-		dev_err(dev,"Must supply value between 0-1.\n");
-		return count;
-	}
-
-#if 0
-	mutex_lock(&data->config_lock);
-	mutex_lock(&data->lock);
-	if(!!val == data->operational)
-		goto out;
-	if(data->running) {
-		dev_err(dev, "Cannot change operational state while running");
-		goto out;
-	}
-	if(data->operational)
-		_mxc_pipeline_remove(data);
-
-	if(val)
-		_mxc_pipeline_probe(data);
-
-out:
-	mutex_unlock(&data->lock);
-	mutex_unlock(&data->config_lock);
-#endif
-	return count;
-}
-
-static ssize_t mxc_pipeline_operational_show(struct device *dev,
-                                  struct device_attribute *attr, char *buf)
-{
-	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
-	ssize_t result;
-	if (WARN_ON(!data))
-		return -ENODEV;
-	mutex_lock(&data->lock);
-	result = sprintf(buf, "%d\n",data->operational);
-	mutex_unlock(&data->lock);
-	return result;
-}
-static DEVICE_ATTR(operational, 0666, (void *)mxc_pipeline_operational_show, (void *)mxc_pipeline_operational_store);
-
-static struct attribute *init_attributes[] = {
-	&dev_attr_operational.attr,
-	NULL,
-};
-
-static const struct attribute_group init_attr_group = {
-	.attrs	= init_attributes,
-};
-
 static int mxc_pipeline_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct mxc_pipeline_data *data;
-	int ret;
+	struct device_node *mxc_node;
+	struct platform_device *mxc_plat;
+	struct v4l2_subdev *mxc_plat_subdev;
+	u32 csi_id, mclk_source;
+	int i, ret;
 
 	ret = device_reset(dev);
 	if (ret == -ENODEV)
 		return -EPROBE_DEFER;
 
+	/*
+	 * Find the "sink" end of the pipeline in the device tree.
+	 * This is the node closest to the CPU.
+	 */
+	mxc_node = of_parse_phandle(dev->of_node, "mxc-node", 0);
+	if (mxc_node == NULL) {
+		dev_err(dev, "Missing mxc-endpoint node\n");
+		return -EINVAL;
+	}
+	mxc_plat = of_find_device_by_node(mxc_node);
+	if (mxc_plat == NULL) {
+		dev_err(dev, "mxc-node is not a platform device\n");
+		return -EINVAL;
+	}
+	device_lock(&mxc_plat->dev);
+	if (!mxc_plat->dev.driver || !try_module_get(mxc_plat->dev.driver->owner)) {
+		ret = -EPROBE_DEFER;
+		goto cleanup_unlock;
+	}
+	ret = of_property_read_u32(mxc_node, "csi_id", &csi_id);
+	if (ret < 0) {
+		dev_err(dev, "csi id missing or invalid: %d", ret);
+		goto cleanup_mod_put;
+	}
+
+	mxc_plat_subdev = platform_get_drvdata(mxc_plat);
+	if (mxc_plat_subdev == NULL) {
+		ret = -EPROBE_DEFER;
+		goto cleanup_mod_put;
+	}
+
 	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
-	if(!data)
-		return -ENOMEM;
+	if (!data) {
+		ret = -ENOMEM;
+		goto cleanup_mod_put;
+	}
+	atomic_set(&data->running, 0);
+	atomic_set(&data->streaming, 0);
 	data->dev = dev;
-	mutex_init(&data->lock);
-	mutex_init(&data->config_lock);
+	data->sensor.csi = csi_id;
+	data->subdevs[data->subdev_count++] = mxc_plat_subdev;
 
 	/*Must come before call to v4l2_device_register*/
 	platform_set_drvdata(pdev, data);
@@ -925,38 +776,111 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 	data->media_dev.dev = dev;
 	strlcpy(data->media_dev.model, "Sensity Camera Board",
 		sizeof(data->media_dev.model));
-	dev_err(dev, "calling media_device_register\n");
 	ret = media_device_register(&data->media_dev);
 	if (ret < 0) {
 		dev_err(dev, "could not register media device: %d\n", ret);
-		return ret;
+		goto cleanup_free_mem;
+	}
+	data->v4l2_dev.mdev = &data->media_dev;
+	snprintf(data->v4l2_dev.name, sizeof(data->v4l2_dev.name),
+		 "mxc-pipeline-cam-%d", csi_id);
+	ret = v4l2_device_register(dev, &data->v4l2_dev);
+	if (ret < 0) {
+		dev_err(dev, "could not register v4l2 device: %d\n", ret);
+		goto cleanup_media_device;
+	}
+	ret = find_all_subdevs(data, mxc_node);
+	if (ret < 0) {
+		if (ret != -EPROBE_DEFER)
+			dev_err(dev, "could not locate needed subdevices\n");
+		goto cleanup_v4l2_device;
 	}
 
-	mutex_lock(&data->lock);
-	ret = _mxc_pipeline_probe(data);
-	mutex_unlock(&data->lock);
-	if(ret < 0) {
-		dev_err(dev, "calling media_device_unregister (1)\n");
-		media_device_unregister(&data->media_dev);
-		return ret;
+	for (i = data->subdev_count-1, ret = 0; i >= 0 && ret == 0; i--)
+		ret = v4l2_device_register_subdev(&data->v4l2_dev, data->subdevs[i]);
+	if (ret != 0) {
+		dev_err(dev, "error registering v4l2 subdevs: %d\n", ret);
+		goto cleanup_v4l2_device;
+	}
+	ret = v4l2_device_register_subdev_nodes(&data->v4l2_dev);
+	if (ret < 0) {
+		dev_err(dev, "error registering device nodes for subdevs: %d\n", ret);
+		goto cleanup_v4l2_device;
 	}
 
-	ret = sysfs_create_group(&dev->kobj, &init_attr_group);
-	if(ret < 0) {
-		dev_err(dev,"Cannot create sysfs group\n");
-		dev_err(dev, "calling media_device_unregister (2)\n");
-		media_device_unregister(&data->media_dev);
+	ret = _input_device_to_sensor(data);
+	if (ret < 0) {
+		dev_err(dev, "could not get format data from iput device\n");
+		goto cleanup_v4l2_device;
+	}
+	data->sensor.sensor_clk = devm_clk_get(&mxc_plat->dev, "csi_mclk");
+	if (IS_ERR(data->sensor.sensor_clk)) {
+		dev_err(dev, "clock frequency missing or invalid: %d\n", ret);
+		goto cleanup_v4l2_device;
+	}
+	ret = of_property_read_u32(mxc_node, "mclk", &data->sensor.mclk);
+	if (ret < 0) {
+		dev_err(dev, "mclk property missing or invalid: %d\n", ret);
+		goto cleanup_sensor_clk;
+	}
+	ret = of_property_read_u32(mxc_node, "mclk_source", &mclk_source);
+	if (ret < 0) {
+		dev_err(dev, "mclk_source property missing or invalid: %d\n", ret);
+		goto cleanup_sensor_clk;
+	}
+	data->sensor.mclk_source = mclk_source;
+	ret = of_property_read_u32(mxc_node, "vdev", &data->sensor.vdev);
+	if (ret < 0) {
+		dev_err(dev, "vdev property missing or invalid: %d\n", ret);
+		goto cleanup_sensor_clk;
 	}
 
+	ret = _run_from_source(data, subdev_init, NULL);
+	if (ret < 0) {
+		dev_err(dev, "could not initialize subdevices: %d\n", ret);
+		goto cleanup_sensor_clk;
+	}
+
+	/*Dont know if capability is meaningful.*/
+	data->sensor.streamcap.capability = (V4L2_MODE_HIGHQUALITY |
+					     V4L2_CAP_TIMEPERFRAME);
+
+	/*
+	 * The Freescale capture driver still uses the obsolete
+	 * "v4l2-internal" pseudo-framework.
+	 */
+	ret = setup_v4l2_int_device(data);
+	if (ret < 0) {
+		dev_err(dev, "could not initialize v4l2-int device: %d\n", ret);
+		goto cleanup_sensor_clk;
+	}
+
+	ret = sysfs_create_group(&dev->kobj, &attr_group);
+	if (ret == 0)
+		goto cleanup_mod_put;
+	dev_err(dev, "Cannot create sysfs group\n");
+
+cleanup_sensor_clk:
+	devm_clk_put(dev, data->sensor.sensor_clk);
+cleanup_v4l2_device:
+	v4l2_device_unregister(&data->v4l2_dev);
+cleanup_media_device:
+	media_device_unregister(&data->media_dev);
+cleanup_free_mem:
+	devm_kfree(dev, data);
+cleanup_mod_put:
+	module_put(mxc_plat->dev.driver->owner);
+cleanup_unlock:
+	device_unlock(&mxc_plat->dev);
 	return ret;
 }
 
 static int mxc_pipeline_remove(struct platform_device *pdev)
 {
 	struct mxc_pipeline_data *data = platform_get_drvdata(pdev);
-	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
-	_mxc_pipeline_remove(data);
-	dev_err(data->dev, "calling media_device_unregister (3)\n");
+	sysfs_remove_group(&data->dev->kobj, &attr_group);
+	v4l2_int_device_unregister(&data->v4l2_int_dev);
+	v4l2_device_unregister(&data->v4l2_dev);
 	media_device_unregister(&data->media_dev);
 	return 0;
 }
