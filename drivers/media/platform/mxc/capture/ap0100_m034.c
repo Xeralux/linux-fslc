@@ -32,8 +32,10 @@
 #include <linux/reset.h>
 #include <linux/crc32.h>
 #include <linux/firmware.h>
+#include <linux/media.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-device.h>
+#include <media/media-entity.h>
 
 #include <linux/moduleparam.h>
 static unsigned long i2c_retries = 10;
@@ -188,6 +190,7 @@ struct ap0100_m034_data {
 	enum ap0100_m034_frame_mode mode;
 	struct v4l2_fract pending_fi;
 	struct v4l2_subdev	subdev;
+	struct media_pad pad;
 	bool operational;
 	unsigned error_count;
 	struct mutex lock;
@@ -2431,7 +2434,6 @@ static void _ap0100_subdev_clear(struct ap0100_m034_data* data)
 static int ap0100_m034_probe(struct i2c_client *client,
 			const struct i2c_device_id *id)
 {
-	struct v4l2_subdev *subdev;
 	struct device *dev = &client->dev;
 	struct ap0100_m034_data* data;
 	int ret;
@@ -2449,15 +2451,14 @@ static int ap0100_m034_probe(struct i2c_client *client,
 	data->client = client;
 	data->dev = dev;
 
-	/*Not using v4l2_i2c_subdev_init because we don't want i2c devices to be
-	 * automatically removed
-	 */
-	subdev = &data->subdev;
-	v4l2_subdev_init(subdev, &ap0100_m034_subdev_ops);
-	subdev->owner = to_i2c_driver(client->dev.driver)->driver.owner;
-	v4l2_set_subdevdata(subdev, client);
-	i2c_set_clientdata(client, subdev);
-
+	v4l2_i2c_subdev_init(&data->subdev, client, &ap0100_m034_subdev_ops);
+	data->subdev.entity.type = MEDIA_ENT_T_V4L2_SUBDEV_SENSOR;
+	data->pad.flags = MEDIA_PAD_FL_SOURCE;
+	ret = media_entity_init(&data->subdev.entity, 1, &data->pad, 0);
+	if (ret < 0) {
+		dev_err(dev, "error initializing media entity: %d\n", ret);
+		return ret;
+	}
 	mutex_lock(&data->lock);
 	ret = sysfs_create_group(&dev->kobj, &init_attr_group);
 	if(ret < 0) {
@@ -2476,10 +2477,8 @@ static int ap0100_m034_remove(struct i2c_client *client)
 	int ret = 0;
 	struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
 
-	if(data->subdev.v4l2_dev != NULL) {
-		dev_err(data->dev,"v4l2 subdev still in use; please shut down %s.\n",
-				data->subdev.v4l2_dev->name);
-	}
+	v4l2_device_unregister_subdev(&data->subdev);
+	media_entity_cleanup(&data->subdev.entity);
 
 	if(data->operational)
 		ret = _ap0100_m034_remove(data);
