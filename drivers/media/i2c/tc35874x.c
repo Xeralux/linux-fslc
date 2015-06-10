@@ -27,8 +27,10 @@
 #include <linux/delay.h>
 #include <linux/device.h>
 #include <linux/i2c.h>
+#include <linux/media.h>
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-device.h>
+#include <media/media-entity.h>
 
 struct tc35874x_reg {
     unsigned char data_size;
@@ -144,6 +146,7 @@ struct tc35874x_data {
 	enum tc35874x_output output;
 	bool use_test_input; //technically this is output, but ends up being the same.
 	struct v4l2_subdev	subdev;
+	struct media_pad	pads[2]; /* 0=parallel, 1=mipi */
     unsigned int frame_time_ms;
 };
 
@@ -499,18 +502,6 @@ static int tc35874x_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	data->client = client;
-	/*Not using v4l2_i2c_subdev_init because we don't want i2c devices to be
-	 * automatically removed
-	 */
-	subdev = &data->subdev;
-	v4l2_subdev_init(subdev, &tc35874x_subdev_ops);
-	subdev->owner = drv->owner;
-	v4l2_set_subdevdata(subdev, client);
-	i2c_set_clientdata(client, subdev);
-	snprintf(subdev->name, sizeof(subdev->name), "%s %d-%04x",
-		drv->name, i2c_adapter_id(client->adapter),
-		client->addr);
-	subdev->name[sizeof(subdev->name)-1] = 0;
 
 	mode = of_get_property(dev->of_node,
 						   "output-mode", NULL);
@@ -518,17 +509,35 @@ static int tc35874x_probe(struct i2c_client *client,
 		dev_err(dev, "property output-mode missing");
 		return -EINVAL;
 	}
-
 	if(!strcmp(mode,"parallel")) {
 		data->output = TC35874X_OUTPUT_PARALLEL;
 		tc35874x_write_regs(client,parallel_output_normal_regs);
+		data->pads[0].flags = MEDIA_PAD_FL_SOURCE;
+		data->pads[1].flags = MEDIA_PAD_FL_SINK;
 	} else if (!strcmp(mode,"mipi")) {
 		data->output = TC35874X_OUTPUT_MIPI;
 		tc35874x_write_regs(client,mipi_probe_regs);
+		data->pads[0].flags = MEDIA_PAD_FL_SINK;
+		data->pads[1].flags = MEDIA_PAD_FL_SOURCE;
 	} else {
 		dev_err(dev, "output-mode has unknown value %s", mode);
 		return -EINVAL;
 	}
+	subdev = &data->subdev;
+	v4l2_subdev_init(subdev, &tc35874x_subdev_ops);
+	subdev->owner = THIS_MODULE;
+	v4l2_set_subdevdata(subdev, client);
+	i2c_set_clientdata(client, subdev);
+	snprintf(subdev->name, sizeof(subdev->name), "%s %d-%04x",
+		drv->name, i2c_adapter_id(client->adapter),
+		client->addr);
+	subdev->name[sizeof(subdev->name)-1] = 0;
+	ret = media_entity_init(&subdev->entity, 2, data->pads, 0);
+	if (ret < 0) {
+		dev_err(dev, "could not initialize media entity: %d\n", ret);
+		return ret;
+	}
+
 	return sysfs_create_group(&dev->kobj, &attr_group);
 }
 
@@ -542,12 +551,9 @@ static int tc35874x_remove(struct i2c_client *client)
 {
 	struct tc35874x_data *data = to_tc35874x_from_i2c(client);
 
-	if(data->subdev.v4l2_dev != NULL) {
-		dev_err(&client->dev,"v4l2 subdev still in use; please shut down %s.\n",
-				data->subdev.v4l2_dev->name);
-	}
-
 	sysfs_remove_group(&client->dev.kobj, &attr_group);
+	v4l2_device_unregister_subdev(&data->subdev);
+	media_entity_cleanup(&data->subdev.entity);
 	return 0;
 }
 
