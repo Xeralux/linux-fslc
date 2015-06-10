@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2014 Xeralux, Inc. All Rights Reserved.
+ * Copyright (C) 2014-2015, Sensity Systems, Inc. All Rights Reserved.
  */
 
 /*
@@ -25,12 +25,15 @@
 #include <linux/of_device.h>
 #include <linux/reset.h>
 #include <linux/clk.h>
+#include <linux/media.h>
 #include <linux/v4l2-dv-timings.h>
 #include <media/v4l2-dv-timings.h>
 #include <media/v4l2-device.h>
 #include "v4l2-int-device.h"
 #include <media/v4l2-subdev.h>
 #include <media/v4l2-of.h>
+#include <media/media-device.h>
+#include <media/media-entity.h>
 #include <linux/i2c.h>
 #include "mxc_v4l2_capture.h"
 
@@ -47,6 +50,7 @@ struct mxc_pipeline_data {
 	struct v4l2_int_device v4l2_int_dev;
 
 	struct v4l2_device v4l2_dev;
+	struct media_device media_dev;
 	/*IMPORTANT v4l2_dev keeps an internal representation of all the subdevices, however
 	 * we have no guarantee of the ordering of those devices without making assumptions about
 	 * the implementation which may not be safe to make (for example, switching from list_add_tail
@@ -628,6 +632,7 @@ static int walk_mxc_pipeline(struct mxc_pipeline_data *data,
 	}
 	if(ret == 0) {
 		data->subdevs[data->max_subdev - cur_depth] = sd;
+		data->v4l2_dev.mdev = &data->media_dev;
 		ret = v4l2_device_register_subdev(&data->v4l2_dev, sd);
 		if(ret < 0) {
 			dev_err(data->dev, "%s:unable to register device 0x%hx", __func__, client->addr);
@@ -835,6 +840,7 @@ static void _mxc_pipeline_remove(struct mxc_pipeline_data *data)
 	v4l2_int_device_unregister(&data->v4l2_int_dev);
 	dev_dbg(data->dev, "Calling %s", "v4l2_device_unregister");
 	v4l2_device_unregister(&data->v4l2_dev);
+	media_device_unregister(&data->media_dev);
 }
 
 static ssize_t mxc_pipeline_operational_store(struct device *dev,
@@ -851,6 +857,7 @@ static ssize_t mxc_pipeline_operational_store(struct device *dev,
 		return count;
 	}
 
+#if 0
 	mutex_lock(&data->config_lock);
 	mutex_lock(&data->lock);
 	if(!!val == data->operational)
@@ -868,6 +875,7 @@ static ssize_t mxc_pipeline_operational_store(struct device *dev,
 out:
 	mutex_unlock(&data->lock);
 	mutex_unlock(&data->config_lock);
+#endif
 	return count;
 }
 
@@ -914,15 +922,30 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 	/*Must come before call to v4l2_device_register*/
 	platform_set_drvdata(pdev, data);
 
+	data->media_dev.dev = dev;
+	strlcpy(data->media_dev.model, "Sensity Camera Board",
+		sizeof(data->media_dev.model));
+	dev_err(dev, "calling media_device_register\n");
+	ret = media_device_register(&data->media_dev);
+	if (ret < 0) {
+		dev_err(dev, "could not register media device: %d\n", ret);
+		return ret;
+	}
+
 	mutex_lock(&data->lock);
 	ret = _mxc_pipeline_probe(data);
 	mutex_unlock(&data->lock);
-	if(ret < 0)
+	if(ret < 0) {
+		dev_err(dev, "calling media_device_unregister (1)\n");
+		media_device_unregister(&data->media_dev);
 		return ret;
+	}
 
 	ret = sysfs_create_group(&dev->kobj, &init_attr_group);
 	if(ret < 0) {
 		dev_err(dev,"Cannot create sysfs group\n");
+		dev_err(dev, "calling media_device_unregister (2)\n");
+		media_device_unregister(&data->media_dev);
 	}
 
 	return ret;
@@ -933,6 +956,8 @@ static int mxc_pipeline_remove(struct platform_device *pdev)
 	struct mxc_pipeline_data *data = platform_get_drvdata(pdev);
 	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
 	_mxc_pipeline_remove(data);
+	dev_err(data->dev, "calling media_device_unregister (3)\n");
+	media_device_unregister(&data->media_dev);
 	return 0;
 }
 
