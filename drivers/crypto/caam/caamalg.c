@@ -1195,8 +1195,13 @@ static struct aead_edesc *aead_edesc_alloc(struct aead_request *req,
 					 DMA_FROM_DEVICE, dst_chained);
 	}
 
-	/* Check if data are contiguous */
 	iv_dma = dma_map_single(jrdev, req->iv, ivsize, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, iv_dma)) {
+		dev_err(jrdev, "unable to map IV\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	/* Check if data are contiguous */
 	if (assoc_nents || sg_dma_address(req->assoc) + req->assoclen !=
 	    iv_dma || src_nents || iv_dma + ivsize !=
 	    sg_dma_address(req->src)) {
@@ -1253,6 +1258,10 @@ static struct aead_edesc *aead_edesc_alloc(struct aead_request *req,
 
 	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
 					    sec4_sg_bytes, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+		dev_err(jrdev, "unable to map S/G table\n");
+		return ERR_PTR(-ENOMEM);
+	}
 	dma_sync_single_for_device(jrdev, edesc->sec4_sg_dma, sec4_sg_bytes,
 				   DMA_TO_DEVICE);
 
@@ -1380,8 +1389,13 @@ static struct aead_edesc *aead_giv_edesc_alloc(struct aead_givcrypt_request
 					 DMA_FROM_DEVICE, dst_chained);
 	}
 
-	/* Check if data are contiguous */
 	iv_dma = dma_map_single(jrdev, greq->giv, ivsize, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, iv_dma)) {
+		dev_err(jrdev, "unable to map IV\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
+	/* Check if data are contiguous */
 	if (assoc_nents || sg_dma_address(req->assoc) + req->assoclen !=
 	    iv_dma || src_nents || iv_dma + ivsize != sg_dma_address(req->src))
 		contig &= ~GIV_SRC_CONTIG;
@@ -1448,6 +1462,10 @@ static struct aead_edesc *aead_giv_edesc_alloc(struct aead_givcrypt_request
 
 	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
 					    sec4_sg_bytes, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+		dev_err(jrdev, "unable to map S/G table\n");
+		return ERR_PTR(-ENOMEM);
+	}
 	dma_sync_single_for_device(jrdev, edesc->sec4_sg_dma, sec4_sg_bytes,
 				   DMA_TO_DEVICE);
 
@@ -1536,11 +1554,16 @@ static struct ablkcipher_edesc *ablkcipher_edesc_alloc(struct ablkcipher_request
 					 DMA_FROM_DEVICE, dst_chained);
 	}
 
+	iv_dma = dma_map_single(jrdev, req->info, ivsize, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, iv_dma)) {
+		dev_err(jrdev, "unable to map IV\n");
+		return ERR_PTR(-ENOMEM);
+	}
+
 	/*
 	 * Check if iv can be contiguous with source and destination.
 	 * If so, include it. If not, create scatterlist.
 	 */
-	iv_dma = dma_map_single(jrdev, req->info, ivsize, DMA_TO_DEVICE);
 	dma_sync_single_for_device(jrdev, iv_dma, ivsize, DMA_TO_DEVICE);
 	if (!src_nents && iv_dma + ivsize == sg_dma_address(req->src))
 		iv_contig = true;
@@ -1580,6 +1603,10 @@ static struct ablkcipher_edesc *ablkcipher_edesc_alloc(struct ablkcipher_request
 
 	edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
 					    sec4_sg_bytes, DMA_TO_DEVICE);
+	if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+		dev_err(jrdev, "unable to map S/G table\n");
+		return ERR_PTR(-ENOMEM);
+	}
 
 	edesc->iv_dma = iv_dma;
 
