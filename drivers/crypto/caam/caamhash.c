@@ -1381,6 +1381,12 @@ static int ahash_digest(struct ahash_request *req)
 	} else {
 		src_dma = sg_dma_address(req->src);
 		options = 0;
+		edesc->sec4_sg_dma = dma_map_single(jrdev, edesc->sec4_sg,
+					    sec4_sg_bytes, DMA_TO_DEVICE);
+		if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+			dev_err(jrdev, "unable to map S/G table\n");
+			return -ENOMEM;
+		}
 	}
 	append_seq_in_ptr(desc, src_dma, req->nbytes, options);
 
@@ -1748,6 +1754,14 @@ static int ahash_update_first(struct ahash_request *req)
 		} else {
 			src_dma = sg_dma_address(req->src);
 			options = 0;
+			edesc->sec4_sg_dma = dma_map_single(jrdev,
+							    edesc->sec4_sg,
+							    sec4_sg_bytes,
+							    DMA_TO_DEVICE);
+			if (dma_mapping_error(jrdev, edesc->sec4_sg_dma)) {
+				dev_err(jrdev, "unable to map S/G table\n");
+				return -ENOMEM;
+			}
 		}
 
 		if (*next_buflen)
