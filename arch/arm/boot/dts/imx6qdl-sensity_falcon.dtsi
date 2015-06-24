@@ -916,7 +916,7 @@
 
 &uart2 {
 	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_uart2_1>;
+	pinctrl-0 = <&pinctrl_uart2_2>;
 	fsl,uart-has-rtscts;
 	status = "okay";
 };
