@@ -125,9 +125,18 @@ static unsigned long i2c_retries = I2C_RETRIES_MAX;
  * after many trials, so be careful about making
  * any adjustments.
  */
-#define I2C_UDELAY_DEFAULT 3000
+#define I2C_UDELAY_DEFAULT 4000
 static unsigned long i2c_udelay = I2C_UDELAY_DEFAULT;
-
+/*
+ * Extra delay to add to I2C accesses to certain
+ * addresses, based on the high-order nibble of
+ * the address.
+ * XXX This should be more configurable.
+ */
+static unsigned long extra_udelay[16] = { 0, 0, 0, 0,
+					  0, 0, 4000, 0,
+					  0, 0, 0, 0,
+					  0, 0, 0, 0 };
 
 /*
  * Driver-private data structures
@@ -149,10 +158,12 @@ struct max927x {
 	bool skip_remote_checks;
 	atomic_t ser_gpios_enabled;
 	atomic_t ser_gpios_set;
+	atomic_t operational;
 	struct gpio_chip gc;
 	struct i2c_adapter dummy_adapter;
 	struct i2c_adapter adap;
 	struct v4l2_subdev subdev;
+	struct device_node *i2c_node;
 	struct media_pad pads[2]; /* 0=serializer, 1=deserializer */
 	atomic_t i2c_error_count;
 	atomic_t i2c_retry_counts[I2C_RETRIES_MAX+1];
@@ -221,6 +232,7 @@ static int ser_update_internal(struct max927x *me, max9271_setting_t which, u8 n
 	u8 val,	 mask, updval, checkval = 0;
 	int ret = i2c_reg_read(me->ser, s->reg, &val);
 
+	dev_dbg(me->dev, "%s: %s = %d\n", __func__, s->name, newval);
 	if (ret < 0) {
 		dev_warn(me->dev, "error %d reading register 0x%x for updating %s\n",
 			 ret, s->reg, s->name);
@@ -344,11 +356,12 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 			   struct i2c_msg msgs[], int num)
 {
 	struct max927x *me = adap->algo_data;
-	unsigned delay, ntries;
+	unsigned long delay, extra = extra_udelay[msgs[0].addr >> 4];
+	unsigned ntries;
 	int ret;
 
 	for (ntries = 0; ntries < i2c_retries; ntries += 1) {
-		for (delay = i2c_udelay; delay > 1000; delay -= 1000)
+		for (delay = i2c_udelay + extra; delay > 1000; delay -= 1000)
 			udelay(1000);
 		if (delay > 0)
 			udelay(delay);
@@ -788,7 +801,7 @@ static int des_control_init(struct max927x *me)
 	/*
 	 * Don't need automatic I2C acks any longer
 	 */
-	return (ignore_errors ? 0 : des_update(me, MAX9271_I2CLOCACK, 0));
+	return (ignore_errors ? 0 : des_update(me, MAX9272_I2CLOCACK, 0));
 }
 
 /*
@@ -889,7 +902,11 @@ static int gpio_dir_out(struct gpio_chip *gc, unsigned num, int outval)
 		if (me->skip_remote_checks && me->ser == me->remote) {
 			gpio_en = atomic_read(&me->ser_gpios_enabled) | (1 << num);
 			i2c_reg_write(me->ser, 0xE, gpio_en);
-			gpio_set = atomic_read(&me->ser_gpios_set) &= ~(1 << num);
+			gpio_set = atomic_read(&me->ser_gpios_set);
+			if (outval)
+				gpio_set |= (1 << num);
+			else
+				gpio_set &= ~(1 << num);
 			i2c_reg_write(me->ser, 0xF, gpio_set);
 			atomic_xchg(&me->ser_gpios_set, gpio_set);
 			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
@@ -1112,20 +1129,15 @@ static ssize_t set_operational(struct device *dev, struct device_attribute *attr
 	ret = kstrtouint(buf, 10, &enable);
 	if (ret < 0)
 		return ret;
-	ret = stream_control(&me->subdev, enable);
-	return (ret < 0 ? ret : count);
+	atomic_xchg(&me->operational, (enable == 0 ? 0 : 1));
+	return (count);
 }
 
 static ssize_t show_operational(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct max927x *me = to_max927x_from_dev(dev);
-	u8 val;
-	int ret;
 
-	ret = des_read(me, MAX9272_LOCKED, &val);
-	if (ret < 0)
-		return ret;
-	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&me->operational));
 }
 static DEVICE_ATTR(operational, 0666, show_operational, set_operational);
 
@@ -1139,7 +1151,15 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 
 	me->skip_remote_checks = me->remote_quirk_enabled;
 
+	i2c_del_adapter(&me->adap);
+
 	ret = me->ctrl_link_init(me);
+
+	if (ret >= 0) {
+		me->adap.dev.of_node = me->i2c_node;
+		dev_dbg(dev, "Re-adding adapter, of_node=%p\n", me->adap.dev.of_node);
+		ret = i2c_add_numbered_adapter(&me->adap);
+	}
 
 	return (ret < 0 ? ret : count);
 }
@@ -1279,6 +1299,7 @@ static int max927x_probe(struct i2c_client *client,
 	atomic_set(&me->ser_gpios_enabled, 0);
 	atomic_set(&me->ser_gpios_set, 0);
 	atomic_set(&me->remote_power_enabled, 0);
+	atomic_set(&me->operational, 0);
 
 	me->dev = dev;
 	me->local = client;
@@ -1326,7 +1347,7 @@ static int max927x_probe(struct i2c_client *client,
 
 	for_each_child_of_node(np, child) {
 		if (of_property_read_bool(child, "i2c")) {
-			me->adap.dev.of_node = child;
+			me->i2c_node = me->adap.dev.of_node = child;
 			break;
 		}
 	}
