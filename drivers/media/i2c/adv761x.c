@@ -51,7 +51,7 @@ static int adv761x_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id);
 
 
-static int debug;
+static int debug = 2;
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "debug level (0-2)");
 
@@ -102,6 +102,7 @@ struct adv761x_state {
 	struct i2c_client			*i2c_edid;
 	struct i2c_client			*i2c_hdmi;
 	struct i2c_client			*i2c_cp;
+	atomic_t				 operational;
 };
 
 static inline struct v4l2_subdev *to_sd(struct v4l2_ctrl *ctrl)
@@ -114,19 +115,24 @@ static inline struct adv761x_state *to_state(struct v4l2_subdev *sd)
 	return container_of(sd, struct adv761x_state, sd);
 }
 
+static struct adv761x_state *to_state_from_dev(struct device *dev)
+{
+	return container_of(dev_get_drvdata(dev), struct adv761x_state, sd);
+}
+
 /* I2C I/O operations */
 static s32 adv_smbus_read_byte_data(struct i2c_client *client, u8 command)
 {
 	s32 ret, i;
 
-	for (i = 0; i < 3; i++) {
+	for (i = 0; i < 5; i++) {
 		ret = i2c_smbus_read_byte_data(client, command);
 		if (ret >= 0)
 			return ret;
 	}
 
-	v4l_err(client, "Reading addr:%02x reg:%02x failed\n",
-		client->addr, command);
+	v4l_err(client, "Reading addr:%02x reg:%02x failed, err=%d\n",
+		client->addr, command, ret);
 	return ret;
 }
 
@@ -141,8 +147,8 @@ static s32 adv_smbus_write_byte_data(struct i2c_client *client, u8 command,
 			return 0;
 	}
 
-	v4l_err(client, "Writing addr:%02x reg:%02x val:%02x failed\n",
-		client->addr, command, value);
+	v4l_err(client, "Writing addr:%02x reg:%02x val:%02x failed, err=%d\n",
+		client->addr, command, value, ret);
 	return ret;
 }
 
@@ -330,7 +336,15 @@ static inline int adv761x_power_off(struct v4l2_subdev *sd)
 
 static int adv761x_core_init(struct v4l2_subdev *sd)
 {
-	
+	struct adv761x_state *state = to_state(sd);
+
+	io_write(sd, 0xf4, state->i2c_cec->addr << 1);
+	io_write(sd, 0xf5, state->i2c_inf->addr << 1);
+	io_write(sd, 0xf8, state->i2c_dpll->addr << 1);
+	io_write(sd, 0xf9, state->i2c_rep->addr << 1);
+	io_write(sd, 0xfa, state->i2c_edid->addr << 1);
+	io_write(sd, 0xfb, state->i2c_hdmi->addr << 1);
+	io_write(sd, 0xfd, state->i2c_cp->addr << 1);
 
 	io_write(sd, 0x00, 0x13);
 	io_write(sd, 0x01, 0x05);	/* V-FREQ = 60Hz */
@@ -349,6 +363,8 @@ static int adv761x_core_init(struct v4l2_subdev *sd)
 	io_write(sd, 0x06, 0xa1);	/* Disable Tristate of Pins */
 	cp_write(sd, 0xba, 0x01);	/* Set HDMI FreeRun */
 	cp_write(sd, 0x3e, 0x80);	/* Enable color adjustments */
+	cp_write(sd, 0xc9, 0x01);
+	cp_write(sd, 0xbf, 0x01);
 
 	hdmi_write(sd, 0x9b, 0x03);	/* ADI recommended setting */
 	hdmi_write(sd, 0x00, 0x08);	/* Set HDMI Input Port A */
@@ -384,9 +400,10 @@ static int adv761x_core_init(struct v4l2_subdev *sd)
 
 	/* Setup interrupts */
 	io_write(sd, 0x40, 0xc2);	/* Active high until cleared */
+	io_write(sd, 0x41, 0xd0);	/* disable INT2 */
 	io_write(sd, 0x6e, 0x03);	/* INT1 HDMI DE_REGEN and V_LOCK */
 
-	return v4l2_ctrl_handler_setup(sd->ctrl_handler);
+	return 0;
 }
 
 static int adv761x_hdmi_info(struct v4l2_subdev *sd, enum v4l2_field *scanmode,
@@ -453,13 +470,21 @@ static void adv761x_interrupt_service(struct work_struct *work)
 	struct adv761x_state *state = container_of(work, struct adv761x_state,
 						   interrupt_service);
 	struct v4l2_subdev *sd = &state->sd;
+	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	enum v4l2_field scanmode;
 	u32 width, height;
 	u32 status = 0;
 	int ret;
 
-	/* Clear HDMI interrupts */
-	io_write(sd, 0x6c, 0xff);
+	ret = io_read(sd, 0x6b);
+	if (ret < 0) {
+		v4l_warn(client, "%s: error reading interrupt register\n", __func__);
+		return;
+	}
+	v4l2_dbg(1, debug, sd, "%s: interrupt set: 0x%x\n", __func__, ret);
+
+	/* Clear received interrupts */
+	io_write(sd, 0x6c, (ret & 0xff));
 
 	ret = adv761x_hdmi_info(sd, &scanmode, &width, &height);
 	if (ret) {
@@ -918,11 +943,14 @@ static struct i2c_client *adv761x_dummy_client(struct v4l2_subdev *sd,
 					       u8 addr, u8 def_addr, u8 io_reg)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	int ret;
 
 	if (!addr)
 		addr = def_addr;
 
-	io_write(sd, io_reg, addr << 1);
+	ret = io_write(sd, io_reg, addr << 1);
+	if (ret < 0)
+		return NULL;
 	return i2c_new_dummy(client->adapter, addr);
 }
 
@@ -956,11 +984,22 @@ static inline int adv761x_check_rev(struct i2c_client *client)
 static ssize_t adv7611_operational_store(struct device *dev,
                                   struct device_attribute *attr, const char *buf, int count)
 {
+	struct adv761x_state *state = to_state_from_dev(dev);
 	unsigned int val;
+
+	if (state == NULL)
+		return -ENODEV;
+
 	if(kstrtouint(buf, 10, &val) || val > 1) {
 		dev_err(dev,"Must supply value between 0-1.\n");
 		return count;
 	}
+
+	if (atomic_cmpxchg(&state->operational, 1-val, val) != 1-val)
+		return count;
+
+	if (val)
+		adv761x_core_init(&state->sd);
 	
 	return count;
 }
@@ -968,7 +1007,12 @@ static ssize_t adv7611_operational_store(struct device *dev,
 static ssize_t adv7611_operational_show(struct device *dev,
                                   struct device_attribute *attr, char *buf)
 {
-	return sprintf(buf, "%d\n",1);
+	struct adv761x_state *state = to_state_from_dev(dev);
+
+	if (state == NULL)
+		return -ENODEV;
+
+	return scnprintf(buf, PAGE_SIZE-1, "%d\n", atomic_read(&state->operational));
 }
 static DEVICE_ATTR(operational, 0666, (void *)adv7611_operational_show, (void *)adv7611_operational_store);
 
@@ -1044,6 +1088,7 @@ static int adv761x_probe(struct i2c_client *client,
 	state->scanmode = V4L2_FIELD_NONE;
 	state->status = V4L2_IN_ST_NO_SIGNAL;
 	state->gpio = -1;
+	atomic_set(&state->operational, 0);
 
 	/* Setup subdev */
 	sd = &state->sd;
@@ -1146,6 +1191,12 @@ static int adv761x_probe(struct i2c_client *client,
 		v4l_err(client, "Core setup failed\n");
 		goto err_core;
 	}
+	ret = v4l2_ctrl_handler_setup(sd->ctrl_handler);
+	if (ret < 0) {
+		v4l_err(client, "V4L2 handler setup failed\n");
+		goto err_core;
+	}
+	atomic_xchg(&state->operational, 1);
 	return sysfs_create_group(&client->dev.kobj, &init_attr_group);
 
 err_core:
@@ -1172,6 +1223,7 @@ static int adv761x_remove(struct i2c_client *client)
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct adv761x_state *state = to_state(sd);
 
+	sysfs_remove_group(&client->dev.kobj, &init_attr_group);
 	/* Release IRQ/GPIO */
 	free_irq(state->irq, state);
 	if (gpio_is_valid(state->gpio))
