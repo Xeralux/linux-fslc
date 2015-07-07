@@ -669,6 +669,7 @@ static int _mxc_pipeline_probe(struct mxc_pipeline_data *data)
 	struct device_node *mxc_endpoint;
 	struct v4l2_int_device *v4l2_int_dev;
 	struct v4l2_int_slave *v4l2_int_slave;
+	struct v4l2_int_ioctl_desc *ioctl_desc_array;
 	int ret;
 
 	ret = device_reset(dev);
@@ -789,7 +790,15 @@ static int _mxc_pipeline_probe(struct mxc_pipeline_data *data)
 	v4l2_int_dev->type = v4l2_int_type_slave;
 
 	v4l2_int_slave= &data->v4l2_int_slave;
-	v4l2_int_slave->ioctls = mxc_pipeline_ioctl_desc;
+	ioctl_desc_array = devm_kzalloc(data->dev, sizeof(mxc_pipeline_ioctl_desc),
+					GFP_KERNEL);
+	if (ioctl_desc_array == NULL) {
+		dev_err(data->dev, "could not allocate ioctl array");
+		ret = -ENOMEM;
+		goto error2;
+	}
+	memcpy(ioctl_desc_array, mxc_pipeline_ioctl_desc, sizeof(mxc_pipeline_ioctl_desc));
+	v4l2_int_slave->ioctls = ioctl_desc_array;
 	v4l2_int_slave->num_ioctls = ARRAY_SIZE(mxc_pipeline_ioctl_desc);
 	v4l2_int_dev->u.slave = v4l2_int_slave;
 
@@ -837,6 +846,8 @@ static void _mxc_pipeline_remove(struct mxc_pipeline_data *data)
 	sysfs_remove_group(&data->dev->kobj, &attr_group);
 	dev_dbg(data->dev, "Calling %s", "v4l2_int_device_unregister");
 	v4l2_int_device_unregister(&data->v4l2_int_dev);
+	devm_kfree(data->dev, data->v4l2_int_slave.ioctls);
+	data->v4l2_int_slave.ioctls = NULL;
 	dev_dbg(data->dev, "Calling %s", "v4l2_device_unregister");
 	v4l2_device_unregister(&data->v4l2_dev);
 }
