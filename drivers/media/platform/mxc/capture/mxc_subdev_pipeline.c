@@ -63,7 +63,7 @@ struct mxc_pipeline_data {
 	struct sensor_data sensor;
 
 	atomic_t running;
-	atomic_t streaming;
+	atomic_t operational;
 };
 
 static struct mxc_pipeline_data *v4l2_int_to_mxc_pipeline(struct v4l2_int_device *_dev_)
@@ -697,15 +697,8 @@ static ssize_t mxc_pipeline_operational_store(struct device *dev, struct device_
 	if(_kstrtoul(buf, 10, &val) || val > 1)
 		return -EINVAL;
 
-	if (atomic_cmpxchg(&data->streaming, 1-val, val)) {
-		int ret;
-		if (val)
-			ret = _run_from_source(data, subdev_s_stream_on, subdev_s_stream_off);
-		else
-			ret = _run_from_sink(data, subdev_s_stream_off, subdev_s_stream_on);
-		if (ret < 0)
-			return ret;
-	}
+	if (atomic_cmpxchg(&data->operational, 1-val, val) == 1)
+		_run_from_sink(data, subdev_s_stream_off, subdev_s_stream_on);
 
 	return count;
 }
@@ -715,7 +708,7 @@ static ssize_t mxc_pipeline_operational_show(struct device *dev,
 {
 	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&data->streaming));
+	return scnprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&data->operational));
 
 }
 static DEVICE_ATTR(operational, 0666, (void *)mxc_pipeline_operational_show, (void *)mxc_pipeline_operational_store);
@@ -796,7 +789,7 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 		goto cleanup_mod_put;
 	}
 	atomic_set(&data->running, 0);
-	atomic_set(&data->streaming, 0);
+	atomic_set(&data->operational, 0);
 	data->dev = dev;
 	data->sensor.csi = csi_id;
 	data->subdevs[data->subdev_count++] = mxc_plat_subdev;
