@@ -75,10 +75,15 @@ static int subdev_open(struct file *file)
 	file->private_data = &subdev_fh->vfh;
 #if defined(CONFIG_MEDIA_CONTROLLER)
 	if (sd->v4l2_dev->mdev) {
-		entity = media_entity_get(&sd->entity);
-		if (!entity) {
-			ret = -EBUSY;
-			goto err;
+		if (WARN_ON(sd->entity.parent == NULL))
+			printk(KERN_ERR "subdevice %s has NULL parent while v4l2_device %s has non-NULL mdev\n",
+			       sd->name, sd->v4l2_dev->name);
+		else {
+			entity = media_entity_get(&sd->entity);
+			if (!entity) {
+				ret = -EBUSY;
+				goto err;
+			}
 		}
 	}
 #endif
@@ -114,8 +119,13 @@ static int subdev_close(struct file *file)
 	if (sd->internal_ops && sd->internal_ops->close)
 		sd->internal_ops->close(sd, subdev_fh);
 #if defined(CONFIG_MEDIA_CONTROLLER)
-	if (sd->v4l2_dev->mdev)
-		media_entity_put(&sd->entity);
+	if (sd->v4l2_dev->mdev) {
+		if (WARN_ON(sd->entity.parent == NULL))
+			printk(KERN_ERR "subdevice %s has NULL parent while v4l2_device %s has non-NULL mdev\n",
+			       sd->name, sd->v4l2_dev->name);
+		else
+			media_entity_put(&sd->entity);
+	}
 #endif
 	v4l2_fh_del(vfh);
 	v4l2_fh_exit(vfh);
