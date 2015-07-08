@@ -42,6 +42,7 @@ static u32 MXC_PIPELINE_XCLK_MIN = 6000000;
 static u32 MXC_PIPELINE_XCLK_MAX = 67500000;
 
 #define MAX_PIPELINE_LENGTH 8
+#define MAX_SOURCE_CANDIDATES 2
 
 struct mxc_pipeline_data {
 	struct device *dev;
@@ -54,13 +55,9 @@ struct mxc_pipeline_data {
 
 	struct v4l2_device v4l2_dev;
 	struct media_device media_dev;
-	/*
-	 * In-order list of subdevs that make up the pipeline.  We build the list from
-	 * the CPU outward, based on the device tree.
-	 */
-	struct v4l2_subdev *subdevs[MAX_PIPELINE_LENGTH];
-	int subdev_count;
 	struct sensor_data sensor;
+	struct media_entity *sink;
+	struct device_node *sink_node;
 
 	atomic_t running;
 	atomic_t operational;
@@ -125,63 +122,124 @@ static struct mxc_timings_map mxc_timings_map[] = {
 		{ V4L2_DV_BT_CEA_640X480P59_94, { .denominator = 5994, .numerator = 100,}},
 };
 
-static inline struct v4l2_subdev *find_source_subdev(struct mxc_pipeline_data *data)
+static struct media_entity *next_source(struct mxc_pipeline_data *data,
+					struct media_entity *ment)
 {
-	if (data->subdev_count == 0)
+	struct media_entity *source = NULL;
+	int i;
+
+	mutex_lock(&data->media_dev.graph_mutex);
+	for (i = 0; i < ment->num_links; i++) {
+		struct media_link *link = &ment->links[i];
+		if ((link->flags & MEDIA_LNK_FL_ENABLED) &&
+		    link->sink->entity == ment) {
+			source = link->source->entity;
+			break;
+		}
+	}
+	mutex_unlock(&data->media_dev.graph_mutex);
+	return source;
+}
+
+static struct media_entity *next_sink(struct mxc_pipeline_data *data,
+				      struct media_entity *ment)
+{
+	struct media_entity *sink = NULL;
+	int i;
+
+	mutex_lock(&data->media_dev.graph_mutex);
+	for (i = 0; i < ment->num_links; i++) {
+		struct media_link *link = &ment->links[i];
+		if ((link->flags & MEDIA_LNK_FL_ENABLED) &&
+		    link->source->entity == ment) {
+			sink = link->sink->entity;
+			break;
+		}
+	}
+	mutex_unlock(&data->media_dev.graph_mutex);
+	return sink;
+}
+
+static struct media_entity *find_source(struct mxc_pipeline_data *data)
+{
+	struct media_entity *ment, *lastent;
+
+	for (ment = data->sink, lastent = NULL; ment != NULL; lastent = ment, ment = next_source(data, ment));
+	if (lastent == NULL || lastent->num_pads > 1 || (lastent->pads[0].flags & MEDIA_PAD_FL_SOURCE) == 0)
 		return NULL;
-	return data->subdevs[data->subdev_count-1];
+
+	return lastent;
 }
 
-static int _run_from_sink(struct mxc_pipeline_data *data,
-			  int (*dofunc)(struct v4l2_subdev *sd),
-			  int (*undofunc)(struct v4l2_subdev *sd))
+static int pipeline_length(struct mxc_pipeline_data *data)
 {
-	int i, ret = 0;
-	int tmpret;
-	for (i = 0; i < data->subdev_count; i++) {
-		struct v4l2_subdev *sd = data->subdevs[i];
-		tmpret = dofunc(sd);
-		if (tmpret == -ENOIOCTLCMD || tmpret >= 0)
-			continue;
-		if (undofunc != NULL)
-			goto unwind;
-		if (ret == 0)
-			ret = tmpret;
-	}
-	return ret;
-unwind:
-	ret = tmpret;
-	for (; i >= 0; i-- ) {
-		struct v4l2_subdev *sd = data->subdevs[i];
-		undofunc(sd);
-	}
-	return ret;
+	struct media_entity *ment;
+	int count;
 
+	for (ment = data->sink, count = 0; ment != NULL; ment = next_source(data, ment), count += 1);
+
+	return count;
 }
 
-static int _run_from_source(struct mxc_pipeline_data *data,
-			    int (*dofunc)(struct v4l2_subdev *sd),
-			    int (*undofunc)(struct v4l2_subdev *sd))
+static struct v4l2_subdev *find_source_subdev(struct mxc_pipeline_data *data)
 {
-	int i, ret = 0;
-	int tmpret;
-	for (i = data->subdev_count-1; i >= 0; i--) {
-		struct v4l2_subdev *sd = data->subdevs[i];
-		tmpret = dofunc(sd);
-		if (tmpret == -ENOIOCTLCMD || tmpret >= 0)
-			continue;
-		if (undofunc != NULL)
-			goto unwind;
-		if (ret == 0)
-			ret = tmpret;
+	struct media_entity *source = find_source(data);
+
+	return (source == NULL ? NULL : media_entity_to_v4l2_subdev(source));
+}
+
+static struct media_entity *find_entity_in_pipeline(struct mxc_pipeline_data *data,
+						    struct media_entity *starting_point,
+						    int which)
+{
+	struct media_entity *ment;
+
+	for (ment = starting_point; ment != NULL && which > 0;
+	     which -= 1, ment = next_sink(data, ment));
+
+	return ment;
+}
+
+typedef enum {
+	MXC_RUN_FROM_SOURCE,
+	MXC_RUN_FROM_SINK
+} pipeline_direction;
+
+static int run_through_pipeline(struct mxc_pipeline_data *data,
+				struct media_entity *starting_point,
+				pipeline_direction dir,
+				int (*dofunc)(struct v4l2_subdev *sd),
+				int (*undofunc)(struct v4l2_subdev *sd),
+				const char *info)
+{
+	struct media_entity *ment;
+	struct v4l2_subdev *sd;
+	int err, ret;
+
+	ret = 0;
+	for (ment = starting_point;
+	     ment != NULL;
+	     ment = (dir == MXC_RUN_FROM_SINK ? next_source(data, ment) : next_sink(data, ment))) {
+		sd = media_entity_to_v4l2_subdev(ment);
+		err = dofunc(sd);
+		dev_dbg(data->dev, "%s: running %s on %s returned %d\n",
+			__func__, info, sd->name, err);
+		if (err < 0 && err != -ENOIOCTLCMD) {
+			ret = err;
+			if (undofunc != NULL) {
+				struct media_entity *undoent;
+				for (undoent = (dir == MXC_RUN_FROM_SINK ? next_sink(data, ment) : next_source(data, ment));
+				     undoent != NULL;
+				     undoent = (dir == MXC_RUN_FROM_SINK ? next_sink(data, undoent) : next_source(data, undoent))) {
+					sd = media_entity_to_v4l2_subdev(undoent);
+					dev_dbg(data->dev, "%s: undoing %s on %s\n", __func__, info, sd->name);
+					undofunc(sd);
+				}
+				break;
+			}
+		}
 	}
-	return ret;
-unwind:
-	ret = tmpret;
-	for (; i < data->subdev_count; i++) {
-		struct v4l2_subdev *sd = data->subdevs[i];
-		undofunc(sd);
-	}
+
 	return ret;
 }
 
@@ -252,10 +310,9 @@ static int _parse_mbus_framefmt(struct v4l2_mbus_framefmt *mf, struct mxc_pipeli
 	return 0;
 }
 
-static int _input_device_to_sensor(struct mxc_pipeline_data *data)
+static int _input_device_to_sensor(struct mxc_pipeline_data *data, struct v4l2_subdev *input_device)
 {
 	struct sensor_data *sensor = &data->sensor;
-	struct v4l2_subdev *input_device = find_source_subdev(data);
 	struct v4l2_subdev_format format;
 	struct v4l2_subdev_frame_interval fi;
 	struct v4l2_dv_timings timings;
@@ -318,7 +375,7 @@ static int ioctl_g_fmt_cap(struct v4l2_int_device *s, struct v4l2_format *f)
 	if(f->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)
 		return -EINVAL;
 
-	ret = _input_device_to_sensor(data);
+	ret = _input_device_to_sensor(data, find_source_subdev(data));
 
 	f->fmt.pix = data->sensor.pix;
 	f->fmt.pix.priv = 0; //mxc_v4l2_capture uses this to decide if the input device is a TV or not(?)
@@ -341,6 +398,7 @@ static int ioctl_enum_framesizes(struct v4l2_int_device *s,
 {
 	struct mxc_pipeline_data *data = v4l2_int_to_mxc_pipeline(s);
 	struct v4l2_subdev *input_device = find_source_subdev(data);
+	int subdev_count = pipeline_length(data);
 	int ret;
 	__u32 index = fsize->index;
 
@@ -348,12 +406,12 @@ static int ioctl_enum_framesizes(struct v4l2_int_device *s,
 		return -ENODEV;
 
 	ret = v4l2_subdev_call(input_device, video, enum_framesizes, fsize);
-	if (ret < 0 && fsize->index < (MODE_TEST_START+ data->subdev_count)) {
+	if (ret < 0 && fsize->index < (MODE_TEST_START + subdev_count)) {
 		fsize->index = 0;
 		ret = v4l2_subdev_call(input_device, video, enum_framesizes, fsize);
 		fsize->index = index;
 	}
-	if(ret < 0 && fsize->index < (MODE_TEST_START+ data->subdev_count)) {
+	if(ret < 0 && fsize->index < (MODE_TEST_START + subdev_count)) {
 		struct sensor_data *sensor = &data->sensor;
 		if(fsize->pixel_format != sensor->pix.pixelformat)
 			return -EINVAL;
@@ -429,9 +487,9 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 		return -EINVAL;
 	format.format.code = pixelcode_mappings[i].mbus;
 
-	if (capturemode >= MODE_TEST_START){
+	if (capturemode >= MODE_TEST_START) {
 		test_output = capturemode - MODE_TEST_START;
-		if (test_output >= data->subdev_count) {
+		if (test_output >= pipeline_length(data)) {
 			dev_err(dev,"Invalid test output %d\n", test_output);
 			return -EINVAL;
 		}
@@ -440,7 +498,9 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 	dev_dbg(dev, "%s: height %d width %d", __func__, format.format.height, format.format.width);
 
 	/*Stop subdevices before changing anything.*/
-	ret = _run_from_sink(data, subdev_s_stream_off, subdev_s_stream_on);
+	ret = run_through_pipeline(data, data->sink, MXC_RUN_FROM_SINK,
+				   subdev_s_stream_off, subdev_s_stream_on,
+				   "subdev_s_stream_off");
 	if(ret < 0) {
 		dev_err(dev,"Failed to stop video in prep for changing parameters\n");
 		return ret;
@@ -470,8 +530,12 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 		return ret;
 	}
 	if(test_output >= 0) {
-		struct v4l2_subdev *test_subdev = data->subdevs[test_output];
-		ret = v4l2_subdev_call(test_subdev, video, s_routing, 1, 0, 0);
+		struct media_entity *test_ent = find_entity_in_pipeline(data, find_source(data), test_output);
+		if (test_ent == NULL)
+			ret = -ENODEV;
+		else
+			ret = v4l2_subdev_call(media_entity_to_v4l2_subdev(test_ent),
+					       video, s_routing, 1, 0, 0);
 		if(ret < 0) {
 			dev_err(dev,"Failed to set test mode on subdev %d from source\n",
 				test_output);
@@ -500,7 +564,10 @@ static int ioctl_s_parm(struct v4l2_int_device *s, struct v4l2_streamparm *a)
 	}
 
 	/*Start pipeline again.*/
-	ret = _run_from_source(data, subdev_s_stream_on, subdev_s_stream_off);
+	ret = run_through_pipeline(data, find_source(data),
+				   MXC_RUN_FROM_SOURCE,
+				   subdev_s_stream_on, subdev_s_stream_off,
+				   "subdev_s_stream_on");
 	if(ret < 0) {
 		dev_err(dev,"Failed to (re)start video\n");
 		return ret;
@@ -541,110 +608,141 @@ static struct v4l2_int_ioctl_desc mxc_pipeline_ioctl_desc[] =
 	  (v4l2_int_ioctl_func *)ioctl_s_power },
 };
 
+static struct v4l2_subdev *get_subdev_for_i2c_device(struct device_node *node)
+{
+	struct i2c_client *client = of_find_i2c_device_by_node(node);
+	struct v4l2_subdev *sd = NULL;
+
+	if (client == NULL)
+		return NULL;
+	if (!device_trylock(&client->dev))
+		return NULL;
+	if (client->dev.driver && try_module_get(client->dev.driver->owner)) {
+		sd = i2c_get_clientdata(client);
+		module_put(client->dev.driver->owner);
+	}
+	device_unlock(&client->dev);
+	return sd;
+}
+
+static int find_remotes(struct device_node *node,
+			struct device_node *visited[],
+			int visitcount,
+			struct device_node *remotes[],
+			int max_remotes)
+{
+	struct device_node *cur_endpoint, *next_endpoint, *remote_node;
+	int i, remote_count = 0;
+
+	for (cur_endpoint = v4l2_of_get_next_endpoint(node, NULL);
+	     cur_endpoint != NULL; cur_endpoint = next_endpoint) {
+		remote_node = v4l2_of_get_remote_port_parent(cur_endpoint);
+		for (i = 0; i < visitcount && remote_node != visited[i]; i++);
+		if (i < visitcount) {
+			of_node_put(remote_node);
+			next_endpoint = v4l2_of_get_next_endpoint(node, cur_endpoint);
+			of_node_put(cur_endpoint);
+			continue;
+		}
+		if (remotes != NULL) {
+			if (remote_count >= max_remotes) {
+				for (i = 0; i < remote_count; i++)
+					of_node_put(remotes[i]);
+				of_node_put(cur_endpoint);
+				of_node_put(remote_node);
+				return -E2BIG;
+			}
+			remotes[remote_count] = remote_node;
+		} else
+			of_node_put(remote_node);
+		remote_count += 1;
+		next_endpoint = v4l2_of_get_next_endpoint(node, cur_endpoint);
+		of_node_put(cur_endpoint);
+	}
+
+	return remote_count;
+}
+
 static int find_all_subdevs(struct mxc_pipeline_data *data,
-			    struct device_node *initial_node)
+			    struct v4l2_subdev *subdevs[MAX_PIPELINE_LENGTH])
 {
 	struct device *dev = data->dev;
-	struct i2c_client *client;
-	struct device_node *cur_endpoint, *next_endpoint, *cur_node, *remote_node, *visited[8];
-	int visitcount;
+	struct device_node *cur_node, *remote_node, *visited[MAX_PIPELINE_LENGTH];
+	struct v4l2_subdev *remote_subdev;
+	int visitcount, subdev_count;
 
 	/*
-	 * Trace the path through the device tree.  No branches allowed.
+	 * Trace the path through the device tree.  Each node is expected to have
+	 * exactly one possible outward (towards the sensor) link, except for the
+	 * second-to-last node, which connects to one of MAX_SOURCE_CANDIDATES possible
+	 * devices.
 	 */
-	for (cur_node = initial_node, visitcount = 0;
+	subdev_count = 1;
+	subdevs[0] = media_entity_to_v4l2_subdev(data->sink);
+	for (cur_node = data->sink_node, visitcount = 0;
 	     visitcount < ARRAY_SIZE(visited) && cur_node != NULL;
 	     cur_node = remote_node) {
-		struct device_node *possible_remotes[16];
+		struct device_node *possible_remotes[MAX_SOURCE_CANDIDATES];
 		int i, remote_count;
 
 		/*
 		 * Find all possible remotes connected here
 		 */
 		visited[visitcount++] = cur_node;
-		remote_count = 0;
-		remote_node = NULL;
-		for (cur_endpoint = v4l2_of_get_next_endpoint(cur_node, NULL);
-		     cur_endpoint != NULL; cur_endpoint = next_endpoint) {
-			remote_node = v4l2_of_get_remote_port_parent(cur_endpoint);
-			for (i = 0; i < visitcount && remote_node != visited[i]; i++);
-			if (i < visitcount) {
-				of_node_put(remote_node);
-				next_endpoint = v4l2_of_get_next_endpoint(cur_node, cur_endpoint);
-				of_node_put(cur_endpoint);
-				continue;
-			}
-			possible_remotes[remote_count++] = remote_node;
-			if (remote_count >= ARRAY_SIZE(possible_remotes)) {
-				dev_err(data->dev, "device tree problem - too many remotes\n");
-				for (i = 0; i < remote_count; i++)
-					of_node_put(possible_remotes[i]);
-				of_node_put(cur_endpoint);
-				of_node_put(cur_node);
-				return -E2BIG;
-			}
-			next_endpoint = v4l2_of_get_next_endpoint(cur_node, cur_endpoint);
-			of_node_put(cur_endpoint);
+		remote_count = find_remotes(cur_node, visited, visitcount,
+					    possible_remotes, ARRAY_SIZE(possible_remotes));
+		if (remote_count < 0) {
+			of_node_put(cur_node);
+			dev_dbg(dev, "find_remotes error: %d\n", remote_count);
+			return remote_count;
 		}
 		/*
-		 * Any of the remotes available?  We need to walk through all of
+		 * Are any of the remotes available?  We need to walk through all of
 		 * the candidates to at least drop the of_node refcount, so no
-		 * early exit from this loop.
+		 * early exit from the loop.
 		 */
-		for (remote_node = NULL, i = 0; i < remote_count; i++) {
-			client = of_find_i2c_device_by_node(possible_remotes[i]);
-			if (remote_node == NULL && client != NULL && device_trylock(&client->dev)) {
-				if (client->dev.driver && try_module_get(client->dev.driver->owner)) {
-					if (i2c_get_clientdata(client) != NULL)
-						remote_node = of_node_get(possible_remotes[i]);
-					else
-						dev_dbg(dev, "Skipping inactive remote: %s\n",
-							of_node_full_name(possible_remotes[i]));
-					module_put(client->dev.driver->owner);
-				}
-				device_unlock(&client->dev);
+		remote_subdev = NULL;
+		remote_node = NULL;
+		for (i = 0; i < remote_count; i++) {
+			if (remote_subdev == NULL) {
+				remote_subdev = get_subdev_for_i2c_device(possible_remotes[i]);
+				if (remote_subdev != NULL)
+					remote_node = of_node_get(possible_remotes[i]);
 			}
 			of_node_put(possible_remotes[i]);
 		}
-		/*
-		 * If there was at least one (non-back-link) remote, and none of the
-		 * remotes are available yet; defer until at least one of them is.
-		 */
-		if (remote_count > 0 && remote_node == NULL) {
+
+		if (remote_count > 0 && remote_subdev == NULL) {
 			of_node_put(cur_node);
-			return -EPROBE_DEFER;
-		}
-		/*
-		 * Found a remote, stash its subdev pointer
-		 */
-		if (remote_node != NULL) {
-			struct v4l2_subdev *sd = i2c_get_clientdata(of_find_i2c_device_by_node(remote_node));
-			if (data->subdev_count < ARRAY_SIZE(data->subdevs))
-				data->subdevs[data->subdev_count++] = sd;
+			return -ENODEV;
+		} else if (remote_subdev != NULL) {
+			if (subdev_count < MAX_PIPELINE_LENGTH)
+				subdevs[subdev_count++] = remote_subdev;
 			else
 				dev_err(dev, "Too many subdevs in pipeline\n");
 		}
 		of_node_put(cur_node);
 	}
-	dev_dbg(dev, "%s: exiting, subdev_count is %d\n", __func__, data->subdev_count);
 
-	return 0;
+	dev_dbg(dev, "%s: exiting, subdev_count is %d\n", __func__, subdev_count);
+
+	return subdev_count;
 }
 
-static int create_links(struct mxc_pipeline_data *data)
+static int create_links(struct mxc_pipeline_data *data, struct v4l2_subdev *subdevs[], int subdev_count)
 {
 	struct media_entity *source, *sink;
 	u16 source_pad, sink_pad;
 	int i, ret;
-	for (i = 1; i < data->subdev_count; i++) {
-		sink = &data->subdevs[i-1]->entity;
+	for (i = 1; i < subdev_count; i++) {
+		sink = &subdevs[i-1]->entity;
 		for (sink_pad = 0;
 		     sink_pad < sink->num_pads &&
 			     (sink->pads[sink_pad].flags & MEDIA_PAD_FL_SINK) == 0;
 		     sink_pad++);
 		if (sink_pad >= sink->num_pads)
 			return -ENOENT;
-		source = &data->subdevs[i]->entity;
+		source = &subdevs[i]->entity;
 		for (source_pad = 0;
 		     source_pad < source->num_pads &&
 			     (source->pads[source_pad].flags & MEDIA_PAD_FL_SOURCE) == 0;
@@ -670,19 +768,116 @@ static int setup_v4l2_int_device(struct mxc_pipeline_data *data)
 {
 	struct v4l2_int_device *v4l2_int_dev = &data->v4l2_int_dev;
 	struct v4l2_int_slave  *v4l2_int_slave = &data->v4l2_int_slave;
-
+	struct v4l2_int_ioctl_desc *ioctl_desc_array;
 
 	v4l2_int_dev->module = THIS_MODULE;
 	strlcpy(v4l2_int_dev->name, data->v4l2_dev.name, sizeof(v4l2_int_dev->name));
 	v4l2_int_dev->type = v4l2_int_type_slave;
 
-	v4l2_int_slave->ioctls = mxc_pipeline_ioctl_desc;
+	ioctl_desc_array = devm_kzalloc(data->dev, sizeof(mxc_pipeline_ioctl_desc),
+					GFP_KERNEL);
+	if (ioctl_desc_array == NULL) {
+		dev_err(data->dev, "could not allocate ioctl array");
+		return -ENOMEM;
+	}
+	memcpy(ioctl_desc_array, mxc_pipeline_ioctl_desc, sizeof(mxc_pipeline_ioctl_desc));
+	v4l2_int_slave->ioctls = ioctl_desc_array;
 	v4l2_int_slave->num_ioctls = ARRAY_SIZE(mxc_pipeline_ioctl_desc);
 	v4l2_int_dev->u.slave = v4l2_int_slave;
 
 	v4l2_int_dev->priv = &data->sensor;
 
 	return v4l2_int_device_register(&data->v4l2_int_dev);
+}
+
+static int create_pipeline(struct mxc_pipeline_data *data)
+{
+	struct v4l2_subdev *subdevs[MAX_PIPELINE_LENGTH];
+	int ret, i, subdev_count;
+
+	memset(&data->media_dev, 0, sizeof(data->media_dev));
+	data->media_dev.dev = data->dev;
+	strlcpy(data->media_dev.model, "Sensity Camera Board", sizeof(data->media_dev.model));
+	ret = media_device_register(&data->media_dev);
+	if (ret < 0) {
+		dev_err(data->dev, "could not register media device: %d\n", ret);
+		return ret;
+	}
+	memset(&data->v4l2_dev, 0, sizeof(data->v4l2_dev));
+	snprintf(data->v4l2_dev.name, sizeof(data->v4l2_dev.name), "mxc-pipeline-cam-%d",
+		 data->sensor.csi);
+	data->v4l2_dev.mdev = &data->media_dev;
+	ret = v4l2_device_register(data->dev, &data->v4l2_dev);
+	if (ret < 0) {
+		dev_err(data->dev, "could not register v4l2 device: %d\n", ret);
+		goto cleanup_media_device;
+	}
+
+	subdev_count = find_all_subdevs(data, subdevs);
+	if (subdev_count < 0) {
+		dev_warn(data->dev, "failed to find all subdevices (%d)\n", subdev_count);
+		ret = subdev_count;
+		goto cleanup_v4l2_device;
+	}
+
+	for (i = subdev_count-1, ret = 0; i >= 0 && ret == 0; i--) {
+		dev_dbg(data->dev, "registering subdevice %s\n", subdevs[i]->name);
+		ret = v4l2_device_register_subdev(&data->v4l2_dev, subdevs[i]);
+	}
+	if (ret != 0) {
+		dev_err(data->dev, "error registering v4l2 subdevs: %d\n", ret);
+		goto cleanup_v4l2_device;
+	}
+	ret = create_links(data, subdevs, subdev_count);
+	if (ret < 0) {
+		dev_err(data->dev, "error setting up media_links: %d\n", ret);
+		goto cleanup_v4l2_device;
+	}
+	ret = v4l2_device_register_subdev_nodes(&data->v4l2_dev);
+	if (ret < 0) {
+		dev_err(data->dev, "error registering device nodes for subdevs: %d\n", ret);
+		goto cleanup_v4l2_device;
+	}
+
+	ret = _input_device_to_sensor(data, subdevs[subdev_count-1]);
+	if (ret < 0) {
+		dev_err(data->dev, "could not get format data from iput device\n");
+		goto cleanup_v4l2_device;
+	}
+
+	ret = run_through_pipeline(data, &subdevs[subdev_count-1]->entity,
+				   MXC_RUN_FROM_SOURCE,
+				   subdev_init, NULL, "subdev_init");
+	if (ret < 0) {
+		dev_err(data->dev, "could not initialize subdevices: %d\n", ret);
+		goto cleanup_v4l2_device;
+	}
+
+	ret = setup_v4l2_int_device(data);
+	if (ret < 0) {
+		dev_err(data->dev, "could not initialize v4l2-int device: %d\n", ret);
+		goto cleanup_v4l2_device;
+	}
+	return 0;
+
+cleanup_v4l2_device:
+	v4l2_device_unregister(&data->v4l2_dev);
+cleanup_media_device:
+	media_device_unregister(&data->media_dev);
+	return ret;
+}
+
+static int teardown_pipeline(struct mxc_pipeline_data *data)
+{
+	run_through_pipeline(data, data->sink, MXC_RUN_FROM_SINK,
+			     subdev_s_stream_off, NULL,
+			     "subdev_s_stream_off (teardown)");
+	v4l2_int_device_unregister(&data->v4l2_int_dev);
+	devm_kfree(data->dev, data->v4l2_int_slave.ioctls);
+	data->v4l2_int_slave.ioctls = NULL;
+	v4l2_device_unregister(&data->v4l2_dev);
+	media_device_unregister(&data->media_dev);
+	return 0;
 }
 
 static ssize_t mxc_pipeline_operational_store(struct device *dev, struct device_attribute *attr,
@@ -697,14 +892,28 @@ static ssize_t mxc_pipeline_operational_store(struct device *dev, struct device_
 	if(_kstrtoul(buf, 10, &val) || val > 1)
 		return -EINVAL;
 
-	if (atomic_cmpxchg(&data->operational, 1-val, val) == 1)
-		_run_from_sink(data, subdev_s_stream_off, subdev_s_stream_on);
+	if (atomic_cmpxchg(&data->operational, 1-val, val) == 1-val) {
+		int ret;
+		dev_dbg(dev, "%s: switching to %soperational state\n",
+			__func__, (val ? "" : "non-"));
+		if (val)
+			ret = create_pipeline(data);
+		else
+			ret = teardown_pipeline(data);
+		if (ret < 0) {
+			dev_dbg(dev, "%s: failed to change operational state\n",
+				__func__);
+			atomic_xchg(&data->operational, 1-val);
+			return ret;
+		}
+	} else
+		dev_dbg(dev, "%s: no change in operational state\n", __func__);
 
 	return count;
 }
 
 static ssize_t mxc_pipeline_operational_show(struct device *dev,
-                                  struct device_attribute *attr, char *buf)
+					     struct device_attribute *attr, char *buf)
 {
 	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
 
@@ -714,15 +923,21 @@ static ssize_t mxc_pipeline_operational_show(struct device *dev,
 static DEVICE_ATTR(operational, 0666, (void *)mxc_pipeline_operational_show, (void *)mxc_pipeline_operational_store);
 
 static ssize_t mxc_pipeline_subdevs_show(struct device *dev,
-                                  struct device_attribute *attr, char *buf)
+					 struct device_attribute *attr, char *buf)
 {
 	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
+	struct media_entity *ent, *source;
 	int count = 0;
-	int i;
 
-	for (i = data->subdev_count-1; i >= 0; i--) {
-		count += snprintf(&buf[count], PAGE_SIZE-count,"%s\n", data->subdevs[i]->name);
-	}
+	if (atomic_read(&data->operational) == 0)
+		return -EINVAL;
+
+	source = find_source(data);
+	if (source == NULL)
+		return -ENODEV;
+	for (ent = source; ent != NULL; ent = next_sink(data, ent))
+		count += snprintf(&buf[count], PAGE_SIZE-count,"%s\n",
+				  media_entity_to_v4l2_subdev(ent)->name);
 
 	return count;
 }
@@ -746,7 +961,7 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 	struct platform_device *mxc_plat;
 	struct v4l2_subdev *mxc_plat_subdev;
 	u32 csi_id, mclk_source;
-	int i, ret;
+	int ret;
 
 	ret = device_reset(dev);
 	if (ret == -ENODEV)
@@ -792,60 +1007,15 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 	atomic_set(&data->operational, 0);
 	data->dev = dev;
 	data->sensor.csi = csi_id;
-	data->subdevs[data->subdev_count++] = mxc_plat_subdev;
+	data->sink = &mxc_plat_subdev->entity;
+	data->sink_node = mxc_node;
 
-	/*Must come before call to v4l2_device_register*/
 	platform_set_drvdata(pdev, data);
 
-	data->media_dev.dev = dev;
-	strlcpy(data->media_dev.model, "Sensity Camera Board",
-		sizeof(data->media_dev.model));
-	ret = media_device_register(&data->media_dev);
-	if (ret < 0) {
-		dev_err(dev, "could not register media device: %d\n", ret);
-		goto cleanup_free_mem;
-	}
-	data->v4l2_dev.mdev = &data->media_dev;
-	snprintf(data->v4l2_dev.name, sizeof(data->v4l2_dev.name),
-		 "mxc-pipeline-cam-%d", csi_id);
-	ret = v4l2_device_register(dev, &data->v4l2_dev);
-	if (ret < 0) {
-		dev_err(dev, "could not register v4l2 device: %d\n", ret);
-		goto cleanup_media_device;
-	}
-	ret = find_all_subdevs(data, mxc_node);
-	if (ret < 0) {
-		if (ret != -EPROBE_DEFER)
-			dev_err(dev, "could not locate needed subdevices\n");
-		goto cleanup_v4l2_device;
-	}
-
-	for (i = data->subdev_count-1, ret = 0; i >= 0 && ret == 0; i--)
-		ret = v4l2_device_register_subdev(&data->v4l2_dev, data->subdevs[i]);
-	if (ret != 0) {
-		dev_err(dev, "error registering v4l2 subdevs: %d\n", ret);
-		goto cleanup_v4l2_device;
-	}
-	ret = create_links(data);
-	if (ret < 0) {
-		dev_err(dev, "error setting up media_links: %d\n", ret);
-		goto cleanup_v4l2_device;
-	}
-	ret = v4l2_device_register_subdev_nodes(&data->v4l2_dev);
-	if (ret < 0) {
-		dev_err(dev, "error registering device nodes for subdevs: %d\n", ret);
-		goto cleanup_v4l2_device;
-	}
-
-	ret = _input_device_to_sensor(data);
-	if (ret < 0) {
-		dev_err(dev, "could not get format data from iput device\n");
-		goto cleanup_v4l2_device;
-	}
 	data->sensor.sensor_clk = devm_clk_get(&mxc_plat->dev, "csi_mclk");
 	if (IS_ERR(data->sensor.sensor_clk)) {
 		dev_err(dev, "clock frequency missing or invalid: %d\n", ret);
-		goto cleanup_v4l2_device;
+		goto cleanup_free_mem;
 	}
 	ret = of_property_read_u32(mxc_node, "mclk", &data->sensor.mclk);
 	if (ret < 0) {
@@ -864,25 +1034,9 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 		goto cleanup_sensor_clk;
 	}
 
-	ret = _run_from_source(data, subdev_init, NULL);
-	if (ret < 0) {
-		dev_err(dev, "could not initialize subdevices: %d\n", ret);
-		goto cleanup_sensor_clk;
-	}
-
-	/*Dont know if capability is meaningful.*/
+	/* Don't know if capability is meaningful. */
 	data->sensor.streamcap.capability = (V4L2_MODE_HIGHQUALITY |
 					     V4L2_CAP_TIMEPERFRAME);
-
-	/*
-	 * The Freescale capture driver still uses the obsolete
-	 * "v4l2-internal" pseudo-framework.
-	 */
-	ret = setup_v4l2_int_device(data);
-	if (ret < 0) {
-		dev_err(dev, "could not initialize v4l2-int device: %d\n", ret);
-		goto cleanup_sensor_clk;
-	}
 
 	ret = sysfs_create_group(&dev->kobj, &attr_group);
 	if (ret == 0)
@@ -891,10 +1045,6 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 
 cleanup_sensor_clk:
 	devm_clk_put(dev, data->sensor.sensor_clk);
-cleanup_v4l2_device:
-	v4l2_device_unregister(&data->v4l2_dev);
-cleanup_media_device:
-	media_device_unregister(&data->media_dev);
 cleanup_free_mem:
 	devm_kfree(dev, data);
 cleanup_mod_put:
@@ -908,9 +1058,8 @@ static int mxc_pipeline_remove(struct platform_device *pdev)
 {
 	struct mxc_pipeline_data *data = platform_get_drvdata(pdev);
 	sysfs_remove_group(&data->dev->kobj, &attr_group);
-	v4l2_int_device_unregister(&data->v4l2_int_dev);
-	v4l2_device_unregister(&data->v4l2_dev);
-	media_device_unregister(&data->media_dev);
+	if (atomic_read(&data->operational))
+		teardown_pipeline(data);
 	return 0;
 }
 
