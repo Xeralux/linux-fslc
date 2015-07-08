@@ -51,7 +51,7 @@ static int adv761x_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id);
 
 
-static int debug = 2;
+static int debug;
 module_param(debug, int, 0644);
 MODULE_PARM_DESC(debug, "debug level (0-2)");
 
@@ -363,8 +363,6 @@ static int adv761x_core_init(struct v4l2_subdev *sd)
 	io_write(sd, 0x06, 0xa1);	/* Disable Tristate of Pins */
 	cp_write(sd, 0xba, 0x01);	/* Set HDMI FreeRun */
 	cp_write(sd, 0x3e, 0x80);	/* Enable color adjustments */
-	cp_write(sd, 0xc9, 0x01);
-	cp_write(sd, 0xbf, 0x01);
 
 	hdmi_write(sd, 0x9b, 0x03);	/* ADI recommended setting */
 	hdmi_write(sd, 0x00, 0x08);	/* Set HDMI Input Port A */
@@ -400,7 +398,6 @@ static int adv761x_core_init(struct v4l2_subdev *sd)
 
 	/* Setup interrupts */
 	io_write(sd, 0x40, 0xc2);	/* Active high until cleared */
-	io_write(sd, 0x41, 0xd0);	/* disable INT2 */
 	io_write(sd, 0x6e, 0x03);	/* INT1 HDMI DE_REGEN and V_LOCK */
 
 	return 0;
