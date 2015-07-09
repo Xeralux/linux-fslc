@@ -54,6 +54,9 @@
 #include <linux/of_device.h>
 #include <linux/platform_data/i2c-imx.h>
 
+#include <linux/of_gpio.h>
+#include <linux/gpio.h>
+
 /** Defines ********************************************************************
 *******************************************************************************/
 
@@ -184,6 +187,9 @@ struct imx_i2c_struct {
 	int			stopped;
 	unsigned int		ifdr; /* IMX_I2C_IFDR */
 	const struct imx_i2c_hwdata	*hwdata;
+	unsigned int            cur_clk;
+	unsigned int            bitrate;
+	struct i2c_bus_recovery_info recovery;
 };
 
 static const struct imx_i2c_hwdata imx1_i2c_hwdata  = {
@@ -610,6 +616,28 @@ static struct i2c_algorithm i2c_imx_algo = {
 	.functionality	= i2c_imx_func,
 };
 
+void i2c_imx_prepare_recovery(struct i2c_bus_recovery_info *bri)
+{
+	struct imx_i2c_struct *i2c_imx = container_of(bri, struct imx_i2c_struct, recovery);
+	struct device *dev = i2c_imx->adapter.dev.parent;
+	struct pinctrl *pinctrl = devm_pinctrl_get_select(dev,"recovery");
+	if (IS_ERR(pinctrl)){
+			dev_warn(&i2c_imx->adapter.dev,
+				"<%s> couldn't set recovery\n", __func__);
+	}
+}
+
+void i2c_imx_unprepare_recovery(struct i2c_bus_recovery_info *bri)
+{
+	struct imx_i2c_struct *i2c_imx = container_of(bri, struct imx_i2c_struct, recovery);
+	struct device *dev = i2c_imx->adapter.dev.parent;
+	struct pinctrl *pinctrl = devm_pinctrl_get_select_default(dev);
+	if (IS_ERR(pinctrl)){
+			dev_warn(&i2c_imx->adapter.dev,
+				"<%s> couldn't unset recovery\n", __func__);
+	}
+}
+
 static int i2c_imx_probe(struct platform_device *pdev)
 {
 	const struct of_device_id *of_id = of_match_device(i2c_imx_dt_ids,
@@ -617,6 +645,7 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	struct imx_i2c_struct *i2c_imx;
 	struct resource *res;
 	struct imxi2c_platform_data *pdata = dev_get_platdata(&pdev->dev);
+	struct pinctrl *pinctrl;
 	void __iomem *base;
 	int irq, ret;
 	u32 bitrate;
@@ -655,6 +684,26 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	i2c_imx->adapter.nr 		= pdev->id;
 	i2c_imx->adapter.dev.of_node	= pdev->dev.of_node;
 	i2c_imx->base			= base;
+
+	i2c_imx->recovery.scl_gpio = of_get_named_gpio(pdev->dev.of_node, "scl-gpio", 0);
+	i2c_imx->recovery.sda_gpio = of_get_named_gpio(pdev->dev.of_node, "sda-gpio", 0);
+	pinctrl = devm_pinctrl_get_select(&pdev->dev,"recovery");
+	if (!IS_ERR(pinctrl) &&
+		 gpio_is_valid(i2c_imx->recovery.scl_gpio) &&
+		 gpio_is_valid(i2c_imx->recovery.sda_gpio)) {
+
+		i2c_imx->recovery.prepare_recovery = i2c_imx_prepare_recovery;
+		i2c_imx->recovery.unprepare_recovery = i2c_imx_unprepare_recovery;
+		i2c_imx->recovery.recover_bus = i2c_generic_gpio_recovery;
+
+		i2c_imx->adapter.bus_recovery_info = &i2c_imx->recovery;
+	}
+
+	pinctrl = devm_pinctrl_get_select_default(&pdev->dev);
+	if (IS_ERR(pinctrl)) {
+		dev_err(&pdev->dev, "can't get/select pinctrl\n");
+		return PTR_ERR(pinctrl);
+	}
 
 	/* Get I2C clock */
 	i2c_imx->clk = devm_clk_get(&pdev->dev, NULL);
@@ -705,6 +754,7 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	/* Set up platform driver data */
 	platform_set_drvdata(pdev, i2c_imx);
 	clk_disable_unprepare(i2c_imx->clk);
+	i2c_recover_bus(&i2c_imx->adapter);
 
 	dev_dbg(&i2c_imx->adapter.dev, "claimed irq %d\n", irq);
 	dev_dbg(&i2c_imx->adapter.dev, "device resources from 0x%x to 0x%x\n",
