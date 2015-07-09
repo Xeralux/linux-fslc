@@ -890,11 +890,16 @@ static ssize_t mxc_pipeline_operational_show(struct device *dev,
                                   struct device_attribute *attr, char *buf)
 {
 	struct mxc_pipeline_data* data = dev_to_mxc_pipeline(dev);
+	int val;
 
 	if (data == NULL)
 		return -ENODEV;
-
-	return sprintf(buf, "%d\n",data->operational);
+	mutex_lock(&data->config_lock);
+	mutex_lock(&data->lock);
+	val = data->operational;
+	mutex_unlock(&data->lock);
+	mutex_unlock(&data->config_lock);
+	return sprintf(buf, "%d\n", val);
 }
 static DEVICE_ATTR(operational, 0666, (void *)mxc_pipeline_operational_show, (void *)mxc_pipeline_operational_store);
 
@@ -927,9 +932,11 @@ static int mxc_pipeline_probe(struct platform_device *pdev)
 	/*Must come before call to v4l2_device_register*/
 	platform_set_drvdata(pdev, data);
 
+	mutex_lock(&data->config_lock);
 	mutex_lock(&data->lock);
 	ret = _mxc_pipeline_probe(data);
 	mutex_unlock(&data->lock);
+	mutex_unlock(&data->config_lock);
 	if(ret < 0)
 		return ret;
 
@@ -945,7 +952,11 @@ static int mxc_pipeline_remove(struct platform_device *pdev)
 {
 	struct mxc_pipeline_data *data = platform_get_drvdata(pdev);
 	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
+	mutex_lock(&data->config_lock);
+	mutex_lock(&data->lock);
 	_mxc_pipeline_remove(data);
+	mutex_unlock(&data->lock);
+	mutex_unlock(&data->config_lock);
 	return 0;
 }
 
