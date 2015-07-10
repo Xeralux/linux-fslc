@@ -335,20 +335,6 @@
 //	};
 };
 
-&ecspi4 {
-	/*  All signals go out on connector J23.  */
-	fsl,spi-num-chipselects = <1>;
-	cs-gpios = <0>;		// <&gpio3 20 0>;	/*  EIM_D20  */
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_ecspi4_mn>;
-	status = "okay";
-
-	spidev@0 {
-		compatible = "spidev";
-		spi-max-frequency = <12000000>;
-		reg = <0>;
-	};
-};
 
 /*
 &hdmi_audio {
@@ -382,14 +368,6 @@
 	sda-gpio = <&gpio5 26 0>;
 	scl-gpio = <&gpio5 27 0>;
 	status = "okay";
-
-	mma8451@1c {
-		compatible = "fsl,mma8451";
-		reg = <0x1c>;
-		position = <1>;
-		//vdd-supply = <&reg_sensor>;
-		//vddio-supply = <&reg_sensor>;
-	};
 
 	/*  LTC3676 PMIC.  (Appears on schematic as LTM3676IUJ.)  */
 	ltc3676@3c {
@@ -1043,17 +1021,6 @@
 		};
 	};
 
-	ecspi4 {
-		pinctrl_ecspi4_mn: ecspi4grp-mn {
-			fsl,pins = <
-				MX6QDL_PAD_EIM_D22__ECSPI4_MISO		0x100b1
-				MX6QDL_PAD_EIM_D28__ECSPI4_MOSI		0x100b1
-				MX6QDL_PAD_EIM_D21__ECSPI4_SCLK		0x100b1
-				MX6QDL_PAD_EIM_D20__ECSPI4_SS0		0x100b0
-			>;
-		};
-	};
-
 	enet {
 		/*
 		 * Same as pinctrl_enet_1, but with no mapping for ENET_REF_CLK
@@ -1203,6 +1170,9 @@
 				MX6QDL_PAD_GPIO_7__GPIO1_IO07         HYS_PU100K_ODDIS_100MHZ_40Z_FSLEW /*  7 pcie2 wake-up-gpio*/
 				MX6QDL_PAD_EIM_D31__GPIO3_IO31   SION_HYS_PKDIS_ODDIS_100MHZ_40Z_FSLEW  /* 95 pcie2 disable-gpio*/
 				MX6QDL_PAD_EIM_D30__GPIO3_IO30	 SION_HYS_PKDIS_ODDIS_100MHZ_40Z_FSLEW  /* 94 light control*/
+				MX6QDL_PAD_EIM_D20__EIM_DATA20 0x100b0
+				MX6QDL_PAD_EIM_D21__GPIO3_IO21 0x100b1
+				MX6QDL_PAD_EIM_D22__GPIO3_IO22 0x100b1
 			>;
 		};
 	};
