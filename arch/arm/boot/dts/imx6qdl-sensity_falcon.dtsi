@@ -335,20 +335,6 @@
 //	};
 };
 
-&ecspi4 {
-	/*  All signals go out on connector J23.  */
-	fsl,spi-num-chipselects = <1>;
-	cs-gpios = <0>;		// <&gpio3 20 0>;	/*  EIM_D20  */
-	pinctrl-names = "default";
-	pinctrl-0 = <&pinctrl_ecspi4_mn>;
-	status = "okay";
-
-	spidev@0 {
-		compatible = "spidev";
-		spi-max-frequency = <12000000>;
-		reg = <0>;
-	};
-};
 
 /*
 &hdmi_audio {
@@ -1012,7 +998,7 @@
 		pinctrl_ecspi4_mn: ecspi4grp-mn {
 			fsl,pins = <
 				MX6QDL_PAD_EIM_D22__ECSPI4_MISO		0x100b1
-				MX6QDL_PAD_EIM_D28__ECSPI4_MOSI		0x100b1
+//				MX6QDL_PAD_EIM_D28__ECSPI4_MOSI		0x100b1
 				MX6QDL_PAD_EIM_D21__ECSPI4_SCLK		0x100b1
 				MX6QDL_PAD_EIM_D20__ECSPI4_SS0		0x100b0
 			>;
