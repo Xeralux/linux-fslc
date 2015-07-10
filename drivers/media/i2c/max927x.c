@@ -21,7 +21,7 @@
  *
  * The 9271/9272 operate as a pair, with the CPU controlling the pair
  * through the 9272 deserializer for inbound (camera) applications, or
- * through the 9271 serialize for outbound (display) applications.
+ * through the 9271 serializer for outbound (display) applications.
  *
  * Besides the video stream, the serial link carries a control channel
  * that acts as an extension of the I2C bus.  A GPI-to-GPO signal may
@@ -141,6 +141,18 @@ static unsigned long extra_udelay[16] = { 0, 0, 0, 0,
 /*
  * Driver-private data structures
  */
+
+struct i2c_test_data {
+	unsigned int cycles;
+	unsigned int failures;
+	unsigned int write_retries;
+	unsigned int read_retries;
+	unsigned int mismatches;
+	unsigned int max_retries;
+	unsigned int transaction_count;
+	char tested_device[32];
+};
+
 struct max927x;
 
 typedef int (*link_init_fn)(struct max927x *me);
@@ -168,6 +180,8 @@ struct max927x {
 	atomic_t i2c_error_count;
 	atomic_t i2c_retry_counts[I2C_RETRIES_MAX+1];
 	u32 of_cfg_settings[NUM_CFG_PROPS];
+	atomic_t i2c_test_in_progress;
+	struct i2c_test_data i2c_test_results;
 };
 
 /*
@@ -425,8 +439,8 @@ static ssize_t show_property(struct device *dev, struct device_attribute *devatt
 		return -ENODEV;
 	if (prop == NULL)
 		return -EINVAL;
-	dev_dbg(dev, "%s: me=%p, for %sserializer, setting=%s\n", __func__,
-		me, (prop->for_deserializer ? "de" : ""), prop->setting->name);
+	dev_dbg(dev, "%s: getting %s from %sserializer\n", __func__,
+		prop->setting->name, (prop->for_deserializer ? "de" : ""));
 	if (prop->for_deserializer) {
 		if (me->des == NULL)
 			return -ENODEV;
@@ -448,13 +462,13 @@ static ssize_t store_property(struct device *dev, struct device_attribute *devat
 	int ret;
 	unsigned val;
 
-	dev_dbg(dev, "%s: me=%p, prop=%p, setting=%p\n", __func__, me, prop,
-		(prop == NULL ? NULL : prop->setting));
-
 	if (me == NULL)
 		return -ENODEV;
 	if (prop == NULL || kstrtouint(buf, 10, &val) != 0 || val >= (1 << prop->setting->width))
 		return -EINVAL;
+
+	dev_dbg(dev, "%s: setting %s to 0x%x in %sserializer\n", __func__,
+		prop->setting->name, val, (prop->for_deserializer ? "de" : ""));
 
 	if (prop->for_deserializer) {
 		if (me->des == NULL)
@@ -1062,6 +1076,99 @@ static int setup_gpiochip(struct max927x *me)
 	return gpiochip_add(gc);
 }
 
+static void run_i2c_test(struct max927x *me, unsigned int which, unsigned int cycles)
+{
+	struct i2c_client *target;
+	struct i2c_test_data *d = &me->i2c_test_results;
+	const struct max927x_setting *s;
+	char *device_name;
+	unsigned int i, j, percent_complete;
+	u8 reg, mask, origval;
+	int ret;
+
+	if (which == MAX9272_CHIPID) {
+		s = &max9272_settings[MAX9272_I2CDSTA];
+		target = me->des;
+		ret = des_read(me, MAX9272_I2CDSTA, &origval);
+		device_name = "max9272";
+	} else {
+		s = &max9271_settings[MAX9271_I2CDSTA];
+		target = me->ser;
+		ret = ser_read(me, MAX9271_I2CDSTA, &origval);
+		device_name = "max9271";
+	}
+	if (ret < 0) {
+		dev_err(me->dev, "I2C test aborted: could not save original register value\n");
+		return;
+	}
+	reg = s->reg;
+	mask = ~(0xFF << s->width) << s->pos;
+
+	memset(d, 0, sizeof(*d));
+	strlcpy(d->tested_device, device_name, sizeof(d->tested_device));
+
+	dev_notice(me->dev, "I2C test (%s): start\n", device_name);
+	for (i = 1; i <= cycles; i++) {
+		u8 writeval, readval;
+
+		d->cycles += 1;
+		writeval = (i << s->pos) & mask;
+		for (j = 0; j < i2c_retries; j++) {
+			ret = i2c_reg_write(target, reg, writeval);
+			d->transaction_count += 1;
+			if (ret >= 0)
+				break;
+			d->write_retries += 1;
+		}
+
+		if (d->write_retries > d->max_retries)
+			d->max_retries = d->write_retries;
+
+		if (j >= i2c_retries) {
+			dev_warn(me->dev, "I2C test (%s): write failure on cycle %u\n",
+				 device_name, i);
+			d->failures += 1;
+			continue;
+		}
+
+		for (j = 0; j < i2c_retries; j++) {
+			ret = i2c_reg_read(target, reg, &readval);
+			d->transaction_count += 1;
+			if (ret >= 0)
+				break;
+			d->read_retries += 1;
+		}
+
+		if (d->read_retries > d->max_retries)
+			d->max_retries = d->read_retries;
+
+		if (j >= i2c_retries) {
+			dev_warn(me->dev, "I2C test (%s): read failure on cycle %u\n",
+				 device_name, i);
+			d->failures += 1;
+			continue;
+		}
+
+		readval &= mask;
+		if (readval != writeval) {
+			dev_warn(me->dev, "I2C test (%s): write 0x%x read 0x%x mismatch on cycle %u\n",
+				 device_name, writeval, readval, i);
+			d->mismatches += 1;
+		}
+		percent_complete = (i * 100) / cycles;
+		if (percent_complete > 0 && percent_complete % 10 == 0 && percent_complete * cycles / 100 == i)
+			dev_notice(me->dev, "I2C test(%s): %u cycles (%u%%) complete with %u failures\n",
+				   device_name, i, percent_complete, d->failures);
+	}
+	dev_notice(me->dev, "I2C test (%s): complete, %u failures\n", device_name, d->failures);
+	if (which == MAX9272_CHIPID)
+		ret = des_update(me, MAX9272_I2CDSTA, origval);
+	else
+		ret = ser_update(me, MAX9271_I2CDSTA, origval);
+	if (ret < 0)
+		dev_err(me->dev, "I2C test: could not restore original register value\n");
+}
+
 /*
  * Enabling or disabling the serial link for data should
  * be sufficient for stream on/off control.
@@ -1118,6 +1225,65 @@ static ssize_t show_i2c_retry_counts(struct device *dev, struct device_attribute
 	return count;
 }
 static DEVICE_ATTR(i2c_retry_counts, 0644, show_i2c_retry_counts, clear_i2c_retry_counts);
+
+static ssize_t deserializer_i2c_test(struct device *dev, struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	unsigned int cycles;
+
+	if (kstrtouint(buf, 10, &cycles) || cycles < 100)
+		return -EINVAL;
+	if (atomic_cmpxchg(&me->i2c_test_in_progress, 0, 1))
+		return -EBUSY;
+	run_i2c_test(me, MAX9272_CHIPID, cycles);
+	atomic_xchg(&me->i2c_test_in_progress, 0);
+	return count;
+}
+
+static ssize_t serializer_i2c_test(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	unsigned int cycles;
+
+	if (kstrtouint(buf, 10, &cycles) || cycles < 100)
+		return -EINVAL;
+	if (atomic_cmpxchg(&me->i2c_test_in_progress, 0, 1))
+		return -EBUSY;
+	run_i2c_test(me, MAX9271_CHIPID, cycles);
+	atomic_xchg(&me->i2c_test_in_progress, 0);
+	return count;
+}
+
+static ssize_t i2c_test_results(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	struct i2c_test_data *d = &me->i2c_test_results;
+	ssize_t count = 0;
+
+	if (atomic_cmpxchg(&me->i2c_test_in_progress, 0, 1))
+		return -EBUSY;
+	count = scnprintf(buf, PAGE_SIZE,
+			  "Tested:             %s\n"
+			  "Test cycles run:    %u\n"
+			  "Failures:           %u\n"
+			  "Retries (write):    %u\n"
+			  "Retries (read):     %u\n"
+			  "Mismatches:         %u\n"
+			  "Max retries:        %u\n"
+			  "Total transactions: %u\n"
+			  "Result:             %s\n",
+			  d->tested_device, d->cycles, d->failures,
+			  d->write_retries, d->read_retries, d->mismatches,
+			  d->max_retries, d->transaction_count,
+			  (d->cycles == 0 ? "<none>" : (d->failures == 0 ? "PASS" : "FAIL")));
+	atomic_xchg(&me->i2c_test_in_progress, 0);
+	return count;
+}
+
+static DEVICE_ATTR(max9272_i2c_test, 0666, i2c_test_results, deserializer_i2c_test);
+static DEVICE_ATTR(max9271_i2c_test, 0666, i2c_test_results, serializer_i2c_test);
 
 static ssize_t set_operational(struct device *dev, struct device_attribute *attr,
 			       const char *buf, size_t count)
@@ -1201,6 +1367,8 @@ static DEVICE_ATTR(i2c_error_count, 0444, show_remote_i2c_errs, NULL);
 
 static struct attribute *misc_attributes[] = {
 	&dev_attr_i2c_retry_counts.attr,
+	&dev_attr_max9272_i2c_test.attr,
+	&dev_attr_max9271_i2c_test.attr,
 	&dev_attr_operational.attr,
 	&dev_attr_reset.attr,
 	&dev_attr_corrected_link_errors.attr,
@@ -1300,6 +1468,7 @@ static int max927x_probe(struct i2c_client *client,
 	atomic_set(&me->ser_gpios_set, 0);
 	atomic_set(&me->remote_power_enabled, 0);
 	atomic_set(&me->operational, 0);
+	atomic_set(&me->i2c_test_in_progress, 0);
 
 	me->dev = dev;
 	me->local = client;
