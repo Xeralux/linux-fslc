@@ -1224,7 +1224,7 @@ static ssize_t show_i2c_retry_counts(struct device *dev, struct device_attribute
 				   i, atomic_read(&me->i2c_retry_counts[i]));
 	return count;
 }
-static DEVICE_ATTR(i2c_retry_counts, 0644, show_i2c_retry_counts, clear_i2c_retry_counts);
+static DEVICE_ATTR(i2c_retry_counts, 0666, show_i2c_retry_counts, clear_i2c_retry_counts);
 
 static ssize_t deserializer_i2c_test(struct device *dev, struct device_attribute *attr,
 				     const char *buf, size_t count)
@@ -1362,7 +1362,17 @@ static ssize_t show_remote_i2c_errs(struct device *dev, struct device_attribute 
 	struct max927x *me = to_max927x_from_dev(dev);
 	return scnprintf(buf, PAGE_SIZE, "%u\n", atomic_read(&me->i2c_error_count));
 }
-static DEVICE_ATTR(i2c_error_count, 0444, show_remote_i2c_errs, NULL);
+
+static ssize_t clear_remote_i2c_errs(struct device *dev,
+				     struct device_attribute *attr,
+				     const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	atomic_xchg(&me->i2c_error_count, 0);
+	return count;
+}
+
+static DEVICE_ATTR(i2c_error_count, 0666, show_remote_i2c_errs, clear_remote_i2c_errs);
 
 
 static struct attribute *misc_attributes[] = {
