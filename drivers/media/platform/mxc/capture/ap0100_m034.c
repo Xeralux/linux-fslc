@@ -325,10 +325,8 @@ static int _AM_try_read_reg(struct i2c_client * client, u16 reg, unsigned *val, 
 				 (buf[3]        & 0x000000ff);
 		break;
 	};
-	if (err < 0) {
-		dev_warn(&client->dev,"%s:read reg warn:reg=%x,val=%x,err=%d\n", __func__, reg, *val,
-					err);
-	}
+	if (err < 0)
+		dev_dbg(&client->dev,"%s: reg:reg=%x,val=%x,err=%d\n", __func__, reg, *val, err);
 	return err;
 }
 
@@ -394,7 +392,7 @@ static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf
 
 	err =  i2c_master_send(client, write_buf, sizeof(write_buf));
 	if (err < 0) {
-		dev_warn(&client->dev, "%s:write reg warn:reg=%x, err=%d\n",
+		dev_dbg(&client->dev, "%s: write:reg=%x, err=%d\n",
 			__func__, reg, err);
 		return err;
 	}
@@ -402,8 +400,7 @@ static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf
 		return err;
 
 	if((err = _AM_read_data(client, reg, check, buf_len, NULL)) == 0 && memcmp(buf, check, buf_len)) {
-		dev_warn(&client->dev,"%s:check reg warn:reg=%x\n",
-			__func__, reg);
+		dev_dbg(&client->dev,"%s: check mismatch reg:reg=%x\n", __func__, reg);
 		return -EIO;
 	}
 	return err;
@@ -2415,12 +2412,15 @@ static int ap0100_m034_probe(struct i2c_client *client,
 		return -EPROBE_DEFER;
 
 	for (tries = 1; tries <= 3; tries++) {
-		if (_AM_read_reg(client, REG_CHIP_VERSION, &chipver, 2, NULL) >= 0)
+		if (_AM_try_read_reg(client, REG_CHIP_VERSION, &chipver, 2, true) >= 0)
 			break;
 		msleep(5);
 	}
 	if (chipver != 0x0062)
 		return -ENODEV;
+
+	dev_info(dev, "%s: found at 0x%02x (chip version 0x%x)\n",
+		 __func__, client->addr, chipver);
 
 	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
 	if(!data)
