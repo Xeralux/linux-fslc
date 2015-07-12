@@ -18,7 +18,7 @@
  * 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
  */
 
-#define DEBUG
+//#define DEBUG
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
@@ -157,7 +157,7 @@ static int mxc_subdev_mipi_s_stream_on(struct mxc_subdev_mipi_cam *data)
 	}
 
 	if(mipi_reg != 0x0) {
-		dev_err(dev, "mipi csi2 can not reveive data correctly!\n");
+		dev_err(dev, "mipi csi2 can not receive data correctly!\n");
 		return -EIO;
 	}
 	dev_dbg(dev,"mipi dphy no error\n");
