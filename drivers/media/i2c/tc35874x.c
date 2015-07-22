@@ -390,12 +390,122 @@ static ssize_t tc35874x_ppi_status(struct device *dev,
 }
 static DEVICE_ATTR(ppi_status, 0444, (void *)tc35874x_ppi_status, (void *)NULL);
 
+static ssize_t tc35874x_error_counters(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct tc35874x_data* data = to_tc35874x_from_dev(dev);
+	unsigned val;
+	size_t count = 0;
+	int ret;
+
+	static const char *fifostatus[4] = { "normal", "overflow",
+					     "underflow", "over- and underflow" };
+
+	ret = tc35874x_read_reg(data->client, 0x0080, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "Frame errors:\t\t\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x0082, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "CRC errors:\t\t\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x0084, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "Recoverable header errors:\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x0086, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "Unrecoverable header errors:\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x0088, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "Packet ID errors:\t\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x008A, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "Control errors:\t\t\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x008C, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "Recoverable sync errors:\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x008E, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "Unrecoverable sync errors:\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x0090, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "MDL sync errors:\t\t%u\n", val);
+
+	ret = tc35874x_read_reg(data->client, 0x00F8, &val, 2);
+	if (ret < 0)
+		return ret;
+	count += scnprintf(buf+count, PAGE_SIZE-count, "FIFO status:\t\t\t%s\n", fifostatus[val & 3]);
+
+	return count;
+}
+static ssize_t tc35874x_clear_counters(struct device *dev, struct device_attribute *attr,
+				       const char *buf, int count)
+{
+	struct tc35874x_data* data = to_tc35874x_from_dev(dev);
+	int ret;
+
+	ret = tc35874x_write_reg(data->client, 0x0080, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = tc35874x_write_reg(data->client, 0x0082, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = tc35874x_write_reg(data->client, 0x0084, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = tc35874x_write_reg(data->client, 0x0086, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = tc35874x_write_reg(data->client, 0x0088, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = tc35874x_write_reg(data->client, 0x008A, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = tc35874x_write_reg(data->client, 0x008C, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = tc35874x_write_reg(data->client, 0x008E, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	ret = tc35874x_write_reg(data->client, 0x0090, 0, 2);
+	if (ret < 0)
+		return ret;
+
+	return count;
+}
+static DEVICE_ATTR(error_counters, 0666, (void *)tc35874x_error_counters, (void *)tc35874x_clear_counters);
+
 static struct attribute *attributes[] = {
 		&dev_attr_csi_err.attr,
 		&dev_attr_csi_status.attr,
 		&dev_attr_csi_control.attr,
 		&dev_attr_ppi_status.attr,
 		&dev_attr_csi_int.attr,
+		&dev_attr_error_counters.attr,
 		NULL,
 };
 static const struct attribute_group attr_group = {
