@@ -200,6 +200,14 @@ void i2c_del_mux_adapter(struct i2c_adapter *adap)
 }
 EXPORT_SYMBOL_GPL(i2c_del_mux_adapter);
 
+void *i2c_mux_pdata(struct i2c_adapter *adap)
+{
+	struct i2c_mux_priv *priv = adap->algo_data;
+
+	return priv->mux_priv;
+}
+EXPORT_SYMBOL_GPL(i2c_mux_pdata);
+
 MODULE_AUTHOR("Rodolfo Giometti <giometti@linux.it>");
 MODULE_DESCRIPTION("I2C driver for multiplexed I2C busses");
 MODULE_LICENSE("GPL v2");
