@@ -528,6 +528,7 @@ static int ser_control_init(struct max927x *me)
 	 */
 	device_reset(me->dev);
 	msleep(5);
+	i2c_recover_bus(me->parent);
 	power_down_remote(me);
 
 	/*
@@ -671,6 +672,7 @@ static int des_control_init(struct max927x *me)
 	 */
 	device_reset(me->dev);
 	msleep(10);
+	i2c_recover_bus(me->parent);
 	power_down_remote(me);
 
 	/*
