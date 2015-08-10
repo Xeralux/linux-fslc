@@ -2407,10 +2407,6 @@ static int ap0100_m034_probe(struct i2c_client *client,
 	unsigned chipver = 0;
 	int ret, tries;
 
-	ret = device_reset(dev);
-	if (ret == -ENODEV)
-		return -EPROBE_DEFER;
-
 	for (tries = 1; tries <= 3; tries++) {
 		if (_AM_try_read_reg(client, REG_CHIP_VERSION, &chipver, 2, true) >= 0)
 			break;
@@ -2421,6 +2417,10 @@ static int ap0100_m034_probe(struct i2c_client *client,
 
 	dev_info(dev, "%s: found at 0x%02x (chip version 0x%x)\n",
 		 __func__, client->addr, chipver);
+
+	ret = device_reset(dev);
+	if (ret == -ENODEV)
+		return -EPROBE_DEFER;
 
 	data =  devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
 	if(!data)
