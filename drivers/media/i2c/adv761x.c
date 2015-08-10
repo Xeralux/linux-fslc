@@ -25,6 +25,7 @@
 #include <linux/slab.h>
 #include <linux/v4l2-dv-timings.h>
 #include <linux/videodev2.h>
+#include <linux/delay.h>
 #include "adv761x.h"
 #include <media/soc_camera.h>
 #include <media/v4l2-ctrls.h>
@@ -1043,6 +1044,14 @@ static int adv761x_probe(struct i2c_client *client,
 		return ret;
 
 	v4l_info(client, "Chip found @ 0x%02x (adv%d)\n", client->addr, ret);
+
+	ret = device_reset(&client->dev);
+	if (ret == -ENODEV)
+		return -EPROBE_DEFER;
+	msleep(5);
+	ret = adv_smbus_write_byte_data(client, 0xff, 0x80);
+	if (ret < 0)
+		v4l_err(client, "error %d sending master reset\n", ret);
 
 	/* Get platform data */
 	if (id->driver_data == ADV761X_SOC_CAM_QUIRK) {
