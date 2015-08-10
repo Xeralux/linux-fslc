@@ -742,8 +742,6 @@ static int des_control_init(struct max927x *me)
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_GPIO_EN, atomic_read(&me->ser_gpios_enabled));
 	if (ret == 0)
-		ret = ser_update(me, MAX9271_GPIO_SET, 0);
-	if (ret == 0)
 		ret = ser_update(me, MAX9271_GPIO_SET, atomic_read(&me->ser_gpios_set));
 	if (ret == 0)
 		ret = ser_update(me, MAX9271_I2CLOCACK, 1);
