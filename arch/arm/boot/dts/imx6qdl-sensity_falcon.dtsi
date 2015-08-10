@@ -605,6 +605,7 @@
 			adv7611_ch0: camboard-ch0-adv7611@4c {
 				status = "disabled";
 				compatible = "adi,adv7611";
+				resets = <&camboard_ch0_ap0100_reset>;
 				reg = <0x4c>;
 				reg-avlink = <0x60>;
 				reg-cec = <0x61>;
@@ -764,6 +765,7 @@
 			adv7611_ch1: camboard-ch1-adv7611@4c {
 				status = "disabled";
 				compatible = "adi,adv7611";
+				resets = <&camboard_ch1_ap0100_reset>;
 				reg = <0x4c>;
 				reg-avlink = <0x60>;
 				reg-cec = <0x61>;
