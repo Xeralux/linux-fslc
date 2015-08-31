@@ -23,6 +23,7 @@
 #include <linux/i2c/pca953x.h>
 #include <linux/reset.h>
 #include <linux/slab.h>
+#include <linux/delay.h>
 #ifdef CONFIG_OF_GPIO
 #include <linux/of_platform.h>
 #endif
@@ -80,6 +81,11 @@ MODULE_DEVICE_TABLE(i2c, pca953x_id);
 
 #define NBANK(chip) (chip->gpio_chip.ngpio / BANK_SZ)
 
+static int i2c_retries = 2;
+module_param(i2c_retries, int, 0644);
+MODULE_PARM_DESC(i2c_retries, "number of times to retry I2C transactions");
+static unsigned long i2c_delay_usec = 1500;
+
 struct pca953x_chip {
 	unsigned gpio_start;
 	u8 reg_output[MAX_BANK];
@@ -107,13 +113,21 @@ static int pca953x_read_single(struct pca953x_chip *chip, int reg, u32 *val,
 	int ret;
 	int bank_shift = fls((chip->gpio_chip.ngpio - 1) / BANK_SZ);
 	int offset = off / BANK_SZ;
+	int ntries = i2c_retries;
 
-	ret = i2c_smbus_read_byte_data(chip->client,
-				(reg << bank_shift) + offset);
+	do {
+		ret = i2c_smbus_read_byte_data(chip->client,
+					       (reg << bank_shift) + offset);
+		if (ret >= 0)
+			break;
+		usleep_range(i2c_delay_usec - 500, i2c_delay_usec + 500);
+	} while (ntries-- > 0);
+
 	*val = ret;
 
 	if (ret < 0) {
-		dev_err(&chip->client->dev, "failed reading register\n");
+		dev_err(&chip->client->dev, "failed reading register %d, ret=%d)\n",
+			reg, ret);
 		return ret;
 	}
 
@@ -126,12 +140,19 @@ static int pca953x_write_single(struct pca953x_chip *chip, int reg, u32 val,
 	int ret = 0;
 	int bank_shift = fls((chip->gpio_chip.ngpio - 1) / BANK_SZ);
 	int offset = off / BANK_SZ;
+	int ntries = i2c_retries;
 
-	ret = i2c_smbus_write_byte_data(chip->client,
-					(reg << bank_shift) + offset, val);
+	do {
+		ret = i2c_smbus_write_byte_data(chip->client,
+						(reg << bank_shift) + offset, val);
+		if (ret >= 0)
+			break;
+		usleep_range(i2c_delay_usec - 500, i2c_delay_usec + 500);
+	} while (ntries-- > 0);
 
 	if (ret < 0) {
-		dev_err(&chip->client->dev, "failed writing register\n");
+		dev_err(&chip->client->dev, "failed writing register %d, ret=%d\n",
+			reg, ret);
 		return ret;
 	}
 
@@ -141,34 +162,41 @@ static int pca953x_write_single(struct pca953x_chip *chip, int reg, u32 val,
 static int pca953x_write_regs(struct pca953x_chip *chip, int reg, u8 *val)
 {
 	int ret = 0;
+	int ntries = i2c_retries;
 
-	if (chip->gpio_chip.ngpio <= 8)
-		ret = i2c_smbus_write_byte_data(chip->client, reg, *val);
-	else if (chip->gpio_chip.ngpio >= 24) {
-		int bank_shift = fls((chip->gpio_chip.ngpio - 1) / BANK_SZ);
-		ret = i2c_smbus_write_i2c_block_data(chip->client,
-					(reg << bank_shift) | REG_ADDR_AI,
-					NBANK(chip), val);
-	} else {
-		switch (chip->chip_type) {
-		case PCA953X_TYPE:
-			ret = i2c_smbus_write_word_data(chip->client,
-							reg << 1, (u16) *val);
-			break;
-		case PCA957X_TYPE:
-			ret = i2c_smbus_write_byte_data(chip->client, reg << 1,
-							val[0]);
-			if (ret < 0)
+	do {
+		if (chip->gpio_chip.ngpio <= 8)
+			ret = i2c_smbus_write_byte_data(chip->client, reg, *val);
+		else if (chip->gpio_chip.ngpio >= 24) {
+			int bank_shift = fls((chip->gpio_chip.ngpio - 1) / BANK_SZ);
+			ret = i2c_smbus_write_i2c_block_data(chip->client,
+							     (reg << bank_shift) | REG_ADDR_AI,
+							     NBANK(chip), val);
+		} else {
+			switch (chip->chip_type) {
+			case PCA953X_TYPE:
+				ret = i2c_smbus_write_word_data(chip->client,
+								reg << 1, (u16) *val);
 				break;
-			ret = i2c_smbus_write_byte_data(chip->client,
-							(reg << 1) + 1,
-							val[1]);
+			case PCA957X_TYPE:
+				ret = i2c_smbus_write_byte_data(chip->client, reg << 1,
+								val[0]);
+				if (ret < 0)
+					break;
+				ret = i2c_smbus_write_byte_data(chip->client,
+								(reg << 1) + 1,
+								val[1]);
+				break;
+			}
+		} 
+		if (ret >= 0)
 			break;
-		}
-	}
+		usleep_range(i2c_delay_usec - 500, i2c_delay_usec + 500);
+	} while (ntries-- > 0);
 
 	if (ret < 0) {
-		dev_err(&chip->client->dev, "failed writing register\n");
+		dev_err(&chip->client->dev, "failed in write_regs, reg %d, ret=%d\n",
+			reg, ret);
 		return ret;
 	}
 
@@ -178,23 +206,30 @@ static int pca953x_write_regs(struct pca953x_chip *chip, int reg, u8 *val)
 static int pca953x_read_regs(struct pca953x_chip *chip, int reg, u8 *val)
 {
 	int ret;
+	int ntries = i2c_retries;
 
-	if (chip->gpio_chip.ngpio <= 8) {
-		ret = i2c_smbus_read_byte_data(chip->client, reg);
-		*val = ret;
-	} else if (chip->gpio_chip.ngpio >= 24) {
-		int bank_shift = fls((chip->gpio_chip.ngpio - 1) / BANK_SZ);
+	do {
+		if (chip->gpio_chip.ngpio <= 8) {
+			ret = i2c_smbus_read_byte_data(chip->client, reg);
+			*val = ret;
+		} else if (chip->gpio_chip.ngpio >= 24) {
+			int bank_shift = fls((chip->gpio_chip.ngpio - 1) / BANK_SZ);
 
-		ret = i2c_smbus_read_i2c_block_data(chip->client,
-					(reg << bank_shift) | REG_ADDR_AI,
-					NBANK(chip), val);
-	} else {
-		ret = i2c_smbus_read_word_data(chip->client, reg << 1);
-		val[0] = (u16)ret & 0xFF;
-		val[1] = (u16)ret >> 8;
-	}
+			ret = i2c_smbus_read_i2c_block_data(chip->client,
+							    (reg << bank_shift) | REG_ADDR_AI,
+							    NBANK(chip), val);
+		} else {
+			ret = i2c_smbus_read_word_data(chip->client, reg << 1);
+			val[0] = (u16)ret & 0xFF;
+			val[1] = (u16)ret >> 8;
+		}
+		if (ret >= 0)
+			break;
+		usleep_range(i2c_delay_usec - 500, i2c_delay_usec + 500);
+	} while (ntries-- > 0);
 	if (ret < 0) {
-		dev_err(&chip->client->dev, "failed reading register\n");
+		dev_err(&chip->client->dev, "failed in read_regs, reg %d, ret=%d\n",
+			reg, ret);
 		return ret;
 	}
 
