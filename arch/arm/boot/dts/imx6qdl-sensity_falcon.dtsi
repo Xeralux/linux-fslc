@@ -1006,27 +1006,25 @@
 	};
 
 	enet {
-		/*
-		 * Same as pinctrl_enet_1, but with no mapping for ENET_REF_CLK
-		 * or ENET_TX_EN; add mapping for ENET_CRS_DV -> GPIO1_25
-		 */
+		/* RGMII_T* and RGMII_R* pads need to have drive strength
+		   bits set to 0x100 (57_OHM) */
 		pinctrl_enet_4: enetgrp-4 {
 			fsl,pins = <
 				MX6QDL_PAD_ENET_MDIO__ENET_MDIO       0x1b0b0
 				MX6QDL_PAD_ENET_MDC__ENET_MDC         0x1b0b0
-				MX6QDL_PAD_RGMII_TXC__RGMII_TXC       0x1b0b0
-				MX6QDL_PAD_RGMII_TD0__RGMII_TD0       0x1b0b0
-				MX6QDL_PAD_RGMII_TD1__RGMII_TD1       0x1b0b0
-				MX6QDL_PAD_RGMII_TD2__RGMII_TD2       0x1b0b0
-				MX6QDL_PAD_RGMII_TD3__RGMII_TD3       0x1b0b0
-				MX6QDL_PAD_RGMII_TX_CTL__RGMII_TX_CTL 0x1b0b0
+				MX6QDL_PAD_RGMII_TXC__RGMII_TXC       0x1b020
+				MX6QDL_PAD_RGMII_TD0__RGMII_TD0       0x1b020
+				MX6QDL_PAD_RGMII_TD1__RGMII_TD1       0x1b020
+				MX6QDL_PAD_RGMII_TD2__RGMII_TD2       0x1b020
+				MX6QDL_PAD_RGMII_TD3__RGMII_TD3       0x1b020
+				MX6QDL_PAD_RGMII_TX_CTL__RGMII_TX_CTL 0x1b020
 				MX6QDL_PAD_ENET_REF_CLK__ENET_TX_CLK  0x1b0b0
-				MX6QDL_PAD_RGMII_RXC__RGMII_RXC       0x1b0b0
-				MX6QDL_PAD_RGMII_RD0__RGMII_RD0       0x1b0b0
-				MX6QDL_PAD_RGMII_RD1__RGMII_RD1       0x1b0b0
-				MX6QDL_PAD_RGMII_RD2__RGMII_RD2       0x1b0b0
-				MX6QDL_PAD_RGMII_RD3__RGMII_RD3       0x1b0b0
-				MX6QDL_PAD_RGMII_RX_CTL__RGMII_RX_CTL 0x1b0b0
+				MX6QDL_PAD_RGMII_RXC__RGMII_RXC       0x1b020
+				MX6QDL_PAD_RGMII_RD0__RGMII_RD0       0x1b020
+				MX6QDL_PAD_RGMII_RD1__RGMII_RD1       0x1b020
+				MX6QDL_PAD_RGMII_RD2__RGMII_RD2       0x1b020
+				MX6QDL_PAD_RGMII_RD3__RGMII_RD3       0x1b020
+				MX6QDL_PAD_RGMII_RX_CTL__RGMII_RX_CTL 0x1b020
 				MX6QDL_PAD_ENET_CRS_DV__GPIO1_IO25    0x1b0b0
 			>;
 		};
@@ -1075,8 +1073,8 @@
 		};
 	};
 
-/*  SION disabled:HYS Enabled:100KOhm PU:PUE Enabled:PKE Enabled:ODE disabled:100MHz:40Ohm:SLOW  */
-#define PADCTL_EMMC	0x0001B0B0
+/*  SION disabled:HYS Enabled:100KOhm PU:PUE Enabled:PKE Enabled:ODT disabled:100MHz:90Ohm:SLOW  */
+#define PADCTL_EMMC	0x0001B098
 	usdhc3 {
 		pinctrl_usdhc3_mn: usdhc3grp-mn {
 			fsl,pins = <
