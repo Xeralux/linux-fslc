@@ -397,8 +397,13 @@ static int pca954x_remove(struct i2c_client *client)
 static int pca954x_recover(struct i2c_adapter *adap)
 {
 	struct i2c_client *client = i2c_mux_pdata(adap);
+	struct i2c_adapter *parent = to_i2c_adapter(client->dev.parent);
 	struct pca954x *data = i2c_get_clientdata(client);
 
+	if (parent != NULL) {
+		dev_info(&client->dev, "%s: invoking recovery on %s\n", __func__, parent->name);
+		i2c_recover_bus(parent);
+	}
 	dev_info(&client->dev, "%s: resetting last channel\n", __func__);
 	data->last_chan = 0;
 	return i2c_smbus_write_byte(client, 0);
