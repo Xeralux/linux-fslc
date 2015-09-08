@@ -2078,8 +2078,10 @@ static int ap0100_m034_g_mbus_fmt(struct v4l2_subdev *sd,
 			struct v4l2_mbus_framefmt *mf)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
+	mutex_lock(&data->lock);
 	mf->width = ap0100_m034_frame_data[data->mode].width;
 	mf->height = ap0100_m034_frame_data[data->mode].height;
+	mutex_unlock(&data->lock);
 	mf->colorspace = V4L2_COLORSPACE_JPEG;
 	mf->code = V4L2_MBUS_FMT_UYVY8_2X8;
 	mf->field	= V4L2_FIELD_NONE;
@@ -2110,7 +2112,11 @@ static int ap0100_m034_g_frame_interval(struct v4l2_subdev *sd,
 				struct v4l2_subdev_frame_interval *interval)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
+
+	mutex_lock(&data->lock);
 	interval->interval = ap0100_m034_frame_data[data->mode].fi;
+	mutex_unlock(&data->lock);
+
 	return 0;
 }
 
@@ -2176,7 +2182,11 @@ static	int ap0100_m034_try_mbus_fmt(struct v4l2_subdev *sd,
 			    struct v4l2_mbus_framefmt *fmt)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
-	int ret = ap0100_m034_find_frame_format(data,fmt);
+	int ret;
+
+	mutex_lock(&data->lock);
+	ret = ap0100_m034_find_frame_format(data,fmt);
+	mutex_unlock(&data->lock);
 
 	return ret < 0 ? ret : 0;
 }
@@ -2186,13 +2196,15 @@ static	int ap0100_m034_s_mbus_fmt(struct v4l2_subdev *sd,
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
 	int ret;
-	int mode = ap0100_m034_find_frame_format(data,fmt);
-
-	if(mode < 0) {
-		return mode;
-	}
+	int mode;
 
 	mutex_lock(&data->lock);
+
+	mode = ap0100_m034_find_frame_format(data,fmt);
+	if (mode < 0) {
+		ret = mode;
+		goto out;
+	}
 
 	if(!data->operational) {
 		ret = -ENODEV;
