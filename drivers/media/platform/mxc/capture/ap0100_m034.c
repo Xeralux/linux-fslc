@@ -1408,6 +1408,7 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 {
 	struct i2c_client *client = data->client;
 	struct device *dev = &client->dev;
+	const char *modestr = NULL;
 	int err, i;
 #define HANDLE_REGS(_x_) do { \
 		err = _ap0100_handle_registers(client, _x_, ARRAY_SIZE(_x_), &data->error_count); \
@@ -1458,63 +1459,64 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 
 	switch (mode) {
 		case MODE_NO_FLIP_NO_MIRROR:
-			dev_dbg(dev, "ap0100 set cmd : MODE_NO_FLIP_NO_MIRROR");
+			modestr = "MODE_NO_FLIP_NO_MIRROR";
 			ap0100_cmd_reg[1].data = STORED_CMD_Image_Orientation_original;
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_FLIP_IMAGE:
 			ap0100_cmd_reg[1].data = STORED_CMD_Flip;
-			dev_dbg(dev, "ap0100 set cmd : MODE_FLIP_IMAGE");
+			modestr = "MODE_FLIP_IMAGE";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_MIRROR_IMAGE:
 			ap0100_cmd_reg[1].data = STORED_CMD_Mirror;
-			dev_dbg(dev, "ap0100 set cmd : MODE_MIRROR_IMAGE");
+			modestr = "MODE_MIRROR_IMAGE";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_FLIP_N_MIRROR:
 			ap0100_cmd_reg[1].data = STORED_CMD_Flip_And_Mirror;
-			dev_dbg(dev, "ap0100 set cmd : MODE_FLIP_N_MIRROR");
+			modestr = "MODE_FLIP_N_MIRROR";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_WDR_MODE:
 			ap0100_cmd_reg[1].data = data->mode + STORED_CMD_WDR_START;
-			dev_dbg(dev, "ap0100 set cmd : MODE_WDR_MODE");
+			modestr = "MODE_WDR_MODE";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_SDR_MODE:
 			ap0100_cmd_reg[1].data = data->mode + STORED_CMD_SDR_START;
-			dev_dbg(dev, "ap0100 set cmd : MODE_SDR_MODE");
+			modestr = "MODE_SDR_MODE";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_AE_OFF:
 			ae_reg[0].data = 0xA0;
 			ae_reg[1].data = 0x02;
-			dev_dbg(dev,"ap0100 set cmd : CMD_AE_OFF\n");
+			modestr = "CMD_AE_OFF";
 			HANDLE_REGS(ae_reg);
 			break;
 		case MODE_AE_ON:
 			ae_reg[0].data = 0x00;
 			ae_reg[1].data = 0x00;
-			dev_dbg(dev,"ap0100 set cmd : CMD_AE_ON\n");
+			modestr = "CMD_AE_ON";
 			HANDLE_REGS(ae_reg);
 			break;
 		case MODE_SET_EXP_TIME:
 			set_exposure_time_reg[0].data = data->cam_param_s.exp_time;
-			dev_dbg(dev, "ap0100 set cmd : CMD_SET_EXP_TIME\n");
+			modestr = "CMD_SET_EXP_TIME";
 			HANDLE_REGS(set_exposure_time_reg);
 			break;
 		case MODE_SET_TARGET_LUMA:
 			set_target_luma_reg[1].data = data->cam_param_s.luma_target;
-			dev_dbg(dev, "ap0100 set cmd : CMD_SET_TARGET_LUMA\n");
+			modestr = "CMD_SET_TARGET_LUMA";
 			HANDLE_REGS(set_target_luma_reg);
 		break;
 		case MODE_AUTO_TARGET_LUMA:
+			modestr = "AUTO_TARGET_LUMA";
 			HANDLE_REGS(auto_target_luma_reg);
 			break;
 		case MODE_SET_COLOR_TEMPERATURE:
 			set_color_temperature_reg[0].data = data->cam_param_s.color_temperature;
-			dev_dbg(dev, "ap0100 set cmd : CMD_SET_COLOR_TEMPERATURE\n");
+			modestr = "CMD_SET_COLOR_TEMPERATURE";
 			HANDLE_REGS(set_color_temperature_reg);
 			break;
 		case MODE_SET_AE_WEIGHT_TABLE:
@@ -1523,7 +1525,7 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 			 * sub-device drivers)
 			 */
 			err = 0;
-			dev_dbg(dev, "ap0100 set cmd : CMD_SET_AE_WEIGHT_TABLE\n");
+			modestr = "CMD_SET_AE_WEIGHT_TABLE";
 			for(i = 0; i < 25 && err >= 0; i++) {
 				err = _AM_write_reg(client, REG_RULE_AE_WEIGHT_TABLE_0_0 + i,
 						data->cam_param_s.ae_weight_table[i], 1, &data->error_count);
@@ -1531,32 +1533,32 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 			break;
 		case MODE_INDOOR_MODE_ON:
 			indoor_mode_reg[0].data = 0x1;
-			dev_dbg(dev, "ap0100 set cmd : CMD_INDOOR_MODE_ON\n");
+			modestr = "CMD_INDOOR_MODE_ON";
 			HANDLE_REGS(indoor_mode_reg);
 			break;
 		case MODE_INDOOR_MODE_OFF:
 			indoor_mode_reg[0].data = 0x0;
-			dev_dbg(dev, "ap0100 set cmd : CMD_INDOOR_MODE_OFF\n");
+			modestr = "CMD_INDOOR_MODE_OFF";
 			HANDLE_REGS(indoor_mode_reg);
 			break;
 		case MODE_FLICKER_50HZ:
 			flicker_reg[0].data = 0x32;
-			dev_dbg(dev, "ap0100 set cmd : CMD_FLICKER_50HZ\n");
+			modestr = "CMD_FLICKER_50HZ";
 			HANDLE_REGS(flicker_reg);
 			break;
 		case MODE_FLICKER_60HZ:
 			flicker_reg[0].data = 0x3C;
-			dev_dbg(dev, "ap0100 set cmd : CMD_FLICKER_60HZ\n");
+			modestr = "CMD_FLICKER_60HZ";
 			HANDLE_REGS(flicker_reg);
 			break;
 		case MODE_PGA_ON:
 			pga_reg[0].data = 0x0001;
-			dev_dbg(dev, "ap0100 set cmd : CMD_PGA_ON\n");
+			modestr = "CMD_PGA_ON";
 			HANDLE_REGS(pga_reg);
 			break;
 		case MODE_PGA_OFF:
 			pga_reg[0].data = 0x0000;
-			dev_dbg(dev, "ap0100 set cmd : CMD_PGA_OFF\n");
+			modestr = "CMD_PGA_OFF";
 			HANDLE_REGS(pga_reg);
 			break;
 		default:
@@ -1573,7 +1575,7 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 	if(err < 0) {
 		dev_err(dev, "ap0100 set cmd failed!!");
 	} else {
-		dev_info(dev, "ap0100 set cmd OK");
+		dev_info(dev, "%s OK", modestr);
 		// update mode based on WDR or SDR
 		if ( mode == MODE_WDR_MODE) { // MODE_WDR_MODE
 			data->ap0100_in_wdr_mode = 1;
@@ -1740,6 +1742,7 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 			break;
 
 		case SSS_IDLE:
+			dev_dbg(dev, "%s, SSS_IDLE", __func__);
 			break;
 
 		default:
@@ -2075,8 +2078,10 @@ static int ap0100_m034_g_mbus_fmt(struct v4l2_subdev *sd,
 			struct v4l2_mbus_framefmt *mf)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
+	mutex_lock(&data->lock);
 	mf->width = ap0100_m034_frame_data[data->mode].width;
 	mf->height = ap0100_m034_frame_data[data->mode].height;
+	mutex_unlock(&data->lock);
 	mf->colorspace = V4L2_COLORSPACE_JPEG;
 	mf->code = V4L2_MBUS_FMT_UYVY8_2X8;
 	mf->field	= V4L2_FIELD_NONE;
@@ -2107,7 +2112,11 @@ static int ap0100_m034_g_frame_interval(struct v4l2_subdev *sd,
 				struct v4l2_subdev_frame_interval *interval)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
+
+	mutex_lock(&data->lock);
 	interval->interval = ap0100_m034_frame_data[data->mode].fi;
+	mutex_unlock(&data->lock);
+
 	return 0;
 }
 
@@ -2173,7 +2182,11 @@ static	int ap0100_m034_try_mbus_fmt(struct v4l2_subdev *sd,
 			    struct v4l2_mbus_framefmt *fmt)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
-	int ret = ap0100_m034_find_frame_format(data,fmt);
+	int ret;
+
+	mutex_lock(&data->lock);
+	ret = ap0100_m034_find_frame_format(data,fmt);
+	mutex_unlock(&data->lock);
 
 	return ret < 0 ? ret : 0;
 }
@@ -2183,13 +2196,15 @@ static	int ap0100_m034_s_mbus_fmt(struct v4l2_subdev *sd,
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
 	int ret;
-	int mode = ap0100_m034_find_frame_format(data,fmt);
-
-	if(mode < 0) {
-		return mode;
-	}
+	int mode;
 
 	mutex_lock(&data->lock);
+
+	mode = ap0100_m034_find_frame_format(data,fmt);
+	if (mode < 0) {
+		ret = mode;
+		goto out;
+	}
 
 	if(!data->operational) {
 		ret = -ENODEV;
@@ -2475,6 +2490,7 @@ static int ap0100_m034_remove(struct i2c_client *client)
 	int ret = 0;
 	struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
 
+	mutex_lock(&data->lock);
 	if(data->subdev.v4l2_dev != NULL) {
 		dev_err(data->dev,"v4l2 subdev still in use; please shut down %s.\n",
 				data->subdev.v4l2_dev->name);
@@ -2484,6 +2500,7 @@ static int ap0100_m034_remove(struct i2c_client *client)
 		ret = _ap0100_m034_remove(data);
 
 	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
+	mutex_unlock(&data->lock);
 	return ret;
 }
 
