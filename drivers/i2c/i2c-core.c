@@ -990,7 +990,7 @@ static void i2c_scan_static_board_info(struct i2c_adapter *adapter)
 /* OF support code */
 
 #if IS_ENABLED(CONFIG_OF)
-static void of_i2c_register_devices(struct i2c_adapter *adap)
+void of_i2c_register_devices(struct i2c_adapter *adap)
 {
 	void *result;
 	struct device_node *node;
@@ -1082,8 +1082,10 @@ struct i2c_adapter *of_find_i2c_adapter_by_node(struct device_node *node)
 }
 EXPORT_SYMBOL(of_find_i2c_adapter_by_node);
 #else
-static void of_i2c_register_devices(struct i2c_adapter *adap) { }
+void of_i2c_register_devices(struct i2c_adapter *adap) { }
 #endif /* CONFIG_OF */
+
+EXPORT_SYMBOL(of_i2c_register_devices);
 
 /* ACPI support code */
 
