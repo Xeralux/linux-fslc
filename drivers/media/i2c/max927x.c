@@ -1307,6 +1307,14 @@ static ssize_t show_operational(struct device *dev, struct device_attribute *att
 }
 static DEVICE_ATTR(operational, 0666, show_operational, set_operational);
 
+static int unregister_remote_i2c_device(struct device *dev, void *dummy)
+{
+	struct i2c_client *client = i2c_verify_client(dev);
+	if (client)
+		i2c_unregister_device(client);
+	return 0;
+}
+
 static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 			const char *buf, size_t count)
 {
@@ -1317,17 +1325,17 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 
 	me->skip_remote_checks = me->remote_quirk_enabled;
 
-	i2c_del_adapter(&me->adap);
+	device_for_each_child(&me->adap.dev, NULL, unregister_remote_i2c_device);
 
 	ret = me->ctrl_link_init(me);
 
-	if (ret >= 0) {
-		me->adap.dev.of_node = me->i2c_node;
-		dev_dbg(dev, "Re-adding adapter, of_node=%p\n", me->adap.dev.of_node);
-		ret = i2c_add_numbered_adapter(&me->adap);
-	}
+	if (ret < 0)
+		return ret;
 
-	return (ret < 0 ? ret : count);
+	me->adap.dev.of_node = me->i2c_node;
+	of_i2c_register_devices(&me->adap);
+
+	return count;
 }
 static DEVICE_ATTR(reset, 0222, NULL, do_reset);
 
