@@ -201,7 +201,6 @@ struct ap0100_m034_data {
 };
 
 static int _ap0100_m034_probe(struct ap0100_m034_data* data);
-static int _ap0100_m034_remove(struct ap0100_m034_data *data);
 static int _ap0100_reset(struct ap0100_m034_data* data);
 static int _ap0100_unlock_flash(struct ap0100_m034_data *data);
 
@@ -2329,19 +2328,12 @@ error:
 	return ret;
 }
 
-static int _ap0100_m034_remove(struct ap0100_m034_data *data)
-{
-	data->operational = false;
-	sysfs_remove_group(&data->dev->kobj, &attr_group);
-	return 0;
-}
-
-
 static ssize_t ap0100_m034_operational_store(struct device *dev,
                                   struct device_attribute *attr, const char *buf, int count)
 {
 	struct ap0100_m034_data* data = to_ap0100_m034_from_dev(dev);
 	unsigned long val;
+	bool remove_sysfs = false;
 
 	if(_kstrtoul(buf, 10, &val) || val > 1) {
 		dev_err(dev,"Must supply value between 0-1.\n");
@@ -2352,8 +2344,10 @@ static ssize_t ap0100_m034_operational_store(struct device *dev,
 	if(!!val == data->operational)
 		goto out;
 
-	if(data->operational)
-		_ap0100_m034_remove(data);
+	if(data->operational) {
+		data->operational = false;
+		remove_sysfs = true;
+	}
 
 	if(val)
 		_ap0100_m034_probe(data);
@@ -2361,6 +2355,8 @@ static ssize_t ap0100_m034_operational_store(struct device *dev,
 		_ap0100_reset(data);
 out:
 	mutex_unlock(&data->lock);
+	if (remove_sysfs)
+		sysfs_remove_group(&data->dev->kobj, &attr_group);
 	return count;
 }
 
@@ -2472,13 +2468,18 @@ static int ap0100_m034_remove(struct i2c_client *client)
 {
 	int ret = 0;
 	struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
+	bool remove_sysfs_attr = false;
 
 	mutex_lock(&data->lock);
-	if(data->operational)
-		ret = _ap0100_m034_remove(data);
+	if(data->operational) {
+		data->operational = false;
+		remove_sysfs_attr = true;
+	}
 
-	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
 	mutex_unlock(&data->lock);
+	if (remove_sysfs_attr)
+		sysfs_remove_group(&data->dev->kobj, &attr_group);
+	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
 	v4l2_device_unregister_subdev(&data->subdev);
 	media_entity_cleanup(&data->subdev.entity);
 	return ret;
