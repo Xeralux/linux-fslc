@@ -342,6 +342,8 @@ i2c_register_board_info(int busnum, struct i2c_board_info const *info,
 }
 #endif /* I2C_BOARDINFO */
 
+extern void of_i2c_register_devices(struct i2c_adapter *adap);
+
 /**
  * struct i2c_algorithm - represent I2C transfer method
  * @master_xfer: Issue a set of i2c transactions to the given I2C adapter
