@@ -2336,7 +2336,6 @@ static int _ap0100_m034_remove(struct ap0100_m034_data *data)
 {
 	_ap0100_subdev_clear(data);
 	data->operational = false;
-	sysfs_remove_group(&data->dev->kobj, &attr_group);
 	return 0;
 }
 
@@ -2346,6 +2345,7 @@ static ssize_t ap0100_m034_operational_store(struct device *dev,
 {
 	struct ap0100_m034_data* data = to_ap0100_m034_from_dev(dev);
 	unsigned long val;
+	bool remove_sysfs = false;
 
 	if(_kstrtoul(buf, 10, &val) || val > 1) {
 		dev_err(dev,"Must supply value between 0-1.\n");
@@ -2362,8 +2362,10 @@ static ssize_t ap0100_m034_operational_store(struct device *dev,
 		goto out;
 	}
 
-	if(data->operational)
+	if(data->operational) {
 		_ap0100_m034_remove(data);
+		remove_sysfs = true;
+	}
 
 	if(val)
 		_ap0100_m034_probe(data);
@@ -2371,6 +2373,8 @@ static ssize_t ap0100_m034_operational_store(struct device *dev,
 		_ap0100_reset(data);
 out:
 	mutex_unlock(&data->lock);
+	if (remove_sysfs)
+		sysfs_remove_group(&data->dev->kobj, &attr_group);
 	return count;
 }
 
@@ -2489,6 +2493,7 @@ static int ap0100_m034_remove(struct i2c_client *client)
 {
 	int ret = 0;
 	struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
+	bool remove_sysfs_attr = false;
 
 	mutex_lock(&data->lock);
 	if(data->subdev.v4l2_dev != NULL) {
@@ -2496,11 +2501,15 @@ static int ap0100_m034_remove(struct i2c_client *client)
 				data->subdev.v4l2_dev->name);
 	}
 
-	if(data->operational)
+	if(data->operational) {
 		ret = _ap0100_m034_remove(data);
+		remove_sysfs_attr = true;
+	}
 
-	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
 	mutex_unlock(&data->lock);
+	if (remove_sysfs_attr)
+		sysfs_remove_group(&data->dev->kobj, &attr_group);
+	sysfs_remove_group(&data->dev->kobj, &init_attr_group);
 	return ret;
 }
 
