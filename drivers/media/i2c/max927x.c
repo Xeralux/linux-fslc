@@ -125,7 +125,7 @@ static unsigned long i2c_retries = I2C_RETRIES_MAX;
  * after many trials, so be careful about making
  * any adjustments.
  */
-#define I2C_UDELAY_DEFAULT 4000
+#define I2C_UDELAY_DEFAULT 6000
 static unsigned long i2c_udelay = I2C_UDELAY_DEFAULT;
 /*
  * Extra delay to add to I2C accesses to certain
@@ -134,7 +134,7 @@ static unsigned long i2c_udelay = I2C_UDELAY_DEFAULT;
  * XXX This should be more configurable.
  */
 static unsigned long extra_udelay[16] = { 0, 0, 0, 0,
-					  0, 0, 4000, 0,
+					  0, 0, 2000, 0,
 					  0, 0, 0, 0,
 					  0, 0, 0, 0 };
 
