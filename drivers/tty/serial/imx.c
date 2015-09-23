@@ -229,6 +229,7 @@ struct imx_port {
 	unsigned int		use_irda:1;
 	unsigned int		irda_inv_rx:1;
 	unsigned int		irda_inv_tx:1;
+	unsigned int		dma_disabled:1;
 	unsigned short		trcv_delay; /* transceiver delay */
 	struct clk		*clk_ipg;
 	struct clk		*clk_per;
@@ -1221,6 +1222,7 @@ static int imx_startup(struct uart_port *port)
 
 	/* Can we enable the DMA support? */
 	if (is_imx6q_uart(sport) && !uart_console(port)
+	        && !sport->dma_disabled
 		&& !sport->dma_is_inited)
 		imx_uart_dma_init(sport);
 
@@ -2034,6 +2036,9 @@ static int serial_imx_probe_dt(struct imx_port *sport,
 
 	if (of_get_property(np, "fsl,dte-mode", NULL))
 		sport->dte_mode = 1;
+
+	if (of_get_property(np, "fsl,disable-dma", NULL))
+		sport->dma_disabled = 1;
 
 	sport->devdata = of_id->data;
 
