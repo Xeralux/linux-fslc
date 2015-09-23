@@ -904,6 +904,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_uart2>;
 	fsl,uart-has-rtscts;
+	fsl,disable-dma;
 	status = "okay";
 };
 
