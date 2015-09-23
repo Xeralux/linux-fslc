@@ -3539,19 +3539,20 @@ static long mxc_ipu_ioctl(struct file *file,
 			list_for_each_entry(mem, &ipu_alloc_list, list) {
 				if (mem->phy_addr == offset) {
 					list_del(&mem->list);
-					dma_free_coherent(ipu_dev,
-							  mem->size,
-							  mem->cpu_addr,
-							  mem->phy_addr);
-					kfree(mem);
 					ret = 0;
 					break;
 				}
 			}
 			mutex_unlock(&ipu_alloc_lock);
-			if (0 == ret)
+			if (0 == ret) {
+				dma_free_coherent(ipu_dev,
+						  mem->size,
+						  mem->cpu_addr,
+						  mem->phy_addr);
+				kfree(mem);
 				dev_dbg(ipu_dev, "free %d bytes @ 0x%08X\n",
 					mem->size, mem->phy_addr);
+			}
 
 			break;
 		}
@@ -3599,22 +3600,24 @@ static int mxc_ipu_release(struct inode *inode, struct file *file)
 {
 	struct ipu_alloc_list *mem;
 	struct ipu_alloc_list *n;
+	LIST_HEAD(to_free);
 
 	mutex_lock(&ipu_alloc_lock);
 	list_for_each_entry_safe(mem, n, &ipu_alloc_list, list) {
 		if ((mem->cpu_addr != 0) &&
-			(file->private_data == mem->file_index)) {
-			list_del(&mem->list);
-			dma_free_coherent(ipu_dev,
-					  mem->size,
-					  mem->cpu_addr,
-					  mem->phy_addr);
-			dev_dbg(ipu_dev, "rel-free %d bytes @ 0x%08X\n",
-				mem->size, mem->phy_addr);
-			kfree(mem);
-		}
+			(file->private_data == mem->file_index))
+			list_move(&mem->list, &to_free);
 	}
 	mutex_unlock(&ipu_alloc_lock);
+	list_for_each_entry_safe(mem, n, &to_free, list) {
+		dma_free_coherent(ipu_dev,
+				  mem->size,
+				  mem->cpu_addr,
+				  mem->phy_addr);
+		dev_dbg(ipu_dev, "rel-free %d bytes @ 0x%08X\n",
+			mem->size, mem->phy_addr);
+		kfree(mem);
+	}
 	atomic_dec(&file_index);
 
 	return 0;
