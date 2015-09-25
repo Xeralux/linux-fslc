@@ -151,6 +151,22 @@
 			enable-active-high;
 			regulator-always-on;
 		};
+
+		reg_usb_h1_vbus: usb_h1_vbus {
+			compatible = "regulator-fixed";
+			regulator-name = "usb_h1_vbus";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			enable-active-high;
+		};
+
+		reg_usb_otg_vbus: usb_otg_vbus {
+			compatible = "regulator-fixed";
+			regulator-name = "usb_otg_vbus";
+			regulator-min-microvolt = <5000000>;
+			regulator-max-microvolt = <5000000>;
+			enable-active-high;
+		};
 	};
 
 	rfkill_slot1: rfkill-slot1 {
@@ -915,19 +931,17 @@
 };
 
 &usbh1 {
-	//vbus-supply = <&reg_usb_h1_vbus>;
+	vbus-supply = <&reg_usb_h1_vbus>;
 	status = "okay";
 };
 
-/*
 &usbotg {
-	//vbus-supply = <&reg_usb_otg_vbus>;
+	vbus-supply = <&reg_usb_otg_vbus>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usbotg>;
 	disable-over-current;
 	status = "okay";
 };
-*/
 
 &iomuxc {
 	pinctrl-names = "default";
