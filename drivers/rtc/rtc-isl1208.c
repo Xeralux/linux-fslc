@@ -668,6 +668,8 @@ isl1208_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	i2c_set_clientdata(client, rtc);
 
+	rtc->uie_unsupported = 1;
+
 	rc = isl1208_i2c_get_sr(client);
 	if (rc < 0) {
 		dev_err(&client->dev, "reading status failed\n");
