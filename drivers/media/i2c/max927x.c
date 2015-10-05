@@ -215,6 +215,20 @@ static struct max927x_data *to_max927x_from_gpio(struct gpio_chip *gc)
 #define MAX9272_REG_15_REV_AMP_90  (6 << MAX9272_REG_15_REV_AMP_SHIFT)
 #define MAX9272_REG_15_REV_AMP_100 (7 << MAX9272_REG_15_REV_AMP_SHIFT)
 
+/*
+ * Max9272 undocumented setting: REV_AMP
+ * Reverse-channel transmitter pulse amplitude
+ */
+static inline __attribute__((unused)) unsigned int max9272_rev_amp_to_millivolts(u8 val) {
+	return (val < 8 ? (30 + 10 * val) : (90 + 10 * (val - 8)));
+}
+static inline __attribute__((unused)) int max9272_millivolts_to_rev_amp(unsigned int mvolts, u8 *valp) {
+	unsigned int centivolts = (mvolts + 5) / 10;
+	if (centivolts < 3 || centivolts > 16)
+		return -EINVAL;
+	*valp = (centivolts < 10 ? centivolts - 3 : (centivolts - 9) + 8);
+	return 0;
+}
 static int _max927x_try_read_reg(struct i2c_client *client, u8 reg, u8 *val)
 {
 	u8 au8RegBuf;
@@ -1216,6 +1230,78 @@ static ssize_t max9271_i2c_test(struct device *dev,
 }
 static DEVICE_ATTR(max9271_i2c_test, 0222, NULL, (void *)max9271_i2c_test);
 
+static ssize_t show_current_logain(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x_data *data = to_max927x_from_dev(dev);
+	u8 val;
+	int ret;
+
+	mutex_lock(&data->data_lock);
+	ret = SER_READ(0x08, &val, &data->error_count);
+	mutex_unlock(&data->data_lock);
+	if (ret < 0)
+		return ret;
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 (val & MAX9271_REG_08_REV_LOGAIN_MASK) >> MAX9271_REG_08_REV_LOGAIN_SHIFT);
+}
+
+static ssize_t set_current_logain(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct max927x_data *data = to_max927x_from_dev(dev);
+	unsigned int val;
+	u8 reg08val;
+	int ret;
+
+	if (kstrtouint(buf, 10, &val) || (val != 0 && val != 1))
+		return EINVAL;
+	mutex_lock(&data->data_lock);
+	reg08val = _max9271_magic(data) & ~MAX9271_REG_08_REV_LOGAIN_MASK;
+	reg08val |= val << MAX9271_REG_08_REV_LOGAIN_SHIFT;
+	ret = SER_WRITE(0x08, reg08val, &data->error_count);
+	mutex_unlock(&data->data_lock);
+	return (ret < 0) ? ret : count;
+}
+static DEVICE_ATTR(current_logain, 0666, show_current_logain, set_current_logain);
+
+static ssize_t show_current_rev_amp(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x_data *data = to_max927x_from_dev(dev);
+	u8 val;
+	int ret;
+
+	mutex_lock(&data->data_lock);
+	ret = DES_READ(0x15, &val, &data->error_count);
+	mutex_unlock(&data->data_lock);
+	if (ret < 0)
+		return ret;
+	val &= MAX9272_REG_15_REV_AMP_MASK;
+	val >>= MAX9272_REG_15_REV_AMP_SHIFT;
+	return scnprintf(buf, PAGE_SIZE, "%u (%u mVolts)\n", val,
+			 max9272_rev_amp_to_millivolts(val));
+}
+
+static ssize_t set_current_rev_amp(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct max927x_data *data = to_max927x_from_dev(dev);
+	unsigned int mvolts;
+	u8 val, reg15val;
+	int ret;
+
+	if (kstrtouint(buf, 10, &mvolts))
+		return EINVAL;
+	ret = max9272_millivolts_to_rev_amp(mvolts, &val);
+	if (ret < 0)
+		return ret;
+	mutex_lock(&data->data_lock);
+	reg15val = _max9272_magic(data) & ~MAX9272_REG_15_REV_AMP_MASK;
+	reg15val |= val << MAX9272_REG_15_REV_AMP_SHIFT;
+	ret = DES_WRITE(0x15, reg15val, &data->error_count);
+	mutex_unlock(&data->data_lock);
+	return (ret < 0) ? ret : count;
+}
+static DEVICE_ATTR(current_rev_amp, 0666, show_current_rev_amp, set_current_rev_amp);
 
 static int _max927x_of_get_config(struct max927x_data* data, struct device_node	*np, unsigned index)
 {
@@ -1277,6 +1363,8 @@ static struct attribute *attributes[] = {
 		&dev_attr_corrected_link_errors.attr,
 		&dev_attr_max9271_i2c_test.attr,
 		&dev_attr_i2c_retry_counts.attr,
+		&dev_attr_current_logain.attr,
+		&dev_attr_current_rev_amp.attr,
 		NULL,
 };
 
