@@ -76,6 +76,20 @@ struct max927x_setting {
 #define MAX9271_PREEMP_POS10p5DB   14
 #define MAX9271_PREEMP_POS14p0DB   15
 
+/*
+ * Max9271 undocumented settings related to
+ * the reverse channel:
+ *  DIGFLT - digital filter
+ *  LOGAIN - decreases pre-amplifier gain by 1.4
+ *  HIGAIN - increases pre-amplifier gain by 1.5
+ *  HIBW   - filter bandwidth (0=low, 1=high)
+ *  HIVTH  - receiver threshold (0=low, 1=high)
+ */
+#define MAX9271_DIGFLT_NONE 0
+#define MAX9271_DIGFLT_32   1
+#define MAX9271_DIGFLT_64   2
+#define MAX9271_DIGFLT_128  3
+
 #define MAX927X_DRS_HIGH 0
 #define MAX927X_DRS_LOW  1
 
@@ -171,14 +185,20 @@ struct max927x_setting {
 #define MAX9272_REV_TRF_422_300 2
 #define MAX9272_REV_TRF_563_400 3
 
-#define MAX9272_REV_AMP_30  0
-#define MAX9272_REV_AMP_40  1
-#define MAX9272_REV_AMP_50  2
-#define MAX9272_REV_AMP_60  3
-#define MAX9272_REV_AMP_70  4
-#define MAX9272_REV_AMP_80  5
-#define MAX9272_REV_AMP_90  6
-#define MAX9272_REV_AMP_100 7
+/*
+ * Max9272 undocumented setting: REV_AMP
+ * Reverse-channel transmitter pulse amplitude
+ */
+static inline __attribute__((unused)) unsigned int max9272_rev_amp_to_millivolts(u8 val) {
+	return (val < 8 ? (30 + 10 * val) : (90 + 10 * (val - 8)));
+}
+static inline __attribute__((unused)) int max9272_millivolts_to_rev_amp(unsigned int mvolts, u8 *valp) {
+	unsigned int centivolts = (mvolts + 5) / 10;
+	if (centivolts < 3 || centivolts > 16)
+		return -EINVAL;
+	*valp = (centivolts < 10 ? centivolts - 3 : (centivolts - 9) + 8);
+	return 0;
+}
 
 /*
  * MAX9272_SETTING(<name>, <register>, <position>, <width>)
