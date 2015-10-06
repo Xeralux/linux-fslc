@@ -108,6 +108,7 @@ typedef enum {
 
 struct max927x_property {
 	int for_deserializer;
+	property_id_t propid;
 	const struct max927x_setting *setting;
 	struct device_attribute dev_attr;
 };
@@ -432,26 +433,15 @@ static ssize_t show_property(struct device *dev, struct device_attribute *devatt
 {
 	struct max927x *me = to_max927x_from_dev(dev);
 	struct max927x_property *prop = container_of(devattr, struct max927x_property, dev_attr);
-	int ret;
-	u8 val;
 
 	if (me == NULL)
 		return -ENODEV;
 	if (prop == NULL)
 		return -EINVAL;
-	dev_dbg(dev, "%s: getting %s from %sserializer\n", __func__,
-		prop->setting->name, (prop->for_deserializer ? "de" : ""));
-	if (prop->for_deserializer) {
-		if (me->des == NULL)
-			return -ENODEV;
-		ret = des_read(me, prop->setting->idx, &val);
-	} else {
-		if (me->ser == NULL)
-			return -ENODEV;
-		ret = ser_read(me, prop->setting->idx, &val);
-	}
+	dev_dbg(dev, "%s: getting %s from init-time configuration\n",
+		__func__, prop->setting->name);
 
-	return (ret < 0 ? ret : scnprintf(buf, PAGE_SIZE, "%u\n", val));
+	return scnprintf(buf, PAGE_SIZE, "%u\n", me->of_cfg_settings[prop->propid]);
 }
 
 static ssize_t store_property(struct device *dev, struct device_attribute *devattr,
@@ -459,7 +449,6 @@ static ssize_t store_property(struct device *dev, struct device_attribute *devat
 {
 	struct max927x *me = to_max927x_from_dev(dev);
 	struct max927x_property *prop = container_of(devattr, struct max927x_property, dev_attr);
-	int ret;
 	unsigned val;
 
 	if (me == NULL)
@@ -467,29 +456,23 @@ static ssize_t store_property(struct device *dev, struct device_attribute *devat
 	if (prop == NULL || kstrtouint(buf, 10, &val) != 0 || val >= (1 << prop->setting->width))
 		return -EINVAL;
 
-	dev_dbg(dev, "%s: setting %s to 0x%x in %sserializer\n", __func__,
-		prop->setting->name, val, (prop->for_deserializer ? "de" : ""));
+	dev_dbg(dev, "%s: setting %s to 0x%x in init-time configuration\n",
+		__func__, prop->setting->name, val);
 
-	if (prop->for_deserializer) {
-		if (me->des == NULL)
-			return -ENODEV;
-		ret = des_update(me, prop->setting->idx, val);
-	} else {
-		if (me->ser == NULL)
-			return -ENODEV;
-		ret = ser_update(me, prop->setting->idx, val);
-	}
+	me->of_cfg_settings[prop->propid] = val;
 
-	return (ret < 0 ? ret : count);
+	return count;
 }
 
 #define MAX9272_PROPERTY(tag_, name_, setting_) [CFG_##tag_] = { \
 	.for_deserializer = 1, \
+	.propid = CFG_##tag_, \
 	.setting = &max9272_settings[MAX9272_##setting_], \
 	.dev_attr = { .attr = { .name = #name_, .mode = 0666, }, \
 		      .show = show_property, .store = store_property }},
 #define MAX9271_PROPERTY(tag_, name_, setting_) [CFG_##tag_] = { \
 	.for_deserializer = 0, \
+	.propid = CFG_##tag_, \
 	.setting = &max9271_settings[MAX9271_##setting_], \
 	.dev_attr = { .attr = { .name = #name_, .mode = 0666, },\
 		      .show = show_property, .store = store_property }},
@@ -506,10 +489,10 @@ static struct attribute *properties_attributes[] = {
 };
 #undef MAX9272_PROPERTY
 #undef MAX9271_PROPERTY
+
 static struct attribute_group properties_attr_group = {
 	.attrs = properties_attributes,
 };
-
 
 static const property_id_t ser_init_properties[] = {
 	CFG_REV_DIG_FLT, CFG_REV_LOGAIN, CFG_REV_HIGAIN, CFG_REV_HIBW, CFG_REV_HIVTH
@@ -540,10 +523,6 @@ static int ser_control_init(struct max927x *me)
 		return ret;
 	}
 
-	/*
-	 * According to the comments in the old driver, these settings need
-	 * to be done early.
-	 */
 	for (i = 0; i < ARRAY_SIZE(ser_init_properties); i++) {
 		property_id_t which = ser_init_properties[i];
 		ret = ser_update(me, properties[which].setting->idx,
@@ -676,8 +655,9 @@ static int des_control_init(struct max927x *me)
 	power_down_remote(me);
 
 	/*
-	 * According to the comments in the old driver, these settings (which are
-	 * not documented in the data sheet) need to be performed early.
+	 * These settings (which are not documented in the data sheet) need to be performed early,
+	 * as they affect the reverse communications channel between the deserializer and the
+	 * serializer.
 	 */
 	ret = des_update(me, MAX9272_REV_AMP, me->of_cfg_settings[CFG_REV_AMP]);
 	if (ret == 0)
@@ -1383,6 +1363,63 @@ static ssize_t clear_remote_i2c_errs(struct device *dev,
 static DEVICE_ATTR(i2c_error_count, 0666, show_remote_i2c_errs, clear_remote_i2c_errs);
 
 
+static ssize_t show_current_logain(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	u8 val;
+	int ret;
+
+	ret = ser_read(me, MAX9271_LOGAIN, &val);
+	if (ret < 0)
+		return ret;
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
+}
+
+static ssize_t set_current_logain(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	const struct max927x_setting *s = &max9271_settings[MAX9271_LOGAIN];
+	unsigned int val;
+	int ret;
+
+	if (kstrtouint(buf, 10, &val) || val >= (1 << s->width))
+		return EINVAL;
+	ret = ser_update(me, MAX9271_LOGAIN, val);
+	return (ret < 0) ? ret : count;
+}
+static DEVICE_ATTR(current_logain, 0666, show_current_logain, set_current_logain);
+
+static ssize_t show_current_rev_amp(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	u8 val;
+	int ret;
+
+	ret = des_read(me, MAX9272_REV_AMP, &val);
+	if (ret < 0)
+		return ret;
+	return scnprintf(buf, PAGE_SIZE, "%u (%u mVolts)\n", val,
+			 max9272_rev_amp_to_millivolts(val));
+}
+
+static ssize_t set_current_rev_amp(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	unsigned int mvolts;
+	u8 val;
+	int ret;
+
+	if (kstrtouint(buf, 10, &mvolts))
+		return EINVAL;
+	ret = max9272_millivolts_to_rev_amp(mvolts, &val);
+	if (ret == 0)
+		ret = des_update(me, MAX9272_REV_AMP, val);
+	return (ret < 0) ? ret : count;
+}
+static DEVICE_ATTR(current_rev_amp, 0666, show_current_rev_amp, set_current_rev_amp);
+
 static struct attribute *misc_attributes[] = {
 	&dev_attr_i2c_retry_counts.attr,
 	&dev_attr_max9272_i2c_test.attr,
@@ -1392,6 +1429,8 @@ static struct attribute *misc_attributes[] = {
 	&dev_attr_corrected_link_errors.attr,
 	&dev_attr_detected_link_errors.attr,
 	&dev_attr_i2c_error_count.attr,
+	&dev_attr_current_logain.attr,
+	&dev_attr_current_rev_amp.attr,
 	NULL,
 };
 
