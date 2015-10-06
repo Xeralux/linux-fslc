@@ -383,9 +383,9 @@
 		reg = <0x3c>;
 	};
 
-	/*  SE95 temperature sensor.  */
-	se95@48 {
-		compatible = "nxp,se95";
+	/*  NXP PCT2075 temperature sensor.  */
+	pct2075@48 {
+		compatible = "lm75b", "lm75";
 		reg = <0x48>;
 	};
 
