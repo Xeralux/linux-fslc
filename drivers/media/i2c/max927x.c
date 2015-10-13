@@ -1365,7 +1365,7 @@ static int _max927x_of_get_config(struct max927x_data* data, struct device_node	
 	return 0;
 }
 
-static int link_test(struct max927x_data *data, int test_timeout)
+static int link_test(struct max927x_data *data, int test_timeout, int count_singles)
 {
 	struct i2c_client *target = data->slave;
 	unsigned int j;
@@ -1405,7 +1405,7 @@ static int link_test(struct max927x_data *data, int test_timeout)
 	ret = errors * i2c_retries;
 	if (errors > 0)
 		dev_dbg(data->dev, "%s: %u errors reported\n", __func__, errors);
-	for (i = 2; i < i2c_retries; i++) {
+	for (i = (count_singles ? 1 : 2); i < i2c_retries; i++) {
 		ret += i * retries[i];
 		if (retries[i] > 0)
 			dev_dbg(data->dev, "%s: %u occurrences of %u retries\n",
@@ -1434,7 +1434,7 @@ static int run_link_training(struct max927x_data *data, int live, unsigned test_
 		   data->cur_logain, threshold, test_flags);
 
 	for (counter = 0; counter < 4; counter++) {
-		ret = link_test(data, (test_flags & TRAINING_TEST_TIMEOUT) != 0);
+		ret = link_test(data, (test_flags & TRAINING_TEST_TIMEOUT) != 0, 0);
 		if (ret < 0) {
 			test_flags &= ~TRAINING_TEST_TIMEOUT;
 			data->training_test_flags = test_flags;
@@ -1480,6 +1480,42 @@ static int run_link_training(struct max927x_data *data, int live, unsigned test_
 
 	data->training = false;
 	mutex_unlock(&data->data_lock);
+	return ret;
+}
+
+static int initial_link_training(struct max927x_data *data)
+{
+	unsigned int score[2];
+	int ret, logain;
+
+	data->training = true;
+	data->training_test_flags = 0;
+
+	for (logain = 0; logain < 2; logain++) {
+		dev_notice(data->dev,
+			   "%s: testing with REV_AMP=%u mVolts, LOGAIN=%d\n",
+			   __func__, max9272_rev_amp_to_millivolts(data->cur_rev_amp), logain);
+		data->cur_logain = logain;
+		ret = SER_WRITE(0x08, _max9271_magic(data), NULL);
+		if (ret >= 0)
+			ret = link_test(data, 0, 1);
+		if (ret < 0) {
+			dev_warn(data->dev, "%s: link test failed, err=%d\n", __func__, ret);
+			if (ret == -ETIMEDOUT) {
+				data->training = false;
+				return ret;
+			}
+		}
+		score[logain] = ret;
+	}
+	logain = (score[0] < score[1] ? 0 : 1);
+	dev_notice(data->dev, "%s: retry counts (%d, %d), selecting LOGAIN %d\n",
+		   __func__, score[0], score[1], logain);
+	data->cur_logain = logain;
+	ret = SER_WRITE(0x08, _max9271_magic(data), NULL);
+	if (ret < 0)
+		dev_err(data->dev, "could not update LOGAIN, ret=%d\n", ret);
+	data->training = false;
 	return ret;
 }
 
@@ -1595,7 +1631,6 @@ out:
 }
 
 static void _max927x_subdev_init(struct max927x_data* data);
-static int run_link_training(struct max927x_data *data, int live, unsigned test_flags);
 static int _max927x_probe(struct max927x_data* data)
 {
 	struct device *dev = data->dev;
@@ -1675,18 +1710,36 @@ static int _max927x_probe(struct max927x_data* data)
 	msleep(12);
 
 	ret = _max927x_link_configure(data);
-	mutex_unlock(&data->gpio_lock);
-	if (ret >= 0) {
-		mutex_unlock(&data->data_lock);
-		ret = run_link_training(data, 0, 0);
-		mutex_lock(&data->data_lock);
-	}
-
 	if (ret < 0) {
 		dev_err(dev, "Could not initialize max927x link\n");
+		mutex_unlock(&data->gpio_lock);
 		goto error_i2c_adap;
 	}
 
+	ret = initial_link_training(data);
+	if (ret < 0) {
+		data->cur_logain = 0;
+		max9272_millivolts_to_rev_amp(60, &data->cur_rev_amp);
+		dev_notice(dev, "re-initializing serial link, REV_AMP=%u mVolts, LOGAIN=%d\n",
+			   max9272_rev_amp_to_millivolts(data->cur_rev_amp), data->cur_logain);
+		ret = _max927x_link_configure(data);
+		if (ret >= 0) {
+			max9272_millivolts_to_rev_amp(80, &data->cur_rev_amp);
+			data->cur_logain = 1;
+			ret = SER_WRITE(0x08, _max9271_magic(data), NULL);
+			if (ret >= 0)
+				ret = DES_WRITE(0x15, _max9272_magic(data), NULL);
+		}
+		if (ret >= 0)
+			ret = initial_link_training(data);
+	}
+
+	mutex_unlock(&data->gpio_lock);
+
+	if (ret < 0) {
+		dev_err(dev, "Could not complete initial link training\n");
+		goto error_i2c_adap;
+	}
 
 	if(!data->gpio_chip_initialized) {
 		gc = &data->gpio_chip;
