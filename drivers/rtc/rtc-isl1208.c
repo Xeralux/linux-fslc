@@ -646,7 +646,7 @@ isl1208_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (client->irq > 0) {
 		rc = devm_request_threaded_irq(&client->dev, client->irq, NULL,
 					       isl1208_rtc_interrupt,
-					       IRQF_SHARED,
+					       IRQF_SHARED|IRQF_ONESHOT,
 					       isl1208_driver.driver.name,
 					       client);
 		if (!rc) {
@@ -668,7 +668,8 @@ isl1208_probe(struct i2c_client *client, const struct i2c_device_id *id)
 
 	i2c_set_clientdata(client, rtc);
 
-	rtc->uie_unsupported = 1;
+	if (client->irq == 0)
+		rtc->uie_unsupported = 1;
 
 	rc = isl1208_i2c_get_sr(client);
 	if (rc < 0) {

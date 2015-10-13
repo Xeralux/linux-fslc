@@ -407,6 +407,8 @@
 	isl1220@6f {
 		compatible = "isl,1220", "isl,1208", "isl,12022";
 		reg = <0x6f>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <16 0x8>; /* active-low GPIO1_16 */
 	};
 
 	/*  Toshiba MIPI bridge 0 on parallel interface: CPLBTX->CPLBRX(MIPI-Rx Parallel-Tx) */
@@ -1242,6 +1244,7 @@
 			//	MX6QDL_PAD_GPIO_7__GPIO1_IO07		PADCTL_GPIO_DEFAULT
 				MX6QDL_PAD_GPIO_8__GPIO1_IO08		PADCTL_GPIO_DEFAULT
 				MX6QDL_PAD_GPIO_9__GPIO1_IO09		PADCTL_GPIO_DEFAULT
+				MX6QDL_PAD_SD1_DAT0__GPIO1_IO16		0x108b1 /* RTC irq, active-low, open-drain */
 				MX6QDL_PAD_SD1_DAT1__GPIO1_IO17		PADCTL_GPIO_DEFAULT
 				MX6QDL_PAD_SD1_CMD__GPIO1_IO18		PADCTL_GPIO_DEFAULT
 				MX6QDL_PAD_SD1_DAT2__GPIO1_IO19		PADCTL_GPIO_DEFAULT
