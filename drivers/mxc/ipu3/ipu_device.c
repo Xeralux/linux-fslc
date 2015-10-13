@@ -363,6 +363,9 @@ static atomic_t frame_no;
 static struct class *ipu_class;
 static struct device *ipu_dev;
 static int debug;
+static struct lock_class_key split_lock_key;
+static struct lock_class_key vdic_lock_key;
+static struct lock_class_key chantbl_lock_key;
 module_param(debug, int, 0600);
 #ifdef DBG_IPU_PERF
 static struct timespec ts_frame_max;
@@ -1712,7 +1715,9 @@ static int queue_split_task(struct ipu_task_entry *t,
 	dev_dbg(t->dev, "Split task 0x%p, no-0x%x, size:%d\n",
 			 t, t->task_no, size);
 	mutex_init(lock);
+	lockdep_set_class(lock, &split_lock_key);
 	mutex_init(vdic_lock);
+	lockdep_set_class(vdic_lock, &vdic_lock_key);
 	init_waitqueue_head(&t->split_waitq);
 	INIT_LIST_HEAD(&t->split_list);
 	for (j = 0; j < size; j++) {
@@ -3662,6 +3667,7 @@ int register_ipu_device(struct ipu_soc *ipu, int id)
 		ipu_dev->coherent_dma_mask = DMA_BIT_MASK(32);
 
 		mutex_init(&ipu_ch_tbl.lock);
+		lockdep_set_class(&ipu_ch_tbl.lock, &chantbl_lock_key);
 	}
 	max_ipu_no = ++id;
 	ipu->rot_dma[0].size = 0;
