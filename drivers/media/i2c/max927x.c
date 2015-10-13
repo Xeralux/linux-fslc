@@ -1251,8 +1251,7 @@ static ssize_t show_current_logain(struct device *dev, struct device_attribute *
 	mutex_lock(&data->data_lock);
 	val = data->cur_logain;
 	mutex_unlock(&data->data_lock);
-	return scnprintf(buf, PAGE_SIZE, "%d\n",
-			 (val & MAX9271_REG_08_REV_LOGAIN_MASK) >> MAX9271_REG_08_REV_LOGAIN_SHIFT);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", val);
 }
 
 static ssize_t set_current_logain(struct device *dev, struct device_attribute *attr,
