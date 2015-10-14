@@ -43,6 +43,7 @@
 #include <linux/reset.h>
 #include <linux/gpio.h>
 #include <linux/atomic.h>
+#include <linux/workqueue.h>
 #include <linux/media.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-subdev.h>
@@ -130,6 +131,21 @@ static unsigned long i2c_retries = I2C_RETRIES_DEFAULT;
 #define I2C_UDELAY_DEFAULT 6000
 static unsigned long i2c_udelay = I2C_UDELAY_DEFAULT;
 
+/*
+ * training type values and modifier flags
+ */
+enum {
+	TRAINING_OFF = 0,
+	TRAINING_INITIAL = 1,
+	TRAINING_RETRAINING = 2,
+};
+#define TRAINING_PAUSED		0x100
+#define TRAINING_TYPEMASK	0xFF
+#define TRAINING_FLAGMASK	(~TRAINING_TYPEMASK)
+
+/*
+ * training_test flags
+ */
 #define TRAINING_TEST_TIMEOUT	(1<<1)
 #define TRAINING_TEST_THRESHOLD	(1<<2)
 #define TRAINING_TEST_FLAGMASK (TRAINING_TEST_TIMEOUT|TRAINING_TEST_THRESHOLD)
@@ -177,6 +193,7 @@ struct max927x {
 	struct i2c_adapter *parent;
 	struct i2c_client *local, *remote;
 	struct i2c_client *ser, *des;
+	struct work_struct training_work;
 	link_init_fn ctrl_link_init;
 	struct regulator *remote_power;
 	atomic_t remote_power_enabled;
@@ -400,7 +417,7 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 		if (delay > 0)
 			udelay(delay);
 		ret = me->parent->algo->master_xfer(me->parent, msgs, num);
-		if (training)
+		if (training != TRAINING_OFF && (training & TRAINING_PAUSED) == 0)
 			return ret;
 		if (ret >= 0)
 			break;
@@ -1174,7 +1191,7 @@ static void run_i2c_test(struct max927x *me, unsigned int which, unsigned int cy
 		dev_err(me->dev, "I2C test: could not restore original register value\n");
 }
 
-static int link_test(struct max927x *me, int test_timeout)
+static int link_test(struct max927x *me, int test_timeout, int count_singles)
 {
 	struct i2c_client *target = me->remote;
 	const struct max927x_setting *s = &max9271_settings[MAX9271_ID];
@@ -1218,7 +1235,7 @@ static int link_test(struct max927x *me, int test_timeout)
 	ret = errors * i2c_retries;
 	if (errors > 0)
 		dev_dbg(me->dev, "%s: %u errors reported\n", __func__, errors);
-	for (i = 2; i < i2c_retries; i++) {
+	for (i = (count_singles ? 1 : 2); i < i2c_retries; i++) {
 		ret += i * retries[i];
 		if (retries[i] > 0)
 			dev_dbg(me->dev, "%s: %u occurrences of %u retries\n",
@@ -1234,7 +1251,7 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 	int threshold = training_threshold * training_cycles / 100;
 	int counter, ret;
 
-	if (atomic_cmpxchg(&me->training, 0, 1))
+	if (atomic_cmpxchg(&me->training, TRAINING_OFF, TRAINING_RETRAINING) != TRAINING_OFF)
 		return -EALREADY;
 
 	me->training_test_flags = test_flags;
@@ -1245,14 +1262,14 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 		   me->current_logain, threshold, test_flags);
 
 	for (counter = 0; counter < 4; counter++) {
-		ret = link_test(me, (test_flags & TRAINING_TEST_TIMEOUT) != 0);
+		ret = link_test(me, (test_flags & TRAINING_TEST_TIMEOUT) != 0, 0);
 		if (ret < 0) {
 			test_flags &= ~TRAINING_TEST_TIMEOUT;
 			me->training_test_flags = test_flags;
 			if (live) {
 				dev_warn(me->dev, "%s: link test failed while live, aborting\n",
 					 __func__);
-				atomic_xchg(&me->training, 0);
+				atomic_xchg(&me->training, TRAINING_OFF);
 				return ret;
 			}
 			max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
@@ -1288,7 +1305,7 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 		   max9272_rev_amp_to_millivolts(me->current_rev_amp),
 		   me->current_logain, ret);
 
-	atomic_xchg(&me->training, 0);
+	atomic_xchg(&me->training, TRAINING_OFF);
 	return ret;
 }
 
@@ -1633,6 +1650,126 @@ static const struct v4l2_subdev_ops subdev_ops = {
 /*
  * Driver initialization and shutdown
  */
+static void max927x_finish_probe(struct max927x *me)
+{
+	struct i2c_client *client = me->local;
+	int ret;
+
+	/*
+	 * Now that the serializer/deserializer pair is fully up
+	 * and running, we can enable the GPIOs and I2C communication
+	 * to the devices that may be attached to the other side of
+	 * the link.
+	 */
+	ret = setup_gpiochip(me);
+	if (ret < 0) {
+		dev_err(me->dev, "GPIO setup failed\n");
+		power_down_remote(me);
+		i2c_del_adapter(&me->dummy_adapter);
+		return;
+	}
+
+	ret = i2c_add_numbered_adapter(&me->adap);
+	if (ret < 0) {
+		int gcret = gpiochip_remove(&me->gc);
+		dev_err(me->dev, "failed to register I2C adapter: %d\n", ret);
+		if (gcret < 0)
+			dev_warn(me->dev, "error %d removing gpiochip\n", ret);
+		i2c_del_adapter(&me->dummy_adapter);
+		return;
+	}
+
+	/*
+	 * And now set up our V4L2 subdevice.  The
+	 * mxc_subdev_pipeline driver makes assumptions
+	 * about the subdevdata and I2C client data,
+	 * so set that up here.
+	 */
+	v4l2_subdev_init(&me->subdev, &subdev_ops);
+	me->subdev.owner = THIS_MODULE;
+	v4l2_set_subdevdata(&me->subdev, client);
+	i2c_set_clientdata(client, &me->subdev);
+	scnprintf(me->subdev.name, sizeof(me->subdev.name), "%s %d-%04x",
+		  me->dev->driver->name, i2c_adapter_id(client->adapter), client->addr);
+	ret = media_entity_init(&me->subdev.entity, 2, me->pads, 0);
+	if (ret < 0) {
+		dev_err(me->dev, "could not initialize media entity: %d\n", ret);
+		return;
+	}
+	ret = sysfs_create_groups(&me->dev->kobj, attr_groups);
+	if (ret < 0)
+		dev_err(me->dev, "could not create sysfs groups\n");
+
+	return;
+}
+
+static void initial_training(struct work_struct *work)
+{
+	struct max927x *me = container_of(work, struct max927x, training_work);
+	unsigned int score[2];
+	int ret, logain;
+
+	for (logain = 0; logain < 2; logain++) {
+		dev_notice(me->dev,
+			   "%s: testing with REV_AMP=%u mVolts, LOGAIN=%d\n",
+			   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp), logain);
+		me->current_logain = logain;
+		atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
+		ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
+		atomic_xchg(&me->training, TRAINING_INITIAL);
+		if (ret >= 0)
+			ret = link_test(me, 0, 1);
+		if (ret < 0) {
+			dev_err(me->dev, "%s: link test failed, err=%d\n", __func__, ret);
+			if (ret == -ETIMEDOUT) {
+				max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
+				me->current_logain = 0;
+				atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
+				ret = me->ctrl_link_init(me);
+				if (ret < 0) {
+					dev_err(me->dev, "%s: could not establish control link, ret=%d\n",
+						__func__, ret);
+					power_down_remote(me);
+					i2c_del_adapter(&me->dummy_adapter);
+					atomic_xchg(&me->training, TRAINING_OFF);
+					return;
+				}
+				max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
+				me->current_logain = 1;
+				ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
+				if (ret >= 0)
+					ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
+				if (ret < 0)
+					dev_err(me->dev, "%s: could not switch control link back to 80 mVolts, ret=%d\n",
+						__func__, ret);
+				else {
+					dev_notice(me->dev, "%s: leaving LOGAIN at %d after resetting control link\n",
+						   __func__, me->current_logain);
+					max927x_finish_probe(me);
+					atomic_xchg(&me->training, TRAINING_OFF);
+					return;
+				}
+				atomic_xchg(&me->training, TRAINING_INITIAL);
+			}
+		}
+		score[logain] = ret;
+	}
+	logain = (score[0] < score[1] ? 0 : 1);
+	dev_notice(me->dev, "%s: retry counts (%d, %d), selecting LOGAIN %d\n",
+		   __func__, score[0], score[1], logain);
+	me->current_logain = logain;
+	atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
+	ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
+	if (ret < 0) {
+		dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
+		power_down_remote(me);
+		i2c_del_adapter(&me->dummy_adapter);
+	} else
+		max927x_finish_probe(me);
+
+	atomic_xchg(&me->training, TRAINING_OFF);
+}
+
 static int max927x_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
 {
@@ -1686,7 +1823,8 @@ static int max927x_probe(struct i2c_client *client,
 	atomic_set(&me->remote_power_enabled, 0);
 	atomic_set(&me->operational, 0);
 	atomic_set(&me->i2c_test_in_progress, 0);
-	atomic_set(&me->training, 0);
+	atomic_set(&me->training, TRAINING_OFF);
+	INIT_WORK(&me->training_work, initial_training);
 
 	me->dev = dev;
 	me->local = client;
@@ -1793,75 +1931,34 @@ static int max927x_probe(struct i2c_client *client,
 	}
 
 	ret = me->ctrl_link_init(me);
-	if (ret >= 0)
-		ret = run_link_training(me, 0, 0);
 	if (ret < 0) {
 		dev_err(dev, "control link initialization/training failed\n");
 		i2c_del_adapter(&me->dummy_adapter);
 		return -ENODEV;
 	}
-
-	/*
-	 * Now that the serializer/deserializer pair is fully up
-	 * and running, we can enable the GPIOs and I2C communication
-	 * to the devices that may be attached to the other side of
-	 * the link.
-	 */
-	ret = setup_gpiochip(me);
-	if (ret < 0) {
-		dev_err(dev, "GPIO setup failed\n");
-		power_down_remote(me);
-		i2c_del_adapter(&me->dummy_adapter);
-		return ret;
-	}
-
-	ret = i2c_add_numbered_adapter(&me->adap);
-	if (ret < 0) {
-		int gcret = gpiochip_remove(&me->gc);
-		dev_err(dev, "failed to register I2C adapter: %d\n", ret);
-		if (gcret < 0)
-			dev_warn(dev, "error %d removing gpiochip\n", ret);
-		i2c_del_adapter(&me->dummy_adapter);
-		return ret;
-	}
-
-	/*
-	 * And now set up our V4L2 subdevice.  The
-	 * mxc_subdev_pipeline driver makes assumptions
-	 * about the subdevdata and I2C client data,
-	 * so set that up here.
-	 */
-	v4l2_subdev_init(&me->subdev, &subdev_ops);
-	me->subdev.owner = THIS_MODULE;
-	v4l2_set_subdevdata(&me->subdev, client);
-	i2c_set_clientdata(client, &me->subdev);
-	scnprintf(me->subdev.name, sizeof(me->subdev.name), "%s %d-%04x",
-		  dev->driver->name, i2c_adapter_id(client->adapter), client->addr);
-	ret = media_entity_init(&me->subdev.entity, 2, me->pads, 0);
-	if (ret < 0) {
-		dev_err(dev, "could not initialize media entity: %d\n", ret);
-		return ret;
-	}
-	ret = sysfs_create_groups(&dev->kobj, attr_groups);
-	if (ret < 0)
-		dev_err(dev, "could not create sysfs groups\n");
-
+	atomic_xchg(&me->training, TRAINING_INITIAL);
+	schedule_work(&me->training_work);
 	return ret;
 }
 
 static int max927x_remove(struct i2c_client *client)
 {
 	struct max927x *me = to_max927x_from_v4l2_subdev(i2c_get_clientdata(client));
+	int training = atomic_read(&me->training) & TRAINING_TYPEMASK;
 	int ret;
 
-	stream_control(&me->subdev, 0);
-	sysfs_remove_groups(&me->dev->kobj, attr_groups);
-	v4l2_device_unregister_subdev(&me->subdev);
-	media_entity_cleanup(&me->subdev.entity);
-	i2c_del_adapter(&me->adap);
-	ret = gpiochip_remove(&me->gc);
-	if (ret < 0)
-		dev_err(me->dev, "error %d removing gpiochip\n", ret);
+	if (training == TRAINING_INITIAL)
+		flush_work(&me->training_work);
+	else {
+		stream_control(&me->subdev, 0);
+		sysfs_remove_groups(&me->dev->kobj, attr_groups);
+		v4l2_device_unregister_subdev(&me->subdev);
+		media_entity_cleanup(&me->subdev.entity);
+		i2c_del_adapter(&me->adap);
+		ret = gpiochip_remove(&me->gc);
+		if (ret < 0)
+			dev_err(me->dev, "error %d removing gpiochip\n", ret);
+	}
 	i2c_del_adapter(&me->dummy_adapter);
 	power_down_remote(me);
 
