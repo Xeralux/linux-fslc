@@ -1708,6 +1708,7 @@ static int _max927x_probe(struct max927x_data* data)
 	}
 	/*power up time is 6ms, double*/
 	msleep(12);
+	i2c_recover_bus(data->parent);
 
 	ret = _max927x_link_configure(data);
 	if (ret < 0) {
