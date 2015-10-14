@@ -199,6 +199,12 @@ static int pca954x_get_ofdata(struct i2c_client *client,
 #endif /* CONFIG_OF */
 
 
+static int pca954x_recover(struct i2c_adapter *adap);
+
+static struct i2c_bus_recovery_info pca954x_recovery_info = {
+	.recover_bus = pca954x_recover,
+};
+
 /* Write to mux register. Don't use i2c_transfer()/i2c_smbus_xfer()
    for this as they will try to lock adapter a second time */
 static int pca954x_reg_write(struct i2c_adapter *adap,
@@ -346,6 +352,7 @@ static int pca954x_probe(struct i2c_client *client,
 				" %d as bus %d\n", num, force);
 			goto virt_reg_failed;
 		}
+		data->virt_adaps[num]->bus_recovery_info = &pca954x_recovery_info;
 	}
 
 	dev_info(&client->dev,
@@ -380,6 +387,21 @@ static int pca954x_remove(struct i2c_client *client)
 
 	kfree(data);
 	return 0;
+}
+
+static int pca954x_recover(struct i2c_adapter *adap)
+{
+	struct i2c_client *client = i2c_mux_pdata(adap);
+	struct i2c_adapter *parent = to_i2c_adapter(client->dev.parent);
+	struct pca954x *data = i2c_get_clientdata(client);
+
+	if (parent != NULL) {
+		dev_info(&client->dev, "%s: invoking recovery on %s\n", __func__, parent->name);
+		i2c_recover_bus(parent);
+	}
+	dev_info(&client->dev, "%s: resetting last channel\n", __func__);
+	data->last_chan = 0;
+	return i2c_smbus_write_byte(client, 0);
 }
 
 static const struct i2c_device_id pca954x_i2c_id[] = {
