@@ -1468,6 +1468,9 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 
 	device_for_each_child(&me->adap.dev, NULL, unregister_remote_i2c_device);
 
+	max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
+	me->current_logain = 0;
+
 	ret = me->ctrl_link_init(me);
 
 	if (ret < 0)
