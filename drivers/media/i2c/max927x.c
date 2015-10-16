@@ -1710,6 +1710,9 @@ static int _max927x_probe(struct max927x_data* data)
 	msleep(12);
 	i2c_recover_bus(data->parent);
 
+	data->cur_logain = 0;
+	max9272_millivolts_to_rev_amp(80, &data->cur_rev_amp);
+
 	ret = _max927x_link_configure(data);
 	if (ret < 0) {
 		dev_err(dev, "Could not initialize max927x link\n");
@@ -1946,8 +1949,6 @@ static int max927x_probe(struct i2c_client *client,
 		dev_err(dev,"Missing or incorrect cfg-0 property\n");
 		return ret;
 	}
-	data->cur_logain = 0;
-	max9272_millivolts_to_rev_amp(80, &data->cur_rev_amp);
 
 	data->master = client;
 	data->dev = dev;
