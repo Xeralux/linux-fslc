@@ -290,7 +290,7 @@ static int _max927x_try_write_reg(struct i2c_client *client, u8 reg, u8 val)
 }
 
 
-static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, u8 mask, unsigned *error_count)
+static int _max927x_write_reg_internal(struct i2c_client *client, u8 reg, u8 val, u8 mask, unsigned *error_count, int docheck)
 {
 	int err = -EIO;
 	int i;
@@ -306,16 +306,18 @@ static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, u8 mask
 			continue;
 		}
 
-		/*Read back data just written*/
-		err = _max927x_read_reg(client, reg, &check, NULL);
-		if(err < 0)
-			continue;
+		if (docheck) {
+			/*Read back data just written*/
+			err = _max927x_read_reg(client, reg, &check, NULL);
+			if(err < 0)
+				continue;
 
-		if((check & mask) != (val & mask)) {
-			dev_warn_ratelimit(&client->dev,"%s:check warn:reg=%x,val=%x,check=%x\n", __func__,
-				reg, val, check);
-			err = -EIO;
-			continue;
+			if((check & mask) != (val & mask)) {
+				dev_warn_ratelimit(&client->dev,"%s:check warn:reg=%x,val=%x,check=%x\n", __func__,
+						   reg, val, check);
+				err = -EIO;
+				continue;
+			}
 		}
 
 		/*All conditions satisfied (data written, read back
@@ -331,8 +333,13 @@ static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, u8 mask
 
 	return err;
 }
+static int _max927x_write_reg(struct i2c_client *client, u8 reg, u8 val, u8 mask, unsigned *error_count)
+{
+	return _max927x_write_reg_internal(client, reg, val, mask, error_count, 1);
+}
 
 #define SLAVE_WRITE(reg,val,error) _max927x_write_reg(data->slave, reg, val, 0xff, error)
+#define SLAVE_WRITE_NOCHECK(reg,val,error) _max927x_write_reg_internal(data->slave, reg, val, 0xff, error, 0)
 #define MASTER_WRITE(reg,val,error) _max927x_write_reg(data->master, reg, val, 0xff, error)
 #define SER_WRITE(reg,val,error) \
 	_max927x_write_reg(data->deserializer_master ? data->slave : data->master, \
@@ -645,7 +652,7 @@ static int _max927x_link_configure(struct max927x_data* data)
 	for (counter = 1; counter <= 5; counter++) {
 
 		/*Enable reverse channel so we know if remote writes succeed*/
-		retval  = SER_WRITE(0x04, MAX9271_REG04, &data->error_count);
+		retval  = SLAVE_WRITE_NOCHECK(0x04, MAX9271_REG04, &data->error_count);
 		if (retval == 0)
 			break;
 		dev_dbg(dev, "%s: enable reverse channel try %d err %d",
@@ -659,7 +666,21 @@ static int _max927x_link_configure(struct max927x_data* data)
 
 	/*Write slaves magic*/
 	if(data->deserializer_master) {
-		retval = SLAVE_WRITE(0x8, _max9271_magic(data), &data->error_count);
+		retval = SLAVE_WRITE_NOCHECK(0x8, _max9271_magic(data), &data->error_count);
+		/*
+		 * If REV_AMP is 60 mVolts, immmediately reset it back to 80 and set LOGAIN to 1
+		 */
+		if (max9272_rev_amp_to_millivolts(data->cur_rev_amp) == 60) {
+			max9272_millivolts_to_rev_amp(80, &data->cur_rev_amp);
+			data->cur_logain = 1;
+			retval = SLAVE_WRITE_NOCHECK(0x8, _max9271_magic(data), &data->error_count);
+			dev_notice(dev, "%s: immediate switch back to LOGAIN %d, ret=%d\n",
+				   __func__, data->cur_logain, retval);
+			retval = MASTER_WRITE(0x15, _max9272_magic(data), &data->error_count);
+			dev_notice(dev, "%s: immediate switch back to REV_AMP %u mVolts, ret=%d\n",
+				   __func__, max9272_rev_amp_to_millivolts(data->cur_rev_amp), retval);
+		}
+
 		if (retval >= 0)
 			retval = SLAVE_WRITE(0x6, _max9271_preemp(data), &data->error_count);
 
@@ -672,6 +693,7 @@ static int _max927x_link_configure(struct max927x_data* data)
 
 	if(retval < 0)
 		goto error;
+
 
 	/*Set remote i2c config*/
 	retval = SLAVE_WRITE(0x0d, _max927x_i2c(data), &data->error_count);
@@ -1369,18 +1391,17 @@ static int link_test(struct max927x_data *data, int test_timeout, int count_sing
 {
 	struct i2c_client *target = data->slave;
 	unsigned int j;
-	unsigned int errors, retries[I2C_RETRY_CNT_HIST];
+	unsigned int retries[I2C_RETRY_CNT_HIST];
 	u8 desired = (data->deserializer_master ? 0x09 : 0x0A);
 	int ret, i;
 
 	memset(retries, 0, sizeof(retries));
-	errors = 0;
 
 	for (i = 1; i <= training_cycles; i++) {
 		u8 readval;
 
 		for (j = 0; j < i2c_retries; j++) {
-			ret = _max927x_read_reg(target, 0x1E, &readval, NULL);
+			ret = _max927x_try_read_reg(target, 0x1E, &readval);
 			if (test_timeout)
 				ret = -ETIMEDOUT;
 			if (ret >= 0 && readval == desired)
@@ -1391,21 +1412,17 @@ static int link_test(struct max927x_data *data, int test_timeout, int count_sing
 			}
 		}
 		if (j > i2c_retries) {
-			errors += 1;
-			continue;
+			dev_warn(data->dev, "%s: too many retries on cycle %d\n", __func__, i);
+			return -EIO;
 		} else
 			retries[j] += 1;
 	}
 
 	/*
 	 * Compute weighted score as sum of:
-	 *   errors * max I2C retries
 	 *   for each retry count > 1, retry count * number of occurrences
 	 */
-	ret = errors * i2c_retries;
-	if (errors > 0)
-		dev_dbg(data->dev, "%s: %u errors reported\n", __func__, errors);
-	for (i = (count_singles ? 1 : 2); i < i2c_retries; i++) {
+	for (ret = 0, i = (count_singles ? 1 : 2); i < i2c_retries; i++) {
 		ret += i * retries[i];
 		if (retries[i] > 0)
 			dev_dbg(data->dev, "%s: %u occurrences of %u retries\n",
@@ -1446,17 +1463,10 @@ static int run_link_training(struct max927x_data *data, int live, unsigned test_
 				return ret;
 			}
 			max9272_millivolts_to_rev_amp(60, &data->cur_rev_amp);
-			data->cur_logain = 0;
+			dev_notice(data->dev, "re-initializing serial link with REV_AMP=%u mVolts\n",
+				   max9272_rev_amp_to_millivolts(data->cur_rev_amp));
 			ret = _max927x_link_configure(data);
-			if (ret < 0)
-				break;
-			max9272_millivolts_to_rev_amp(80, &data->cur_rev_amp);
-			data->cur_logain = 1;
-			ret = SER_WRITE(0x08, _max9271_magic(data), NULL);
-			if (ret >= 0)
-				ret = DES_WRITE(0x15, _max9272_magic(data), NULL);
-			if (ret < 0)
-				break;
+			break;
 		}
 		if (ret < threshold && (test_flags & TRAINING_TEST_THRESHOLD) == 0)
 			break;
@@ -1499,14 +1509,13 @@ static int initial_link_training(struct max927x_data *data)
 		ret = SER_WRITE(0x08, _max9271_magic(data), NULL);
 		if (ret >= 0)
 			ret = link_test(data, 0, 1);
-		if (ret < 0) {
+		if (ret < 0)
 			dev_warn(data->dev, "%s: link test failed, err=%d\n", __func__, ret);
-			if (ret == -ETIMEDOUT) {
-				data->training = false;
-				return ret;
-			}
-		}
 		score[logain] = ret;
+	}
+	if (score[0] < 0 && score[1] < 0) {
+		dev_err(data->dev, "%s: link test failures with both LOGAIN values\n", __func__);
+		return -EIO;
 	}
 	logain = (score[0] < score[1] ? 0 : 1);
 	dev_notice(data->dev, "%s: retry counts (%d, %d), selecting LOGAIN %d\n",
@@ -1714,28 +1723,16 @@ static int _max927x_probe(struct max927x_data* data)
 	max9272_millivolts_to_rev_amp(80, &data->cur_rev_amp);
 
 	ret = _max927x_link_configure(data);
-	if (ret < 0) {
-		dev_err(dev, "Could not initialize max927x link\n");
-		mutex_unlock(&data->gpio_lock);
-		goto error_i2c_adap;
-	}
+	if (ret >= 0)
+		ret = initial_link_training(data);
 
-	ret = initial_link_training(data);
 	if (ret < 0) {
-		data->cur_logain = 0;
 		max9272_millivolts_to_rev_amp(60, &data->cur_rev_amp);
-		dev_notice(dev, "re-initializing serial link, REV_AMP=%u mVolts, LOGAIN=%d\n",
-			   max9272_rev_amp_to_millivolts(data->cur_rev_amp), data->cur_logain);
+		dev_notice(dev, "re-initializing serial link, REV_AMP=%u mVolts\n",
+			   max9272_rev_amp_to_millivolts(data->cur_rev_amp));
 		ret = _max927x_link_configure(data);
-		if (ret >= 0) {
-			max9272_millivolts_to_rev_amp(80, &data->cur_rev_amp);
-			data->cur_logain = 1;
-			ret = SER_WRITE(0x08, _max9271_magic(data), NULL);
-			if (ret >= 0)
-				ret = DES_WRITE(0x15, _max9272_magic(data), NULL);
-		}
-		if (ret >= 0)
-			ret = initial_link_training(data);
+		dev_notice(dev, "skipping initial link training, leaving REV_AMP=%u mVolts and LOGAIN=%d\n",
+			   max9272_rev_amp_to_millivolts(data->cur_rev_amp), data->cur_logain);
 	}
 
 	mutex_unlock(&data->gpio_lock);
