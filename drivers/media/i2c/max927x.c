@@ -400,6 +400,13 @@ static int des_update(struct max927x *me, max9272_setting_t which, u8 newval)
 /*
  * Our I2C transfer routine for devices hanging off the remote, which
  * adds some retries-after-delay in the event of a failure.
+ *
+ * The 'training' atomic_t in our data structure indicates current
+ * link training status:
+ *  TRAINING_OFF: normal operation, perform and count retries/errors
+ *  TRAINING_INITIAL or TRAINING_RETRAINING: in training mode:
+ *     If TRAINING_PAUSED flag is set, perform retries, but do not count them (or errors)
+ *     otherwise, do not perform or count retries (they're counted in the caller).
  */
 static int remote_i2c_xfer(struct i2c_adapter *adap,
 			   struct i2c_msg msgs[], int num)
@@ -423,10 +430,20 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 			break;
 	}
 
-	atomic_inc(&me->i2c_retry_counts[(ntries > i2c_retries ? i2c_retries : ntries)]);
+	if (training == TRAINING_OFF) {
+		atomic_inc(&me->i2c_retry_counts[(ntries > i2c_retries ? i2c_retries : ntries)]);
+		/*
+		 * FIXME
+		 * This is temporary, for identifying code paths that may result in spurious
+		 * retry alarms.
+		 * EMXIF
+		 */
+		if (WARN_ON(ntries >= 5))
+			dev_warn(me->dev, "ntries: %u\n", ntries);
 
-	if (ret < 0)
-		atomic_inc(&me->i2c_error_count);
+		if (ret < 0)
+			atomic_inc(&me->i2c_error_count);
+	}
 
 	return ret;
 
@@ -744,9 +761,20 @@ static int des_control_init(struct max927x *me)
 		return ret;
 	}
 
-	ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
-	if (ret < 0 && !ignore_errors)
-		dev_err(me->dev, "could not initialize LOGAIN\n");
+	if (max9272_rev_amp_to_millivolts(me->current_rev_amp) == 60) {
+		me->current_logain = 1;
+		ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
+		dev_notice(me->dev, "resetting LOGAIN to %d: ret=%d\n",
+			   me->current_logain, ret);
+		max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
+		ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
+		dev_notice(me->dev, "resetting REV_AMP to %d: ret=%d\n", ret,
+			   max9272_rev_amp_to_millivolts(me->current_rev_amp));
+	} else {
+		ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
+		if (ret < 0 && !ignore_errors)
+			dev_err(me->dev, "could not initialize LOGAIN\n");
+	}
 
 	for (i = 0; i < ARRAY_SIZE(ser_init_properties); i++) {
 		property_id_t which = ser_init_properties[i];
@@ -1196,7 +1224,7 @@ static int link_test(struct max927x *me, int test_timeout, int count_singles)
 	struct i2c_client *target = me->remote;
 	const struct max927x_setting *s = &max9271_settings[MAX9271_ID];
 	unsigned int j;
-	unsigned int errors, retries[I2C_RETRIES_MAX+1];
+	unsigned int retries[I2C_RETRIES_MAX+1];
 	u8 reg, desired;
 	int ret, i;
 
@@ -1204,7 +1232,6 @@ static int link_test(struct max927x *me, int test_timeout, int count_singles)
 	desired = (me->remote == me->ser ? MAX9271_CHIPID : MAX9272_CHIPID);
 
 	memset(retries, 0, sizeof(retries));
-	errors = 0;
 
 	for (i = 1; i <= training_cycles; i++) {
 		u8 readval;
@@ -1221,21 +1248,17 @@ static int link_test(struct max927x *me, int test_timeout, int count_singles)
 			}
 		}
 		if (j > i2c_retries) {
-			errors += 1;
-			continue;
+			dev_warn(me->dev, "%s: too many retries\n", __func__);
+			return -EIO;
 		} else
 			retries[j] += 1;
 	}
 
 	/*
 	 * Compute weighted score as sum of:
-	 *   errors * max I2C retries
 	 *   for each retry count > 1, retry count * number of occurrences
 	 */
-	ret = errors * i2c_retries;
-	if (errors > 0)
-		dev_dbg(me->dev, "%s: %u errors reported\n", __func__, errors);
-	for (i = (count_singles ? 1 : 2); i < i2c_retries; i++) {
+	for (ret = 0, i = (count_singles ? 1 : 2); i < i2c_retries; i++) {
 		ret += i * retries[i];
 		if (retries[i] > 0)
 			dev_dbg(me->dev, "%s: %u occurrences of %u retries\n",
@@ -1273,17 +1296,14 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 				return ret;
 			}
 			max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
-			me->current_logain = 0;
+			dev_notice(me->dev, "error during link training, resetting control link with REV_AMP at %u mVolts\n",
+				   max9272_rev_amp_to_millivolts(me->current_rev_amp));
 			ret = me->ctrl_link_init(me);
-			if (ret < 0)
-				break;
-			max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
-			me->current_logain = 1;
-			ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
-			if (ret >= 0)
-				ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
-			if (ret < 0)
-				break;
+			dev_notice(me->dev, "early exit from link training, REV_AMP=%u mVolts, LOGAIN=%d, result=%d\n",
+				   max9272_rev_amp_to_millivolts(me->current_rev_amp),
+				   me->current_logain, ret);
+			atomic_xchg(&me->training, TRAINING_OFF);
+			return ret;
 		}
 		if (ret < threshold && (test_flags & TRAINING_TEST_THRESHOLD) == 0)
 			break;
@@ -1725,37 +1745,38 @@ static void initial_training(struct work_struct *work)
 		if (ret < 0) {
 			dev_err(me->dev, "%s: link test failed, err=%d\n", __func__, ret);
 			if (ret == -ETIMEDOUT) {
-				max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
-				me->current_logain = 0;
-				atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
-				ret = me->ctrl_link_init(me);
-				if (ret < 0) {
-					dev_err(me->dev, "%s: could not establish control link, ret=%d\n",
-						__func__, ret);
-					power_down_remote(me);
-					i2c_del_adapter(&me->dummy_adapter);
-					atomic_xchg(&me->training, TRAINING_OFF);
-					return;
-				}
-				max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
-				me->current_logain = 1;
-				ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
-				if (ret >= 0)
-					ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
-				if (ret < 0)
-					dev_err(me->dev, "%s: could not switch control link back to 80 mVolts, ret=%d\n",
-						__func__, ret);
-				else {
-					dev_notice(me->dev, "%s: leaving LOGAIN at %d after resetting control link\n",
-						   __func__, me->current_logain);
-					max927x_finish_probe(me);
-					atomic_xchg(&me->training, TRAINING_OFF);
-					return;
-				}
-				atomic_xchg(&me->training, TRAINING_INITIAL);
+				score[0] = score[1] = -ret;
+				break;
 			}
 		}
 		score[logain] = ret;
+	}
+	if (score[0] < 0 && score[1] < 0) {
+		max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
+		dev_notice(me->dev, "%s: resetting control link with REV_AMP at %u mVolts\n",
+			   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp));
+		atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
+		ret = me->ctrl_link_init(me);
+		if (ret < 0) {
+			dev_err(me->dev, "%s: could not establish control link, ret=%d\n",
+				__func__, ret);
+			power_down_remote(me);
+			i2c_del_adapter(&me->dummy_adapter);
+			atomic_xchg(&me->training, TRAINING_OFF);
+			return;
+		} else {
+			dev_notice(me->dev, "%s: leaving LOGAIN at %d after resetting control link\n",
+				   __func__, me->current_logain);
+			/*
+			 * Call finish_probe before switching to TRAINING_OFF, so we
+			 * don't end up recording spurious I2C retries during probe of the adapter
+			 * we add there.
+			 */
+			max927x_finish_probe(me);
+			atomic_xchg(&me->training, TRAINING_OFF);
+			return;
+		}
+		atomic_xchg(&me->training, TRAINING_INITIAL);
 	}
 	logain = (score[0] < score[1] ? 0 : 1);
 	dev_notice(me->dev, "%s: retry counts (%d, %d), selecting LOGAIN %d\n",
@@ -1768,6 +1789,11 @@ static void initial_training(struct work_struct *work)
 		power_down_remote(me);
 		i2c_del_adapter(&me->dummy_adapter);
 	} else
+		/*
+j		 * Call finish_probe before switching to TRAINING_OFF, so we
+		 * don't end up recording spurious I2C retries during probe of the adapter
+		 * we add there.
+		 */
 		max927x_finish_probe(me);
 
 	atomic_xchg(&me->training, TRAINING_OFF);
