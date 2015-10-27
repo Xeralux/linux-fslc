@@ -132,7 +132,22 @@ static unsigned long i2c_retries = I2C_RETRIES_DEFAULT;
 static unsigned long i2c_udelay = I2C_UDELAY_DEFAULT;
 
 /*
- * training type values and modifier flags
+ * Most register updates work on the first try, except
+ * in the case where the register is on the remote and
+ * communication hasn't been fully established yet.
+ */
+#define REG_RETRIES 5
+
+/*
+ * Training type values and modifier flags.  When training
+ * is in progress, I2C retries are not performed, counted,
+ * or warned about.
+ *
+ * TRAINING_OFF: normal operation
+ *    TRAINING_OFF_NOCOUNT flag set: do not count/warn on retries
+ * TRAINING_INITIAL: initial training after device probe
+ * TRAINING_RETRAINING: any subsequent link training after probe
+ *    TRAINING_PAUSED flag set: perform retries but don't count/warn
  */
 enum {
 	TRAINING_OFF = 0,
@@ -140,6 +155,7 @@ enum {
 	TRAINING_RETRAINING = 2,
 };
 #define TRAINING_PAUSED		0x100
+#define TRAINING_OFF_NOCOUNT	0x200
 #define TRAINING_TYPEMASK	0xFF
 #define TRAINING_FLAGMASK	(~TRAINING_TYPEMASK)
 
@@ -198,8 +214,6 @@ struct max927x {
 	struct regulator *remote_power;
 	atomic_t remote_power_enabled;
 	u32 power_on_mdelay, power_off_mdelay;
-	bool remote_quirk_enabled;
-	bool skip_remote_checks;
 	atomic_t ser_gpios_enabled;
 	atomic_t ser_gpios_set;
 	atomic_t operational;
@@ -239,7 +253,7 @@ static int i2c_reg_read(struct i2c_client *client, u8 reg, u8 *val)
 {
 	struct i2c_msg msgs[2];
 	u8 regnum = reg;
-	int ret;
+	int ntries, ret;
 
 	msgs[0].addr = msgs[1].addr = client->addr;
 	msgs[0].flags = 0;
@@ -247,31 +261,52 @@ static int i2c_reg_read(struct i2c_client *client, u8 reg, u8 *val)
 	msgs[0].len = msgs[1].len = 1;
 	msgs[0].buf = &regnum;
 	msgs[1].buf = val;
-	ret = i2c_transfer(client->adapter, msgs, 2);
+	for (ntries = 0, ret = -EIO; ntries < REG_RETRIES && ret < 0;
+	     ret = i2c_transfer(client->adapter, msgs, 2), ntries += 1);
 	return (ret < 0 ? ret : 0);
 }
 
 static int i2c_reg_write(struct i2c_client *client, u8 reg, u8 val)
 {
 	u8 buf[2] = {reg, val};
-	int ret = i2c_master_send(client, buf, 2);
+	int ntries, ret;
+	for (ntries = 0, ret = -EIO; ntries < REG_RETRIES && ret < 0;
+	     ret = i2c_master_send(client, buf, 2), ntries += 1);
 	return (ret < 0 ? ret : 0);
 }
 
 /*
  * Serializer settings
  */
+
+/*
+ * ser_set_logain:
+ *
+ * Just writes the LOGAIN setting into the appropriate register,
+ * with no checks.  For use during early setup, when we don't have
+ * the reverse channel available for reading back settings.  We
+ * write multiple times, to try to make sure the setting succeeds.
+ */
+static int ser_set_logain(struct max927x *me)
+{
+	const struct max927x_setting *s = &max9271_settings[MAX9271_LOGAIN];
+	u8 val = (me->current_logain << s->pos);
+	int i;
+	for (i = 0; i < REG_RETRIES-1; i++)
+		i2c_reg_write(me->ser, s->reg, val);
+	return i2c_reg_write(me->ser, s->reg, val);
+}
+
 static int ser_read(struct max927x *me, max9271_setting_t which, u8 *valp)
 {
 	const struct max927x_setting *s = &max9271_settings[which];
 	u8 val;
 	int ret = i2c_reg_read(me->ser, s->reg, &val);
 
-	if (ret < 0) {
+	if (ret < 0)
 		dev_dbg(me->dev, "%s: which=%s, read status=%d\n", __func__, s->name, ret);
-		return ret;
-	}
-	*valp = (val >> s->pos) & ~(0xFF << s->width);
+	else
+		*valp = (val >> s->pos) & ~(0xFF << s->width);
 	return ret;
 }
 
@@ -424,7 +459,7 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 		if (delay > 0)
 			udelay(delay);
 		ret = me->parent->algo->master_xfer(me->parent, msgs, num);
-		if (training != TRAINING_OFF && (training & TRAINING_PAUSED) == 0)
+		if ((training & TRAINING_TYPEMASK) != TRAINING_OFF && (training & TRAINING_PAUSED) == 0)
 			return ret;
 		if (ret >= 0)
 			break;
@@ -700,7 +735,6 @@ static int ser_control_init(struct max927x *me)
 static int des_control_init(struct max927x *me)
 {
 	int i, ret;
-	bool ignore_errors = me->skip_remote_checks;
 	/*
 	 * Reset so we're starting from a known state
 	 */
@@ -738,49 +772,52 @@ static int des_control_init(struct max927x *me)
 		dev_err(me->dev, "deserializer I2C setup error: %d\n", ret);
 
 	power_up_remote(me);
+
+	if (max9272_rev_amp_to_millivolts(me->current_rev_amp) == 60) {
+		me->current_logain = 1;
+		ret = ser_set_logain(me);
+		dev_notice(me->dev, "resetting LOGAIN to %d: ret=%d\n",
+			   me->current_logain, ret);
+		max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
+		ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
+		dev_notice(me->dev, "resetting REV_AMP to %u mVolts: ret=%d\n",
+			   max9272_rev_amp_to_millivolts(me->current_rev_amp), ret);
+	} else {
+		ret = ser_set_logain(me);
+		if (ret < 0)
+			dev_err(me->dev, "could not initialize LOGAIN\n");
+	}
+
 	/*
 	 * Disable SEREN and enable CLINKEN on the serializer in a single register
 	 * write.  If we can read back the setting, we know the control channel is good.
 	 * Retry/delay loop here is just in case - it shouldn't really be needed.
 	 */
-	for (i = 1; i <= 5; i++) {
+	for (i = 1; i <= REG_RETRIES; i++) {
 		dev_dbg(me->dev, "setting up control link on serializer (attempt #%d)\n", i);
 		ret = i2c_reg_write(me->ser, 0x04, 0x47);
 		if (ret == 0) {
 			u8 val = 0;
 			msleep(10);
 			ret = i2c_reg_read(me->ser, 0x04, &val);
-			if (ret == 0 && val == 0x47)
-				break;
+			if (ret == 0) {
+				if (val == 0x47)
+					break;
+				else
+					ret = -EIO;
+			}
 		}
 	}
-	if (ret == 0)
-		me->skip_remote_checks = ignore_errors = false;
-	else if (!ignore_errors) {
+	if (ret < 0) {
 		dev_err(me->dev, "could not initialize control link in serializer, ret=%d\n", ret);
 		return ret;
-	}
-
-	if (max9272_rev_amp_to_millivolts(me->current_rev_amp) == 60) {
-		me->current_logain = 1;
-		ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
-		dev_notice(me->dev, "resetting LOGAIN to %d: ret=%d\n",
-			   me->current_logain, ret);
-		max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
-		ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
-		dev_notice(me->dev, "resetting REV_AMP to %d: ret=%d\n", ret,
-			   max9272_rev_amp_to_millivolts(me->current_rev_amp));
-	} else {
-		ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
-		if (ret < 0 && !ignore_errors)
-			dev_err(me->dev, "could not initialize LOGAIN\n");
 	}
 
 	for (i = 0; i < ARRAY_SIZE(ser_init_properties); i++) {
 		property_id_t which = ser_init_properties[i];
 		ret = ser_update(me, properties[which].setting->idx,
 				 me->of_cfg_settings[which]);
-		if (ret < 0 && !ignore_errors) {
+		if (ret < 0) {
 			dev_err(me->dev, "could not set initial value for %s\n",
 				properties[which].dev_attr.attr.name);
 		}
@@ -832,7 +869,7 @@ static int des_control_init(struct max927x *me)
 		else
 			dev_err(me->dev, "could not update EDC on deserializer: %d\n", ret);
 	}
-	if (ret < 0 && !ignore_errors) {
+	if (ret < 0) {
 		dev_err(me->dev, "error initializing serializer: %d\n", ret);
 		power_down_remote(me);
 		return ret;
@@ -865,7 +902,7 @@ static int des_control_init(struct max927x *me)
 	/*
 	 * Don't need automatic I2C acks any longer
 	 */
-	return (ignore_errors ? 0 : des_update(me, MAX9272_I2CLOCACK, 0));
+	return des_update(me, MAX9272_I2CLOCACK, 0);
 }
 
 /*
@@ -883,11 +920,6 @@ static int des_control_init(struct max927x *me)
  * The serializer's GPIO state is tracked in our private data
  * structure and re-played into the hardware when we reset the
  * control link (toggling the GPIOs off/on).
- *
- * When the ignore-remote-errors-on-init quirk is enabled, we
- * fake success returns and just track the requested changes
- * in our data structure so that we can set the GPIOs up
- * when we eventually get to talk to the serializer.
  *
  * XXX - should do similar tracking for deserializer
  */
@@ -909,17 +941,6 @@ static int gpio_dir_in(struct gpio_chip *gc, unsigned num)
 		 * Switch from 1-based to zero-based to match the regs
 		 */
 		num -= 1;
-		if (me->skip_remote_checks && me->ser == me->remote) {
-			gpio_en = atomic_read(&me->ser_gpios_enabled) | (1 << num);
-			i2c_reg_write(me->ser, 0xE, gpio_en);
-			gpio_set = atomic_read(&me->ser_gpios_set) | (1 << num);
-			i2c_reg_write(me->ser, 0xF, gpio_set);
-			atomic_xchg(&me->ser_gpios_set, gpio_set);
-			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
-			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
-				__func__, num);
-			return 0;
-		}
 		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
 		if (ret < 0)
 			return ret;
@@ -963,21 +984,6 @@ static int gpio_dir_out(struct gpio_chip *gc, unsigned num, int outval)
 		 * Switch from 1-based to zero-based to match the regs
 		 */
 		num -= 1;
-		if (me->skip_remote_checks && me->ser == me->remote) {
-			gpio_en = atomic_read(&me->ser_gpios_enabled) | (1 << num);
-			i2c_reg_write(me->ser, 0xE, gpio_en);
-			gpio_set = atomic_read(&me->ser_gpios_set);
-			if (outval)
-				gpio_set |= (1 << num);
-			else
-				gpio_set &= ~(1 << num);
-			i2c_reg_write(me->ser, 0xF, gpio_set);
-			atomic_xchg(&me->ser_gpios_set, gpio_set);
-			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
-			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
-				__func__, num);
-			return 0;
-		}
 		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
 		if (ret < 0)
 			return ret;
@@ -1026,14 +1032,6 @@ static void gpio_set(struct gpio_chip *gc, unsigned num, int setval)
 		 * Switch from 1-based to zero-based to match the regs
 		 */
 		num -= 1;
-		if (me->skip_remote_checks && me->ser == me->remote) {
-			gpio_set = atomic_read(&me->ser_gpios_set) | (1 << num);
-			i2c_reg_write(me->ser, 0xF, gpio_set);
-			atomic_xchg(&me->ser_gpios_set, gpio_set);
-			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
-				__func__, num);
-			return;
-		}
 		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
 		if (ret == 0) {
 			if ((gpio_en & (1 << num)) == 0)
@@ -1081,13 +1079,6 @@ static int gpio_read(struct gpio_chip *gc, unsigned num)
 		 * Switch from 1-based to zero-based to match the regs
 		 */
 		num -= 1;
-		if (me->skip_remote_checks && me->ser == me->remote) {
-			dev_dbg(me->dev, "%s: skipping remote checks for GPIO %u\n",
-				__func__, num);
-			if ((atomic_read(&me->ser_gpios_enabled) & (1 << num)) == 0)
-				return -EINVAL;
-			return ((atomic_read(&me->ser_gpios_set) & (1 << num)) != 0);
-		}
 		ret = ser_read(me, MAX9271_GPIO_EN, &gpio_en);
 		if (ret < 0)
 			return ret;
@@ -1274,7 +1265,7 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 	int threshold = training_threshold * training_cycles / 100;
 	int counter, ret;
 
-	if (atomic_cmpxchg(&me->training, TRAINING_OFF, TRAINING_RETRAINING) != TRAINING_OFF)
+	if ((atomic_cmpxchg(&me->training, TRAINING_OFF, TRAINING_RETRAINING) & TRAINING_TYPEMASK) != TRAINING_OFF)
 		return -EALREADY;
 
 	me->training_test_flags = test_flags;
@@ -1312,7 +1303,7 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 		me->current_logain = 1 - me->current_logain;
 		dev_notice(me->dev, "threshold exceeded (%d), switching LOGAIN to %d\n",
 			   ret, me->current_logain);
-		ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
+		ret = ser_set_logain(me);
 		if (ret < 0) {
 			dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
 			break;
@@ -1483,8 +1474,6 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 	int ret;
 
 	dev_dbg(dev, "device reset requested\n");
-
-	me->skip_remote_checks = me->remote_quirk_enabled;
 
 	device_for_each_child(&me->adap.dev, NULL, unregister_remote_i2c_device);
 
@@ -1738,7 +1727,7 @@ static void initial_training(struct work_struct *work)
 			   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp), logain);
 		me->current_logain = logain;
 		atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
-		ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
+		ret = ser_set_logain(me);
 		atomic_xchg(&me->training, TRAINING_INITIAL);
 		if (ret >= 0)
 			ret = link_test(me, 0, 1);
@@ -1783,14 +1772,14 @@ static void initial_training(struct work_struct *work)
 		   __func__, score[0], score[1], logain);
 	me->current_logain = logain;
 	atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
-	ret = ser_update(me, MAX9271_LOGAIN, me->current_logain);
+	ret = ser_set_logain(me);
 	if (ret < 0) {
 		dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
 		power_down_remote(me);
 		i2c_del_adapter(&me->dummy_adapter);
 	} else
 		/*
-j		 * Call finish_probe before switching to TRAINING_OFF, so we
+		 * Call finish_probe before switching to TRAINING_OFF, so we
 		 * don't end up recording spurious I2C retries during probe of the adapter
 		 * we add there.
 		 */
@@ -1852,7 +1841,7 @@ static int max927x_probe(struct i2c_client *client,
 	atomic_set(&me->remote_power_enabled, 0);
 	atomic_set(&me->operational, 0);
 	atomic_set(&me->i2c_test_in_progress, 0);
-	atomic_set(&me->training, TRAINING_OFF);
+	atomic_set(&me->training, TRAINING_OFF|TRAINING_OFF_NOCOUNT);
 	INIT_WORK(&me->training_work, initial_training);
 
 	me->dev = dev;
@@ -1880,19 +1869,6 @@ static int max927x_probe(struct i2c_client *client,
 		me->dummy_adapter.nr = me->adap.nr + 5;
 		dev_warn(dev, "could not read dummy-i2c-nr property, using default: %d\n",
 			 me->dummy_adapter.nr);
-	}
-
-	/*
-	 * Allow for sloppy hardware designs that prevent us from initializing
-	 * the serdes pair fully without brining up other surrounding devices.
-	 * With this quirk enabled, we discard any remote read errors and finish
-	 * initializing our I2C and GPIO structures so other devices that
-	 * depend on them can be probed.  If we then get through a control-link
-	 * initialization successfully, we start paying attention to errors again.
-	 */
-	if (of_get_property(np, "ignore-remote-errors-on-init-quirk", NULL)) {
-		dev_dbg(dev, "enabling ignore-remote-errors-on-init-quirk\n");
-		me->remote_quirk_enabled = me->skip_remote_checks = true;
 	}
 
 	me->remote_power = devm_regulator_get(dev, "slave");
@@ -1961,6 +1937,19 @@ static int max927x_probe(struct i2c_client *client,
 
 	ret = me->ctrl_link_init(me);
 	if (ret < 0) {
+		if (me->local == me->des) {
+			max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
+			dev_notice(dev, "%s: setting REV_AMP to %u mVolts to retry link setup\n",
+				   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp));
+			ret = me->ctrl_link_init(me);
+			if (ret == 0) {
+				dev_notice(dev, "%s: skipping initial training due to REV_AMP reset\n",
+					   __func__);
+				max927x_finish_probe(me);
+				atomic_xchg(&me->training, TRAINING_OFF);
+				return ret;
+			}
+		}
 		dev_err(dev, "control link initialization/training failed\n");
 		i2c_del_adapter(&me->dummy_adapter);
 		return -ENODEV;

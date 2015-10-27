@@ -541,8 +541,6 @@
 		resets = <&camboard_ch0_reset>;
 		reg = <0x48>;
 		remote-reg = <0x40>;
-		/* For alpha board compatibility */
-		ignore-remote-errors-on-init-quirk;
 		slave-supply = <&camboard_ch0_fixed_5v0>;
 		slave-on-delay-ms = <1150>;
 		/*The voltage goes from about 5V to 1.125V after 2s*/
@@ -701,8 +699,6 @@
 		resets = <&camboard_ch1_reset>;
 		reg = <0x48>;
 		remote-reg = <0x40>;
-		/* For alpha board compatibility */
-		ignore-remote-errors-on-init-quirk;
 		slave-supply = <&camboard_ch1_fixed_5v0>;
 		slave-on-delay-ms = <1150>;
 		/*The voltage goes from about 5V to 1.125V after 2s*/
