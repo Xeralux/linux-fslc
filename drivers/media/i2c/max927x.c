@@ -619,6 +619,13 @@ static int _max927x_link_configure(struct max927x_data* data)
 	int retval=0;
 	int counter;
 
+	retval = device_reset(dev);
+	if (retval == -ENODEV)
+		return -EPROBE_DEFER;
+	/*power up time is 6ms, double*/
+	msleep(12);
+	i2c_recover_bus(data->parent);
+
 	retval = _max927x_slave_power_off(data);
 	if(retval < 0)
 		goto error;
@@ -1707,22 +1714,16 @@ static int _max927x_probe(struct max927x_data* data)
 		goto error_i2c_adap;
 	}
 
-	/*Take GPIO lock while it is unsafe to use gpio.*/
-	mutex_lock(&data->gpio_lock);
-	ret = device_reset(dev);
-	if (ret == -ENODEV) {
-		mutex_unlock(&data->gpio_lock);
-		ret = -EPROBE_DEFER;
-		goto error_i2c_adap;
-	}
-	/*power up time is 6ms, double*/
-	msleep(12);
-	i2c_recover_bus(data->parent);
-
 	data->cur_logain = 0;
 	max9272_millivolts_to_rev_amp(80, &data->cur_rev_amp);
 
+	/*Take GPIO lock while it is unsafe to use gpio.*/
+	mutex_lock(&data->gpio_lock);
 	ret = _max927x_link_configure(data);
+	if (ret == -EPROBE_DEFER) {
+		mutex_unlock(&data->gpio_lock);
+		goto error_i2c_adap;
+	}
 	if (ret >= 0)
 		ret = initial_link_training(data);
 
