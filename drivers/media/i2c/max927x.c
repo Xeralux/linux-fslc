@@ -1371,7 +1371,7 @@ static ssize_t show_i2c_retry_counts(struct device *dev, struct device_attribute
 	ssize_t count = 0;
 	int i;
 
-	for (i = 0; i < i2c_retries; i++)
+	for (i = 0; i <= i2c_retries; i++)
 		count += scnprintf(buf+count, PAGE_SIZE-count, "%u:%u\n",
 				   i, atomic_read(&me->i2c_retry_counts[i]));
 	return count;
