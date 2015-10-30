@@ -192,7 +192,7 @@ static int pca954x_select_chan(struct i2c_adapter *adap,
 	/* Only select the channel if its different from the last channel */
 	if (data->last_chan != regval) {
 		ret = pca954x_reg_write(adap, client, regval);
-		data->last_chan = regval;
+		data->last_chan = (ret < 0 ? 0 : regval);
 	}
 
 	return ret;
@@ -210,11 +210,12 @@ static int pca954x_deselect_mux(struct i2c_adapter *adap,
 				void *client, u32 chan)
 {
 	struct pca954x *data = i2c_get_clientdata(client);
+	int ret;
 
-	pca954x_unlock_mux(adap, client, chan);
-	/* Deselect active channel */
 	data->last_chan = 0;
-	return pca954x_reg_write(adap, client, data->last_chan);
+	ret = pca954x_reg_write(adap, client, data->last_chan);
+	pca954x_unlock_mux(adap, client, chan);
+	return ret;
 }
 
 /*
