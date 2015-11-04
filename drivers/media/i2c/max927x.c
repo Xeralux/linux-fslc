@@ -1238,8 +1238,8 @@ static int link_test(struct max927x *me, int test_timeout, int count_singles)
 				return ret;
 			}
 		}
-		if (j > i2c_retries) {
-			dev_warn(me->dev, "%s: too many retries\n", __func__);
+		if (j >= i2c_retries) {
+			dev_warn(me->dev, "%s: too many retries on cycle %d\n", __func__, i);
 			return -EIO;
 		} else
 			retries[j] += 1;
@@ -1263,7 +1263,7 @@ static int link_test(struct max927x *me, int test_timeout, int count_singles)
 static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 {
 	int threshold = training_threshold * training_cycles / 100;
-	int counter, ret;
+	int counter, ret, score[2];
 
 	if ((atomic_cmpxchg(&me->training, TRAINING_OFF, TRAINING_RETRAINING) & TRAINING_TYPEMASK) != TRAINING_OFF)
 		return -EALREADY;
@@ -1275,7 +1275,7 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 		   max9272_rev_amp_to_millivolts(me->current_rev_amp),
 		   me->current_logain, threshold, test_flags);
 
-	for (counter = 0; counter < 4; counter++) {
+	for (counter = 0; counter < 2; counter++) {
 		ret = link_test(me, (test_flags & TRAINING_TEST_TIMEOUT) != 0, 0);
 		if (ret < 0) {
 			test_flags &= ~TRAINING_TEST_TIMEOUT;
@@ -1300,6 +1300,7 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 			break;
 		test_flags &= ~TRAINING_TEST_THRESHOLD;
 		me->training_test_flags = test_flags;
+		score[me->current_logain] = ret;
 		me->current_logain = 1 - me->current_logain;
 		dev_notice(me->dev, "threshold exceeded (%d), switching LOGAIN to %d\n",
 			   ret, me->current_logain);
@@ -1309,8 +1310,15 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 			break;
 		}
 	}
-	if (counter >= 4)
-		ret = -EIO;
+
+	if (counter >= 2) {
+		me->current_logain = (score[0] < score[1]) ? 0 : 1;
+		dev_notice(me->dev, "choosing lower of (%d, %d) to set LOGAIN=%d\n",
+			   score[0], score[1], me->current_logain);
+		ret = ser_set_logain(me);
+		if (ret < 0)
+			dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
+	}
 
 	dev_notice(me->dev, "exit link training, REV_AMP=%u mVolts, LOGAIN=%d, result=%d\n",
 		   max9272_rev_amp_to_millivolts(me->current_rev_amp),
