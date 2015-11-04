@@ -181,6 +181,7 @@ struct ap0100_m034_data {
     unsigned char mode_init_buf[INIT_BUF_MAX];
     int mode_init_buf_count; // how many modes to do in sequence
     enum SENSOR_SYSFS_STATUS cur_sss_status;
+    int last_sss_set_errcode;
     int sensor_read_len;
     bool already_reset;
     u8  read_buf[256];
@@ -195,6 +196,7 @@ struct ap0100_m034_data {
 	struct fw_header flash_header;
 	int fw_status;
 	cam_param_t cam_param_s;
+	bool streaming;
 };
 
 static int _ap0100_m034_probe(struct ap0100_m034_data* data);
@@ -244,6 +246,28 @@ enum ap0100_set_mode {
 	MODE_CNT 		= 19,
 	MODE_INIT_PARAM_BUF = 0xFE,
 	MODE_INIT_MODE_BUF	= 0xFF,
+};
+
+static const char *mode_name[] = {
+	"MODE_NO_FLIP_NO_MIRROR",
+	"MODE_FLIP_IMAGE",
+	"MODE_MIRROR_IMAGE",
+	"MODE_FLIP_N_MIRROR",
+	"MODE_WDR_MODE",
+	"MODE_SDR_MODE",
+	"MODE_AE_OFF",
+	"MODE_AE_ON",
+	"MODE_SET_EXP_TIME",
+	"MODE_SET_TARGET_LUMA",
+	"MODE_AUTO_TARGET_LUMA",
+	"MODE_SET_COLOR_TEMPERATURE",
+	"MODE_SET_AE_WEIGHT_TABLE",
+	"MODE_INDOOR_MODE_ON",
+	"MODE_INDOOR_MODE_OFF",
+	"MODE_FLICKER_50HZ",
+	"MODE_FLICKER_60HZ",
+	"MODE_PGA_ON",
+	"MODE_PGA_OFF",
 };
 
 #define WRITE_IS_CMD 		(1 << 0)
@@ -435,19 +459,20 @@ static int _AM_try_write_reg(struct i2c_client * client, u16 reg, unsigned val, 
 static int _AM_write_reg_maybe_unchecked(struct i2c_client * client, u16 reg, unsigned val, int data_size, unsigned *error_count, bool unchecked)
 {
 	int i=0;
-	int ret;
+	int ret=0;
 
 	if(data_size != 1 && data_size != 2 && data_size != 4) {
 		dev_err(&client->dev,"Unsupported data length");
 		return -EINVAL;
 	}
 
-	for(i = 0; i <= i2c_retries; i++) {
+	for(i = 1; i <= i2c_retries; i++) {
 		ret = _AM_try_write_reg(client, reg, val, data_size, unchecked);
+		dev_dbg(&client->dev, "%s: reg=0x%x try=%d ret=%d\n", __func__, reg, i, ret);
 		if(ret >= 0)
 			return ret;
 	}
-	dev_err(&client->dev, "%s: too many retries, got %d", __func__, ret);
+	dev_err(&client->dev, "%s: reg=0x%x too many retries, got %d", __func__, reg, ret);
 	if(error_count)
 		*error_count +=1;
 	return ret;
@@ -599,10 +624,13 @@ static int _ap0100_handle_registers(struct i2c_client * client,
 	int err;
 	for (i=0; i < reg_size; i++) {
 		if(ap0100_reg[i].flags & WRITE_IS_CMD) {
-			err = _AM_send_command(client, ap0100_reg[i].data, error_count);
-			if(err < 0) {
-				dev_err(&client->dev, "%s:command error: err=%d\n",
-						__func__, err);
+			int j;
+			for (j = 1; j <= i2c_retries; j++) {
+				err = _AM_send_command(client, ap0100_reg[i].data, error_count);
+				dev_dbg(&client->dev, "%s: cmd 0x%x, try %d, err=%d\n",
+					   __func__, ap0100_reg[i].data, j, err);
+				if(err >= 0)
+					break;
 			}
 		} else if (ap0100_reg[i].flags & WRITE_IS_UNCHECKED) {
 			err =_AM_write_reg_unchecked(client,ap0100_reg[i].reg_addr,
@@ -671,6 +699,7 @@ static int _ap0100_m034_sensor_init(struct ap0100_m034_data* data, enum ap0100_m
 			{0xC2, REG_CMD, CMD_INVOKE_CMD_SEQ, WRITE_IS_CMD},// COMMAND_REGISTER
 	};
 
+	msleep(50);
 	ret = _ap0100_m034_cmd_status(client, &data->error_count);
 	if(ret < 0)
 		return ret;
@@ -1408,7 +1437,6 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 {
 	struct i2c_client *client = data->client;
 	struct device *dev = &client->dev;
-	const char *modestr = NULL;
 	int err, i;
 #define HANDLE_REGS(_x_) do { \
 		err = _ap0100_handle_registers(client, _x_, ARRAY_SIZE(_x_), &data->error_count); \
@@ -1453,70 +1481,61 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 			{0x02, REG_CAM_PGA_PGA_CONTROL},
 	};
 
+	msleep(50);
 	err = _ap0100_m034_cmd_status(client, &data->error_count);
-	if(err < 0)
+	if(err < 0) {
+		dev_warn(dev, "%s err=%d status-precheck\n", mode_name[mode], err);
 		return err;
+	}
 
 	switch (mode) {
 		case MODE_NO_FLIP_NO_MIRROR:
-			modestr = "MODE_NO_FLIP_NO_MIRROR";
 			ap0100_cmd_reg[1].data = STORED_CMD_Image_Orientation_original;
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_FLIP_IMAGE:
 			ap0100_cmd_reg[1].data = STORED_CMD_Flip;
-			modestr = "MODE_FLIP_IMAGE";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_MIRROR_IMAGE:
 			ap0100_cmd_reg[1].data = STORED_CMD_Mirror;
-			modestr = "MODE_MIRROR_IMAGE";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_FLIP_N_MIRROR:
 			ap0100_cmd_reg[1].data = STORED_CMD_Flip_And_Mirror;
-			modestr = "MODE_FLIP_N_MIRROR";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_WDR_MODE:
 			ap0100_cmd_reg[1].data = data->mode + STORED_CMD_WDR_START;
-			modestr = "MODE_WDR_MODE";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_SDR_MODE:
 			ap0100_cmd_reg[1].data = data->mode + STORED_CMD_SDR_START;
-			modestr = "MODE_SDR_MODE";
 			HANDLE_REGS(ap0100_cmd_reg);
 			break;
 		case MODE_AE_OFF:
 			ae_reg[0].data = 0xA0;
 			ae_reg[1].data = 0x02;
-			modestr = "CMD_AE_OFF";
 			HANDLE_REGS(ae_reg);
 			break;
 		case MODE_AE_ON:
 			ae_reg[0].data = 0x00;
 			ae_reg[1].data = 0x00;
-			modestr = "CMD_AE_ON";
 			HANDLE_REGS(ae_reg);
 			break;
 		case MODE_SET_EXP_TIME:
 			set_exposure_time_reg[0].data = data->cam_param_s.exp_time;
-			modestr = "CMD_SET_EXP_TIME";
 			HANDLE_REGS(set_exposure_time_reg);
 			break;
 		case MODE_SET_TARGET_LUMA:
 			set_target_luma_reg[1].data = data->cam_param_s.luma_target;
-			modestr = "CMD_SET_TARGET_LUMA";
 			HANDLE_REGS(set_target_luma_reg);
 		break;
 		case MODE_AUTO_TARGET_LUMA:
-			modestr = "AUTO_TARGET_LUMA";
 			HANDLE_REGS(auto_target_luma_reg);
 			break;
 		case MODE_SET_COLOR_TEMPERATURE:
 			set_color_temperature_reg[0].data = data->cam_param_s.color_temperature;
-			modestr = "CMD_SET_COLOR_TEMPERATURE";
 			HANDLE_REGS(set_color_temperature_reg);
 			break;
 		case MODE_SET_AE_WEIGHT_TABLE:
@@ -1525,7 +1544,6 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 			 * sub-device drivers)
 			 */
 			err = 0;
-			modestr = "CMD_SET_AE_WEIGHT_TABLE";
 			for(i = 0; i < 25 && err >= 0; i++) {
 				err = _AM_write_reg(client, REG_RULE_AE_WEIGHT_TABLE_0_0 + i,
 						data->cam_param_s.ae_weight_table[i], 1, &data->error_count);
@@ -1533,32 +1551,26 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 			break;
 		case MODE_INDOOR_MODE_ON:
 			indoor_mode_reg[0].data = 0x1;
-			modestr = "CMD_INDOOR_MODE_ON";
 			HANDLE_REGS(indoor_mode_reg);
 			break;
 		case MODE_INDOOR_MODE_OFF:
 			indoor_mode_reg[0].data = 0x0;
-			modestr = "CMD_INDOOR_MODE_OFF";
 			HANDLE_REGS(indoor_mode_reg);
 			break;
 		case MODE_FLICKER_50HZ:
 			flicker_reg[0].data = 0x32;
-			modestr = "CMD_FLICKER_50HZ";
 			HANDLE_REGS(flicker_reg);
 			break;
 		case MODE_FLICKER_60HZ:
 			flicker_reg[0].data = 0x3C;
-			modestr = "CMD_FLICKER_60HZ";
 			HANDLE_REGS(flicker_reg);
 			break;
 		case MODE_PGA_ON:
 			pga_reg[0].data = 0x0001;
-			modestr = "CMD_PGA_ON";
 			HANDLE_REGS(pga_reg);
 			break;
 		case MODE_PGA_OFF:
 			pga_reg[0].data = 0x0000;
-			modestr = "CMD_PGA_OFF";
 			HANDLE_REGS(pga_reg);
 			break;
 		default:
@@ -1566,16 +1578,17 @@ static int _ap0100_m034_sensor_set_mode(struct ap0100_m034_data *data, enum ap01
 			return -EINVAL;
 	}
 
-	if(err < 0)
+	if(err < 0) {
+		dev_warn(dev, "%s err=%d updating registers\n", mode_name[mode], err);
 		return err;
+	}
 
 	msleep(50);
 	err = _ap0100_m034_cmd_status(client, &data->error_count);
 
 	if(err < 0) {
-		dev_err(dev, "ap0100 set cmd failed!!");
+		dev_err(dev, "%s err=%d status check after update\n", mode_name[mode], err);
 	} else {
-		dev_info(dev, "%s OK", modestr);
 		// update mode based on WDR or SDR
 		if ( mode == MODE_WDR_MODE) { // MODE_WDR_MODE
 			data->ap0100_in_wdr_mode = 1;
@@ -1604,8 +1617,8 @@ static int _ap0100_m034_sensor_mode_init(struct ap0100_m034_data* data)
 			dev_err(dev, "%s:Invalid command %d", __func__, mode);
 			return -EINVAL;
 		}
-		dev_dbg(dev, "sensor set mode: %d", mode);
 		err = _ap0100_m034_sensor_set_mode(data,(enum ap0100_set_mode)mode);
+		dev_info(dev, "%s, %s (%d), ret=%d", __func__, mode_name[mode], mode, err);
 		if (err < 0)
 			return err;
 	}
@@ -1722,23 +1735,13 @@ static ssize_t sensor_sysfs_read(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
-	struct i2c_client *client = data->client;
-	const int RETRIES=5;
 	int ret = 0;
-	u16 cmd_status;
-	int i;
 
 	mutex_lock(&data->lock);
 	switch (data->cur_sss_status) {
 		case SSS_SENSOR_SET_CMD:
 			dev_dbg(dev, "%s, SSS_SENSOR_SET_CMD ", __func__);
-			for(i = 0; i < RETRIES; i++) {
-				cmd_status = _ap0100_m034_cmd_status(client, &data->error_count);
-				if (cmd_status >= 0)
-					break;
-				dev_dbg(dev, "%s, cmd retry", __func__);
-			}
-			ret = snprintf(buf, PAGE_SIZE, "%d\n", cmd_status);
+			ret = scnprintf(buf, PAGE_SIZE, "%d\n", data->last_sss_set_errcode);
 			break;
 
 		case SSS_IDLE:
@@ -1773,7 +1776,7 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 
 	data->cur_sss_status = _check_buf_command(buf);
 
-	switch (data->cur_sss_status  ) {
+	switch (data->cur_sss_status) {
 		case SSS_SENSOR_SET_CMD:
 			if (count < sizeof(SENSOR_SET_CMD_UUID))
 				break;
@@ -1786,8 +1789,10 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 				_ap0100_m034_sensor_update_init_buf(data,
 						(unsigned char *)buf + sizeof(SENSOR_SET_CMD_UUID) + 1,
 						count - sizeof(SENSOR_SET_CMD_UUID)-1);
+				dev_dbg(dev, "%s, updated initial mode list\n", __func__);
 			} else if (sensor_mode == MODE_INIT_PARAM_BUF) {
 				memcpy(&data->cam_param_s, (unsigned char *)buf + sizeof(SENSOR_SET_CMD_UUID) + 1, sizeof(data->cam_param_s));
+				dev_dbg(dev, "%s, updated initial parameters\n", __func__);
 			} else if(sensor_mode >= MODE_CNT) {
 					dev_err(dev, "Bad sensor cmd %d", sensor_mode);
 					break;
@@ -1797,8 +1802,10 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 							(enum ap0100_set_mode) sensor_mode);
 					if(err >= 0)
 						break;
-					dev_warn(dev, "%s, cmd retry:%d", __func__, err);
+					dev_dbg(dev, "%s, retry %s, err=%d", __func__, mode_name[sensor_mode], err);
 				}
+				dev_info(dev, "%s, %s (%d), ret=%d\n", __func__, mode_name[sensor_mode], sensor_mode, err);
+				data->last_sss_set_errcode = err;
 			}
 			break;
 
