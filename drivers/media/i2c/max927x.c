@@ -1418,7 +1418,7 @@ static int link_test(struct max927x_data *data, int test_timeout, int count_sing
 				return ret;
 			}
 		}
-		if (j > i2c_retries) {
+		if (j >= i2c_retries) {
 			dev_warn(data->dev, "%s: too many retries on cycle %d\n", __func__, i);
 			return -EIO;
 		} else
@@ -1443,7 +1443,7 @@ static int link_test(struct max927x_data *data, int test_timeout, int count_sing
 static int run_link_training(struct max927x_data *data, int live, unsigned test_flags)
 {
 	int threshold = training_threshold * training_cycles / 100;
-	int counter, ret;
+	int counter, ret, score[2];
 
 	if (!mutex_trylock(&data->data_lock))
 		return -EALREADY;
@@ -1457,7 +1457,7 @@ static int run_link_training(struct max927x_data *data, int live, unsigned test_
 		   max9272_rev_amp_to_millivolts(data->cur_rev_amp),
 		   data->cur_logain, threshold, test_flags);
 
-	for (counter = 0; counter < 4; counter++) {
+	for (counter = 0; counter < 2; counter++) {
 		ret = link_test(data, (test_flags & TRAINING_TEST_TIMEOUT) != 0, 0);
 		if (ret < 0) {
 			test_flags &= ~TRAINING_TEST_TIMEOUT;
@@ -1479,6 +1479,7 @@ static int run_link_training(struct max927x_data *data, int live, unsigned test_
 			break;
 		test_flags &= ~TRAINING_TEST_THRESHOLD;
 		data->training_test_flags = test_flags;
+		score[data->cur_logain] = ret;
 		data->cur_logain = 1 - data->cur_logain;
 		dev_notice(data->dev, "threshold exceeded (%d), switching LOGAIN to %d\n",
 			   ret, data->cur_logain);
@@ -1488,8 +1489,15 @@ static int run_link_training(struct max927x_data *data, int live, unsigned test_
 			break;
 		}
 	}
-	if (counter >= 4)
-		ret = -EIO;
+
+	if (counter >= 2) {
+		data->cur_logain = (score[0] < score[1]) ? 0 : 1;
+		dev_notice(data->dev, "choosing lower of (%d, %d) to set LOGAIN=%d\n",
+			   score[0], score[1], data->cur_logain);
+		ret = SER_WRITE(0x08, _max9271_magic(data), NULL);
+		if (ret < 0)
+			dev_err(data->dev, "could not update LOGAIN, ret=%d\n", ret);
+	}
 
 	dev_notice(data->dev, "exit link training, REV_AMP=%u mVolts, LOGAIN=%d, result=%d\n",
 		   max9272_rev_amp_to_millivolts(data->cur_rev_amp),
