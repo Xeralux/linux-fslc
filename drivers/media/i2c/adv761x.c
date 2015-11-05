@@ -1045,10 +1045,6 @@ static int adv761x_probe(struct i2c_client *client,
 
 	v4l_info(client, "Chip found @ 0x%02x (adv%d)\n", client->addr, ret);
 
-	ret = device_reset(&client->dev);
-	if (ret == -ENODEV)
-		return -EPROBE_DEFER;
-	msleep(5);
 	ret = adv_smbus_write_byte_data(client, 0xff, 0x80);
 	if (ret < 0)
 		v4l_err(client, "error %d sending master reset\n", ret);
