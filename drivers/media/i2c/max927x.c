@@ -1454,8 +1454,10 @@ static ssize_t set_operational(struct device *dev, struct device_attribute *attr
 static ssize_t show_operational(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct max927x *me = to_max927x_from_dev(dev);
+	int training = atomic_read(&me->training) & TRAINING_TYPEMASK;
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&me->operational));
+	return scnprintf(buf, PAGE_SIZE, "%d\n",
+			 (training == TRAINING_INITIAL ? 0 : atomic_read(&me->operational)));
 }
 static DEVICE_ATTR(operational, 0666, show_operational, set_operational);
 
@@ -1471,7 +1473,11 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 			const char *buf, size_t count)
 {
 	struct max927x *me = to_max927x_from_dev(dev);
+	int training = atomic_read(&me->training) & TRAINING_TYPEMASK;
 	int ret;
+
+	if (training != TRAINING_OFF)
+		return -EBUSY;
 
 	dev_dbg(dev, "device reset requested\n");
 
@@ -1614,8 +1620,6 @@ static struct attribute *misc_attributes[] = {
 	&dev_attr_i2c_retry_counts.attr,
 	&dev_attr_max9272_i2c_test.attr,
 	&dev_attr_max9271_i2c_test.attr,
-	&dev_attr_operational.attr,
-	&dev_attr_reset.attr,
 	&dev_attr_corrected_link_errors.attr,
 	&dev_attr_detected_link_errors.attr,
 	&dev_attr_i2c_error_count.attr,
@@ -1627,6 +1631,21 @@ static struct attribute *misc_attributes[] = {
 
 static const struct attribute_group misc_attr_group = {
 	.attrs = misc_attributes,
+};
+
+/*
+ * These attributes should always be available after
+ * the device is probed, to allow for reset if the
+ * link doesn't come up.
+ */
+static struct attribute *static_attributes[] = {
+	&dev_attr_operational.attr,
+	&dev_attr_reset.attr,
+	NULL,
+};
+
+static const struct attribute_group static_attr_group = {
+	.attrs = static_attributes,
 };
 
 /*
@@ -1642,7 +1661,7 @@ static struct i2c_algorithm remote_i2c_algo = {
 };
 
 /*
- * All attribute groups collected here
+ * All attribute groups (except static_attr_group) collected here
  */
 static const struct attribute_group *attr_groups[] = {
 	&properties_attr_group,
@@ -1666,7 +1685,6 @@ static const struct v4l2_subdev_ops subdev_ops = {
  */
 static void max927x_finish_probe(struct max927x *me)
 {
-	struct i2c_client *client = me->local;
 	int ret;
 
 	/*
@@ -1693,18 +1711,6 @@ static void max927x_finish_probe(struct max927x *me)
 		return;
 	}
 
-	/*
-	 * And now set up our V4L2 subdevice.  The
-	 * mxc_subdev_pipeline driver makes assumptions
-	 * about the subdevdata and I2C client data,
-	 * so set that up here.
-	 */
-	v4l2_subdev_init(&me->subdev, &subdev_ops);
-	me->subdev.owner = THIS_MODULE;
-	v4l2_set_subdevdata(&me->subdev, client);
-	i2c_set_clientdata(client, &me->subdev);
-	scnprintf(me->subdev.name, sizeof(me->subdev.name), "%s %d-%04x",
-		  me->dev->driver->name, i2c_adapter_id(client->adapter), client->addr);
 	ret = media_entity_init(&me->subdev.entity, 2, me->pads, 0);
 	if (ret < 0) {
 		dev_err(me->dev, "could not initialize media entity: %d\n", ret);
@@ -1956,9 +1962,27 @@ static int max927x_probe(struct i2c_client *client,
 		i2c_del_adapter(&me->dummy_adapter);
 		return -ENODEV;
 	}
+
+	/*
+	 * And now set up our V4L2 subdevice.  The
+	 * mxc_subdev_pipeline driver makes assumptions
+	 * about the subdevdata and I2C client data,
+	 * so set that up here.
+	 */
+	v4l2_subdev_init(&me->subdev, &subdev_ops);
+	me->subdev.owner = THIS_MODULE;
+	v4l2_set_subdevdata(&me->subdev, client);
+	i2c_set_clientdata(client, &me->subdev);
+	scnprintf(me->subdev.name, sizeof(me->subdev.name), "%s %d-%04x",
+		  me->dev->driver->name, i2c_adapter_id(client->adapter), client->addr);
+
+	ret = sysfs_create_group(&dev->kobj, &static_attr_group);
+	if (ret < 0)
+		dev_err(me->dev, "could not create static sysfs group, err=%d\n", ret);
+
 	atomic_xchg(&me->training, TRAINING_INITIAL);
 	schedule_work(&me->training_work);
-	return ret;
+	return 0;
 }
 
 static int max927x_remove(struct i2c_client *client)
@@ -1981,6 +2005,7 @@ static int max927x_remove(struct i2c_client *client)
 	}
 	i2c_del_adapter(&me->dummy_adapter);
 	power_down_remote(me);
+	sysfs_remove_group(&me->dev->kobj, &static_attr_group);
 
 	return 0;
 }
