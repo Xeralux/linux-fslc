@@ -467,14 +467,6 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 
 	if (training == TRAINING_OFF) {
 		atomic_inc(&me->i2c_retry_counts[(ntries > i2c_retries ? i2c_retries : ntries)]);
-		/*
-		 * FIXME
-		 * This is temporary, for identifying code paths that may result in spurious
-		 * retry alarms.
-		 * EMXIF
-		 */
-		if (WARN_ON(ntries >= 5))
-			dev_warn(me->dev, "ntries: %u\n", ntries);
 
 		if (ret < 0)
 			atomic_inc(&me->i2c_error_count);
@@ -1496,8 +1488,10 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 	if (run_link_training(me, 0, me->training_test_flags) < 0)
 		return ret;
 
+	atomic_xchg(&me->training, TRAINING_OFF_NOCOUNT);
 	me->adap.dev.of_node = me->i2c_node;
 	of_i2c_register_devices(&me->adap);
+	atomic_xchg(&me->training, TRAINING_OFF);
 
 	return count;
 }
