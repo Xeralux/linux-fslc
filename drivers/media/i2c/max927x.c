@@ -45,6 +45,7 @@
 #include <linux/atomic.h>
 #include <linux/workqueue.h>
 #include <linux/media.h>
+#include <linux/mutex.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-subdev.h>
 #include <media/media-entity.h>
@@ -138,34 +139,6 @@ static unsigned long i2c_udelay = I2C_UDELAY_DEFAULT;
  */
 #define REG_RETRIES 5
 
-/*
- * Training type values and modifier flags.  When training
- * is in progress, I2C retries are not performed, counted,
- * or warned about.
- *
- * TRAINING_OFF: normal operation
- *    TRAINING_OFF_NOCOUNT flag set: do not count/warn on retries
- * TRAINING_INITIAL: initial training after device probe
- * TRAINING_RETRAINING: any subsequent link training after probe
- *    TRAINING_PAUSED flag set: perform retries but don't count/warn
- */
-enum {
-	TRAINING_OFF = 0,
-	TRAINING_INITIAL = 1,
-	TRAINING_RETRAINING = 2,
-};
-#define TRAINING_PAUSED		0x100
-#define TRAINING_OFF_NOCOUNT	0x200
-#define TRAINING_TYPEMASK	0xFF
-#define TRAINING_FLAGMASK	(~TRAINING_TYPEMASK)
-
-/*
- * training_test flags
- */
-#define TRAINING_TEST_TIMEOUT	(1<<1)
-#define TRAINING_TEST_THRESHOLD	(1<<2)
-#define TRAINING_TEST_FLAGMASK (TRAINING_TEST_TIMEOUT|TRAINING_TEST_THRESHOLD)
-
 static int training_cycles = 1000;
 module_param(training_cycles, int, 0644);
 MODULE_PARM_DESC(training_cycles, "Number of read cycles to perform during link training");
@@ -204,11 +177,22 @@ struct max927x;
 
 typedef int (*link_init_fn)(struct max927x *me);
 
+typedef enum {
+	STATE_UNINITIALIZED,
+	STATE_READY,
+	STATE_OPERATIONAL,
+} max927x_state_t;
+
+#define I2C_XFER_NORETRIES	(1<<0)
+#define I2C_XFER_NOCOUNT	(1<<1)
 struct max927x {
 	struct device *dev;
 	struct i2c_adapter *parent;
 	struct i2c_client *local, *remote;
 	struct i2c_client *ser, *des;
+	struct mutex lock;
+	max927x_state_t curstate;
+	int training;
 	struct work_struct training_work;
 	link_init_fn ctrl_link_init;
 	struct regulator *remote_power;
@@ -216,9 +200,6 @@ struct max927x {
 	u32 power_on_mdelay, power_off_mdelay;
 	atomic_t ser_gpios_enabled;
 	atomic_t ser_gpios_set;
-	atomic_t operational;
-	atomic_t training;
-	unsigned int training_test_flags;
 	struct gpio_chip gc;
 	struct i2c_adapter dummy_adapter;
 	struct i2c_adapter adap;
@@ -229,6 +210,7 @@ struct max927x {
 	atomic_t i2c_retry_counts[I2C_RETRIES_MAX+1];
 	u32 of_cfg_settings[NUM_CFG_PROPS];
 	atomic_t i2c_test_in_progress;
+	atomic_t i2c_xfer_flags;
 	u8 current_logain, current_rev_amp;
 	struct i2c_test_data i2c_test_results;
 };
@@ -435,20 +417,13 @@ static int des_update(struct max927x *me, max9272_setting_t which, u8 newval)
 /*
  * Our I2C transfer routine for devices hanging off the remote, which
  * adds some retries-after-delay in the event of a failure.
- *
- * The 'training' atomic_t in our data structure indicates current
- * link training status:
- *  TRAINING_OFF: normal operation, perform and count retries/errors
- *  TRAINING_INITIAL or TRAINING_RETRAINING: in training mode:
- *     If TRAINING_PAUSED flag is set, perform retries, but do not count them (or errors)
- *     otherwise, do not perform or count retries (they're counted in the caller).
  */
 static int remote_i2c_xfer(struct i2c_adapter *adap,
 			   struct i2c_msg msgs[], int num)
 {
 	struct max927x *me = adap->algo_data;
 	unsigned long delay, extra = extra_udelay[msgs[0].addr >> 4];
-	int training = atomic_read(&me->training);
+	unsigned int xferflags  = atomic_read(&me->i2c_xfer_flags);
 	unsigned ntries;
 	int ret;
 
@@ -459,13 +434,13 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 		if (delay > 0)
 			udelay(delay);
 		ret = me->parent->algo->master_xfer(me->parent, msgs, num);
-		if ((training & TRAINING_TYPEMASK) != TRAINING_OFF && (training & TRAINING_PAUSED) == 0)
+		if ((xferflags & I2C_XFER_NORETRIES) != 0)
 			return ret;
 		if (ret >= 0)
 			break;
 	}
 
-	if (training == TRAINING_OFF) {
+	if ((xferflags & I2C_XFER_NOCOUNT) == 0) {
 		atomic_inc(&me->i2c_retry_counts[(ntries > i2c_retries ? i2c_retries : ntries)]);
 
 		if (ret < 0)
@@ -1202,10 +1177,11 @@ static void run_i2c_test(struct max927x *me, unsigned int which, unsigned int cy
 		dev_err(me->dev, "I2C test: could not restore original register value\n");
 }
 
-static int link_test(struct max927x *me, int test_timeout, int count_singles)
+static int link_test(struct max927x *me, int count_singles)
 {
 	struct i2c_client *target = me->remote;
 	const struct max927x_setting *s = &max9271_settings[MAX9271_ID];
+	unsigned int oldflags = atomic_read(&me->i2c_xfer_flags);
 	unsigned int j;
 	unsigned int retries[I2C_RETRIES_MAX+1];
 	u8 reg, desired;
@@ -1216,22 +1192,24 @@ static int link_test(struct max927x *me, int test_timeout, int count_singles)
 
 	memset(retries, 0, sizeof(retries));
 
+	atomic_or(I2C_XFER_NORETRIES|I2C_XFER_NOCOUNT, &me->i2c_xfer_flags);
+
 	for (i = 1; i <= training_cycles; i++) {
 		u8 readval;
 
 		for (j = 0; j < i2c_retries; j++) {
 			ret = i2c_reg_read(target, reg, &readval);
-			if (test_timeout)
-				ret = -ETIMEDOUT;
 			if (ret >= 0 && readval == desired)
 				break;
 			if (ret == -ETIMEDOUT) {
 				dev_warn(me->dev, "%s: timeout error\n", __func__);
+				atomic_xchg(&me->i2c_xfer_flags, oldflags);
 				return ret;
 			}
 		}
 		if (j >= i2c_retries) {
 			dev_warn(me->dev, "%s: too many retries on cycle %d\n", __func__, i);
+			atomic_xchg(&me->i2c_xfer_flags, oldflags);
 			return -EIO;
 		} else
 			retries[j] += 1;
@@ -1249,33 +1227,33 @@ static int link_test(struct max927x *me, int test_timeout, int count_singles)
 	}
 
 	dev_notice(me->dev, "%s: exiting, ret=%d", __func__, ret);
+	atomic_xchg(&me->i2c_xfer_flags, oldflags);
 	return ret;
 }
 
-static int run_link_training(struct max927x *me, int live, unsigned test_flags)
+/*
+ * run_link_training expects lock mutex to be held
+ */
+static int run_link_training(struct max927x *me, int live)
 {
 	int threshold = training_threshold * training_cycles / 100;
 	int counter, ret, score[2];
 
-	if ((atomic_cmpxchg(&me->training, TRAINING_OFF, TRAINING_RETRAINING) & TRAINING_TYPEMASK) != TRAINING_OFF)
-		return -EALREADY;
-
-	me->training_test_flags = test_flags;
-
-	dev_notice(me->dev, "begin link training (link %sactive), REV_AMP=%u mVolts, LOGAIN=%d, threshold=%d, testflags=%u\n",
+	dev_notice(me->dev, "begin link training (link %sactive), REV_AMP=%u mVolts, LOGAIN=%d, threshold=%d\n",
 		   (live ? "" : "in"),
 		   max9272_rev_amp_to_millivolts(me->current_rev_amp),
-		   me->current_logain, threshold, test_flags);
+		   me->current_logain, threshold);
 
+	me->training = 1;
 	for (counter = 0; counter < 2; counter++) {
-		ret = link_test(me, (test_flags & TRAINING_TEST_TIMEOUT) != 0, 0);
+		mutex_unlock(&me->lock);
+		ret = link_test(me, 0);
+		mutex_lock(&me->lock);
 		if (ret < 0) {
-			test_flags &= ~TRAINING_TEST_TIMEOUT;
-			me->training_test_flags = test_flags;
 			if (live) {
 				dev_warn(me->dev, "%s: link test failed while live, aborting\n",
 					 __func__);
-				atomic_xchg(&me->training, TRAINING_OFF);
+				me->training = 0;
 				return ret;
 			}
 			max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
@@ -1285,13 +1263,11 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 			dev_notice(me->dev, "early exit from link training, REV_AMP=%u mVolts, LOGAIN=%d, result=%d\n",
 				   max9272_rev_amp_to_millivolts(me->current_rev_amp),
 				   me->current_logain, ret);
-			atomic_xchg(&me->training, TRAINING_OFF);
+			me->training = 0;
 			return ret;
 		}
-		if (ret < threshold && (test_flags & TRAINING_TEST_THRESHOLD) == 0)
+		if (ret < threshold)
 			break;
-		test_flags &= ~TRAINING_TEST_THRESHOLD;
-		me->training_test_flags = test_flags;
 		score[me->current_logain] = ret;
 		me->current_logain = 1 - me->current_logain;
 		dev_notice(me->dev, "threshold exceeded (%d), switching LOGAIN to %d\n",
@@ -1312,11 +1288,12 @@ static int run_link_training(struct max927x *me, int live, unsigned test_flags)
 			dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
 	}
 
+	me->training = 0;
+
 	dev_notice(me->dev, "exit link training, REV_AMP=%u mVolts, LOGAIN=%d, result=%d\n",
 		   max9272_rev_amp_to_millivolts(me->current_rev_amp),
 		   me->current_logain, ret);
 
-	atomic_xchg(&me->training, TRAINING_OFF);
 	return ret;
 }
 
@@ -1442,22 +1419,43 @@ static ssize_t set_operational(struct device *dev, struct device_attribute *attr
 {
 	struct max927x *me = to_max927x_from_dev(dev);
 	unsigned int enable;
-	int ret;
+	const char *bufp = buf;
+	size_t remain = count;
+	int ret, try = 0;
 
-	ret = kstrtouint(buf, 10, &enable);
+	if (count > 4 && memcmp(buf, "try:", 4) == 0) {
+		bufp += 4;
+		remain -= 4;
+		try = 1;
+	}
+	ret = kstrtouint(bufp, 10, &enable);
 	if (ret < 0)
 		return ret;
-	atomic_xchg(&me->operational, (enable == 0 ? 0 : 1));
-	return (count);
+	if (try) {
+		if (!mutex_trylock(&me->lock))
+			return -EBUSY;
+	} else
+		mutex_lock(&me->lock);
+
+	if (me->curstate < STATE_READY) {
+		mutex_unlock(&me->lock);
+		return -EBUSY;
+	}
+	me->curstate = (enable ? STATE_OPERATIONAL : STATE_READY);
+	mutex_unlock(&me->lock);
+
+	return count;
 }
 
 static ssize_t show_operational(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct max927x *me = to_max927x_from_dev(dev);
-	int training = atomic_read(&me->training) & TRAINING_TYPEMASK;
+	int operstate;
 
-	return scnprintf(buf, PAGE_SIZE, "%d\n",
-			 (training == TRAINING_INITIAL ? 0 : atomic_read(&me->operational)));
+	mutex_lock(&me->lock);
+	operstate = (me->curstate == STATE_OPERATIONAL) ? 1 : 0;
+	mutex_unlock(&me->lock);
+	return scnprintf(buf, PAGE_SIZE, "%d\n", operstate);
 }
 static DEVICE_ATTR(operational, 0666, show_operational, set_operational);
 
@@ -1473,13 +1471,31 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 			const char *buf, size_t count)
 {
 	struct max927x *me = to_max927x_from_dev(dev);
-	int training = atomic_read(&me->training) & TRAINING_TYPEMASK;
 	int ret;
 
-	if (training != TRAINING_OFF)
-		return -EBUSY;
+	// buf is non-NULL when we're called directly via sysfs handlers,
+	// or NULL when we're called internally from do_training() and already
+	// hold the mutex.
+	if (buf != NULL) {
+		if (count >= 3 && memcmp(buf, "try", 3) == 0) {
+			if (!mutex_trylock(&me->lock))
+				return -EBUSY;
+		} else
+			mutex_lock(&me->lock);
+		if (me->training) {
+			mutex_unlock(&me->lock);
+			return -EBUSY;
+		}
+	}
 
 	dev_dbg(dev, "device reset requested\n");
+
+	mutex_unlock(&me->lock);
+	cancel_work_sync(&me->training_work);
+	mutex_lock(&me->lock);
+	me->curstate = STATE_UNINITIALIZED;
+	me->training = 0;
+	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
 
 	device_for_each_child(&me->adap.dev, NULL, unregister_remote_i2c_device);
 
@@ -1488,16 +1504,21 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 
 	ret = me->ctrl_link_init(me);
 
-	if (ret < 0)
+	if (ret < 0) {
+		mutex_unlock(&me->lock);
 		return ret;
+	}
 
-	if (run_link_training(me, 0, me->training_test_flags) < 0)
+	ret = run_link_training(me, 0);
+	if (ret < 0) {
+		mutex_unlock(&me->lock);
 		return ret;
-
-	atomic_xchg(&me->training, TRAINING_OFF_NOCOUNT);
+	}
 	me->adap.dev.of_node = me->i2c_node;
 	of_i2c_register_devices(&me->adap);
-	atomic_xchg(&me->training, TRAINING_OFF);
+	atomic_xchg(&me->i2c_xfer_flags, 0);
+	me->curstate = STATE_READY;
+	mutex_unlock(&me->lock);
 
 	return count;
 }
@@ -1507,16 +1528,22 @@ static ssize_t do_training(struct device *dev, struct device_attribute *attr,
 			   const char *buf, size_t count)
 {
 	struct max927x *me = to_max927x_from_dev(dev);
-	unsigned int flagval = 0;
 	int ret;
 
-	if (kstrtouint(buf, 10, &flagval) == 0)
-		flagval &= TRAINING_TEST_FLAGMASK;
-	ret = run_link_training(me, 1, flagval);
-	if (ret == -EALREADY)
-		return ret;
+	if (count >= 3 && memcmp(buf, "try", 3) == 0) {
+		if (!mutex_trylock(&me->lock))
+			return -EBUSY;
+	} else
+		mutex_lock(&me->lock);
+
+	if (me->curstate < STATE_READY || me->training) {
+		mutex_unlock(&me->lock);
+		return -EBUSY;
+	}
+	ret = run_link_training(me, 1);
 	if (ret < 0)
-		return do_reset(dev, attr, buf, count);
+		return do_reset(dev, attr, NULL, count);
+	mutex_unlock(&me->lock);
 	return count;
 }
 static DEVICE_ATTR(retrain_link, 0222, NULL, do_training);
@@ -1683,10 +1710,16 @@ static const struct v4l2_subdev_ops subdev_ops = {
 /*
  * Driver initialization and shutdown
  */
+
+/*
+ * max927x_finish_probe expects to be called with the lock mutex
+ * held, and releases it when complete.
+ */
 static void max927x_finish_probe(struct max927x *me)
 {
 	int ret;
 
+	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
 	/*
 	 * Now that the serializer/deserializer pair is fully up
 	 * and running, we can enable the GPIOs and I2C communication
@@ -1698,6 +1731,8 @@ static void max927x_finish_probe(struct max927x *me)
 		dev_err(me->dev, "GPIO setup failed\n");
 		power_down_remote(me);
 		i2c_del_adapter(&me->dummy_adapter);
+		me->curstate = STATE_UNINITIALIZED;
+		mutex_unlock(&me->lock);
 		return;
 	}
 
@@ -1708,18 +1743,21 @@ static void max927x_finish_probe(struct max927x *me)
 		if (gcret < 0)
 			dev_warn(me->dev, "error %d removing gpiochip\n", ret);
 		i2c_del_adapter(&me->dummy_adapter);
+		me->curstate = STATE_UNINITIALIZED;
+		mutex_unlock(&me->lock);
 		return;
 	}
 
 	ret = media_entity_init(&me->subdev.entity, 2, me->pads, 0);
-	if (ret < 0) {
+	if (ret < 0)
 		dev_err(me->dev, "could not initialize media entity: %d\n", ret);
-		return;
-	}
 	ret = sysfs_create_groups(&me->dev->kobj, attr_groups);
 	if (ret < 0)
 		dev_err(me->dev, "could not create sysfs groups\n");
 
+	me->curstate = STATE_READY;
+	atomic_xchg(&me->i2c_xfer_flags, 0);
+	mutex_unlock(&me->lock);
 	return;
 }
 
@@ -1729,16 +1767,21 @@ static void initial_training(struct work_struct *work)
 	unsigned int score[2];
 	int ret, logain;
 
+	mutex_lock(&me->lock);
+	me->training = 1;
+	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
+
 	for (logain = 0; logain < 2; logain++) {
 		dev_notice(me->dev,
 			   "%s: testing with REV_AMP=%u mVolts, LOGAIN=%d\n",
 			   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp), logain);
 		me->current_logain = logain;
-		atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
 		ret = ser_set_logain(me);
-		atomic_xchg(&me->training, TRAINING_INITIAL);
-		if (ret >= 0)
-			ret = link_test(me, 0, 1);
+		if (ret >= 0) {
+			mutex_unlock(&me->lock);
+			ret = link_test(me, 1);
+			mutex_lock(&me->lock);
+		}
 		if (ret < 0) {
 			dev_err(me->dev, "%s: link test failed, err=%d\n", __func__, ret);
 			if (ret == -ETIMEDOUT) {
@@ -1748,18 +1791,21 @@ static void initial_training(struct work_struct *work)
 		}
 		score[logain] = ret;
 	}
+
+	me->training = 0;
+
 	if (score[0] < 0 && score[1] < 0) {
 		max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
 		dev_notice(me->dev, "%s: resetting control link with REV_AMP at %u mVolts\n",
 			   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp));
-		atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
 		ret = me->ctrl_link_init(me);
 		if (ret < 0) {
 			dev_err(me->dev, "%s: could not establish control link, ret=%d\n",
 				__func__, ret);
 			power_down_remote(me);
 			i2c_del_adapter(&me->dummy_adapter);
-			atomic_xchg(&me->training, TRAINING_OFF);
+			me->curstate = STATE_UNINITIALIZED;
+			mutex_unlock(&me->lock);
 			return;
 		} else {
 			dev_notice(me->dev, "%s: leaving LOGAIN at %d after resetting control link\n",
@@ -1770,30 +1816,22 @@ static void initial_training(struct work_struct *work)
 			 * we add there.
 			 */
 			max927x_finish_probe(me);
-			atomic_xchg(&me->training, TRAINING_OFF);
 			return;
 		}
-		atomic_xchg(&me->training, TRAINING_INITIAL);
 	}
 	logain = (score[0] < score[1] ? 0 : 1);
 	dev_notice(me->dev, "%s: retry counts (%d, %d), selecting LOGAIN %d\n",
 		   __func__, score[0], score[1], logain);
 	me->current_logain = logain;
-	atomic_xchg(&me->training, (TRAINING_INITIAL|TRAINING_PAUSED));
 	ret = ser_set_logain(me);
 	if (ret < 0) {
 		dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
 		power_down_remote(me);
 		i2c_del_adapter(&me->dummy_adapter);
+		mutex_unlock(&me->lock);
 	} else
-		/*
-		 * Call finish_probe before switching to TRAINING_OFF, so we
-		 * don't end up recording spurious I2C retries during probe of the adapter
-		 * we add there.
-		 */
 		max927x_finish_probe(me);
 
-	atomic_xchg(&me->training, TRAINING_OFF);
 }
 
 static int max927x_probe(struct i2c_client *client,
@@ -1847,10 +1885,11 @@ static int max927x_probe(struct i2c_client *client,
 	atomic_set(&me->ser_gpios_enabled, 0);
 	atomic_set(&me->ser_gpios_set, 0);
 	atomic_set(&me->remote_power_enabled, 0);
-	atomic_set(&me->operational, 0);
 	atomic_set(&me->i2c_test_in_progress, 0);
-	atomic_set(&me->training, TRAINING_OFF|TRAINING_OFF_NOCOUNT);
+	atomic_set(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
+	mutex_init(&me->lock);
 	INIT_WORK(&me->training_work, initial_training);
+	me->curstate = STATE_UNINITIALIZED;
 
 	me->dev = dev;
 	me->local = client;
@@ -1953,8 +1992,8 @@ static int max927x_probe(struct i2c_client *client,
 			if (ret == 0) {
 				dev_notice(dev, "%s: skipping initial training due to REV_AMP reset\n",
 					   __func__);
+				mutex_lock(&me->lock);
 				max927x_finish_probe(me);
-				atomic_xchg(&me->training, TRAINING_OFF);
 				return ret;
 			}
 		}
@@ -1980,7 +2019,6 @@ static int max927x_probe(struct i2c_client *client,
 	if (ret < 0)
 		dev_err(me->dev, "could not create static sysfs group, err=%d\n", ret);
 
-	atomic_xchg(&me->training, TRAINING_INITIAL);
 	schedule_work(&me->training_work);
 	return 0;
 }
@@ -1988,12 +2026,17 @@ static int max927x_probe(struct i2c_client *client,
 static int max927x_remove(struct i2c_client *client)
 {
 	struct max927x *me = to_max927x_from_v4l2_subdev(i2c_get_clientdata(client));
-	int training = atomic_read(&me->training) & TRAINING_TYPEMASK;
-	int ret;
+	int i, ret;
 
-	if (training == TRAINING_INITIAL)
-		flush_work(&me->training_work);
-	else {
+	mutex_lock(&me->lock);
+	for (i = 0; me->training && i < 30; i++) {
+		mutex_unlock(&me->lock);
+		dev_notice(me->dev, "%s: waiting for training to complete before removing\n", __func__);
+		msleep(1000);
+		mutex_lock(&me->lock);
+	}
+	cancel_work_sync(&me->training_work);
+	if (me->curstate >= STATE_READY) {
 		stream_control(&me->subdev, 0);
 		sysfs_remove_groups(&me->dev->kobj, attr_groups);
 		v4l2_device_unregister_subdev(&me->subdev);
@@ -2005,6 +2048,7 @@ static int max927x_remove(struct i2c_client *client)
 	}
 	i2c_del_adapter(&me->dummy_adapter);
 	power_down_remote(me);
+	mutex_unlock(&me->lock);
 	sysfs_remove_group(&me->dev->kobj, &static_attr_group);
 
 	return 0;
