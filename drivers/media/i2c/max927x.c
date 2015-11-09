@@ -1483,6 +1483,18 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 	ret = me->ctrl_link_init(me);
 
 	if (ret < 0) {
+		if (me->local == me->des) {
+			max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
+			dev_notice(dev, "%s: setting REV_AMP to %u mVolts to retry link setup\n",
+				   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp));
+			ret = me->ctrl_link_init(me);
+			if (ret == 0) {
+				dev_notice(dev, "%s: skipping link training due to REV_AMP reset\n",
+					   __func__);
+				goto finish_reset;
+			}
+		}
+		dev_err(dev, "%s: link initialization failed\n", __func__);
 		mutex_unlock(&me->lock);
 		return ret;
 	}
@@ -1492,6 +1504,7 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 		mutex_unlock(&me->lock);
 		return ret;
 	}
+finish_reset:
 	me->adap.dev.of_node = me->i2c_node;
 	of_i2c_register_devices(&me->adap);
 	atomic_xchg(&me->i2c_xfer_flags, 0);
