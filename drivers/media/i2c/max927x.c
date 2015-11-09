@@ -123,14 +123,8 @@ struct max927x_property {
 #define I2C_RETRIES_MAX 15
 #define I2C_RETRIES_DEFAULT 10
 static unsigned long i2c_retries = I2C_RETRIES_DEFAULT;
-
-/*
- * I2C delay value.  Default value was worked out
- * after many trials, so be careful about making
- * any adjustments.
- */
-#define I2C_UDELAY_DEFAULT 6000
-static unsigned long i2c_udelay = I2C_UDELAY_DEFAULT;
+module_param(i2c_retries, ulong, 0644);
+MODULE_PARM_DESC(i2c_retries, "Default number of times to retry I2C xfers");
 
 /*
  * Most register updates work on the first try, except
@@ -146,17 +140,6 @@ MODULE_PARM_DESC(training_cycles, "Number of read cycles to perform during link 
 static int training_threshold = 5;
 module_param(training_threshold, int, 0644);
 MODULE_PARM_DESC(training_threshold, "Error/retry threshold during link training, in percent");
-
-/*
- * Extra delay to add to I2C accesses to certain
- * addresses, based on the high-order nibble of
- * the address.
- * XXX This should be more configurable.
- */
-static unsigned long extra_udelay[16] = { 0, 0, 0, 0,
-					  0, 0, 2000, 0,
-					  0, 0, 0, 0,
-					  0, 0, 0, 0 };
 
 /*
  * Driver-private data structures
@@ -422,17 +405,12 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 			   struct i2c_msg msgs[], int num)
 {
 	struct max927x *me = adap->algo_data;
-	unsigned long delay, extra = extra_udelay[msgs[0].addr >> 4];
 	unsigned int xferflags  = atomic_read(&me->i2c_xfer_flags);
 	unsigned ntries;
-	int ret;
+	int ret = 0;
 
 
 	for (ntries = 0; ntries < i2c_retries; ntries += 1) {
-		for (delay = i2c_udelay + extra; delay > 1000; delay -= 1000)
-			udelay(1000);
-		if (delay > 0)
-			udelay(delay);
 		ret = me->parent->algo->master_xfer(me->parent, msgs, num);
 		if ((xferflags & I2C_XFER_NORETRIES) != 0)
 			return ret;
