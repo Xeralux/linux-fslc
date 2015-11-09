@@ -742,15 +742,20 @@ static int des_control_init(struct max927x *me)
 		dev_dbg(me->dev, "setting up control link on serializer (attempt #%d)\n", i);
 		ret = i2c_reg_write(me->ser, 0x04, 0x47);
 		if (ret == 0) {
+			int j;
 			u8 val = 0;
-			msleep(10);
-			ret = i2c_reg_read(me->ser, 0x04, &val);
-			if (ret == 0) {
-				if (val == 0x47)
-					break;
-				else
-					ret = -EIO;
+			for (j = 1; j <= REG_RETRIES; j++) {
+				msleep(10);
+				ret = i2c_reg_read(me->ser, 0x04, &val);
+				if (ret == 0) {
+					if (val == 0x47)
+						break;
+					else
+						ret = -EIO;
+				}
 			}
+			if (ret == 0)
+				break;
 		}
 	}
 	if (ret < 0) {
@@ -1835,7 +1840,7 @@ static int max927x_probe(struct i2c_client *client,
 	struct max927x *me;
 	u32 remote_reg;
 	u8 chipid = 0;
-	int i, ret;
+	int i, ret, skip_training = 0;
 
 	ret = device_reset(dev);
 	if (ret == -ENODEV)
@@ -1980,15 +1985,13 @@ static int max927x_probe(struct i2c_client *client,
 			dev_notice(dev, "%s: setting REV_AMP to %u mVolts to retry link setup\n",
 				   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp));
 			ret = me->ctrl_link_init(me);
-			if (ret == 0) {
-				dev_notice(dev, "%s: skipping initial training due to REV_AMP reset\n",
-					   __func__);
-				mutex_lock(&me->lock);
-				max927x_finish_probe(me);
-				return ret;
-			}
+			if (ret == 0)
+				skip_training = 1;
 		}
-		dev_err(dev, "control link initialization/training failed\n");
+	}
+
+	if (ret < 0) {
+		dev_err(dev, "control link initialization/training failed, ret=%d\n", ret);
 		i2c_del_adapter(&me->dummy_adapter);
 		return -ENODEV;
 	}
@@ -2010,7 +2013,12 @@ static int max927x_probe(struct i2c_client *client,
 	if (ret < 0)
 		dev_err(me->dev, "could not create static sysfs group, err=%d\n", ret);
 
-	schedule_work(&me->training_work);
+	if (skip_training) {
+		dev_notice(dev, "%s: skipping initial training due to REV_AMP reset\n", __func__);
+		mutex_lock(&me->lock);
+		max927x_finish_probe(me);
+	} else
+		schedule_work(&me->training_work);
 	return 0;
 }
 
