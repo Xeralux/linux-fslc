@@ -1442,11 +1442,15 @@ static ssize_t show_operational(struct device *dev, struct device_attribute *att
 }
 static DEVICE_ATTR(operational, 0666, show_operational, set_operational);
 
-static int unregister_remote_i2c_device(struct device *dev, void *dummy)
+static int unregister_remote_i2c_device(struct device *dev, void *meptr)
 {
 	struct i2c_client *client = i2c_verify_client(dev);
-	if (client)
+	struct max927x *me = meptr;
+
+	if (client && client->adapter == &me->adap && strcmp(client->name, "dummy") != 0) {
+		dev_notice(me->dev, "unregistering I2C client %s\n", client->name);
 		i2c_unregister_device(client);
+	}
 	return 0;
 }
 
@@ -1480,7 +1484,7 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 	me->training = 0;
 	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
 
-	device_for_each_child(&me->adap.dev, NULL, unregister_remote_i2c_device);
+	device_for_each_child(&me->adap.dev, me, unregister_remote_i2c_device);
 
 	max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
 	me->current_logain = 0;
