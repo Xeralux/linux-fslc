@@ -1067,7 +1067,9 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 		}
 		break;
 	default:
-		pr_err("ERROR: v4l2 capture: unsupported ioctrl!\n");
+		pr_debug("%s: unsupported control id 0x%x!\n", __func__, c->id);
+		status = -EINVAL;
+		break;
 	}
 
 	return status;
@@ -1384,6 +1386,8 @@ static int mxc_v4l2_s_param(cam_data *cam, struct v4l2_streamparm *parm)
 	pr_debug("   g_fmt_cap returns widthxheight of input as %d x %d\n",
 			cam_fmt.fmt.pix.width, cam_fmt.fmt.pix.height);
 
+	cam->v2f = cam_fmt;
+
 	csi_param.data_fmt = cam_fmt.fmt.pix.pixelformat;
 
 	cam->crop_bounds.top = cam->crop_bounds.left = 0;
@@ -1683,6 +1687,8 @@ static int mxc_v4l_open(struct file *file)
 		cam->crop_current.top = cam->crop_current.left = 0;
 		cam->crop_current.width = cam_fmt.fmt.pix.width;
 		cam->crop_current.height = cam_fmt.fmt.pix.height;
+
+		cam->v2f = cam_fmt;
 
 		pr_debug("End of %s: v2f pix widthxheight %d x %d\n",
 			__func__,
@@ -2247,7 +2253,10 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	case VIDIOC_ENUMSTD: {
 		struct v4l2_standard *e = arg;
 		pr_debug("   case VIDIOC_ENUMSTD\n");
-		*e = cam->standard;
+		if (cam->device_type == 1)
+			*e = cam->standard;
+		else
+			retval = -ENODATA;
 		break;
 	}
 
@@ -2255,7 +2264,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 		v4l2_std_id *e = arg;
 		pr_debug("   case VIDIOC_G_STD\n");
 		if (cam->sensor)
-			retval = mxc_v4l2_g_std(cam, e);
+			retval = (cam->device_type == 1 ? mxc_v4l2_g_std(cam, e) : -ENODATA);
 		else {
 			pr_err("ERROR: v4l2 capture: slave not found!\n");
 			retval = -ENODEV;
@@ -2266,7 +2275,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	case VIDIOC_S_STD: {
 		v4l2_std_id *e = arg;
 		pr_debug("   case VIDIOC_S_STD\n");
-		retval = mxc_v4l2_s_std(cam, *e);
+		retval = (cam->device_type == 1 ? mxc_v4l2_s_std(cam, *e) : -ENODATA);
 
 		break;
 	}
@@ -2414,6 +2423,9 @@ static long mxc_v4l_do_ioctl(struct file *file,
 
 	if (ioctlnr != VIDIOC_DQBUF)
 		up(&cam->busy_lock);
+
+	pr_debug("   exiting ioctl with retval=%d\n", retval);
+
 	return retval;
 }
 
@@ -3062,6 +3074,8 @@ static int mxc_v4l2_master_attach(struct v4l2_int_device *slave)
 	cam->crop_current.top = cam->crop_current.left = 0;
 	cam->crop_current.width = cam_fmt.fmt.pix.width;
 	cam->crop_current.height = cam_fmt.fmt.pix.height;
+
+	cam->v2f = cam_fmt;
 
 	pr_debug("End of %s: v2f pix widthxheight %d x %d\n",
 		 __func__,
