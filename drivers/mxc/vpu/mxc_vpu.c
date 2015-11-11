@@ -491,8 +491,21 @@ static long vpu_ioctl(struct file *filp, u_int cmd,
 			if (!wait_event_interruptible_timeout
 			    (vpu_queue, irq_status != 0,
 			     msecs_to_jiffies(timeout))) {
+			        /*
+				 * Trying to gather more information
+				 * about VPU status to debug VPU blocking
+				 * timeout issue.  Biyong (11/10/2015)
+				 */
 				dev_warn(vpu_dev, "VPU blocking: timeout.\n");
-				ret = -ETIME;
+				if (READ_REG(BIT_BUSY_FLAG)) {
+				    dev_warn(vpu_dev, "VPU is busy.\n");
+				}
+				if (codec_done) {
+				    dev_warn(vpu_dev, "VPU codec_done.\n");
+				    codec_done = 0;
+				    break;
+				} else
+				    ret = -ETIME;
 			} else if (signal_pending(current)) {
 				dev_warn(vpu_dev, "VPU interrupt received.\n");
 				ret = -ERESTARTSYS;
