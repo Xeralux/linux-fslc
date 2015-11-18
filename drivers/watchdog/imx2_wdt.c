@@ -206,7 +206,7 @@ static int imx2_wdt_close(struct inode *inode, struct file *file)
 	if (test_bit(IMX2_WDT_EXPECT_CLOSE, &imx2_wdt.status) && !nowayout)
 		imx2_wdt_stop();
 	else if (!timer_pending(&imx2_wdt.timer)) {
-		dev_crit(imx2_wdt_miscdev.parent,
+		dev_info(imx2_wdt_miscdev.parent,
 			"Unexpected close: Expect reboot!\n");
 		imx2_wdt_ping();
 	}
@@ -375,7 +375,7 @@ static int __exit imx2_wdt_remove(struct platform_device *pdev)
 	if (test_bit(IMX2_WDT_STATUS_STARTED, &imx2_wdt.status)) {
 		del_timer_sync(&imx2_wdt.timer);
 
-		dev_crit(imx2_wdt_miscdev.parent,
+		dev_info(imx2_wdt_miscdev.parent,
 			"Device removed: Expect reboot!\n");
 	}
 
@@ -392,7 +392,7 @@ static void imx2_wdt_shutdown(struct platform_device *pdev)
 		imx2_wdt_set_timeout(IMX2_WDT_MAX_TIME);
 		imx2_wdt_ping();
 
-		dev_crit(imx2_wdt_miscdev.parent,
+		dev_info(imx2_wdt_miscdev.parent,
 			"Device shutdown: Expect reboot!\n");
 	}
 }
