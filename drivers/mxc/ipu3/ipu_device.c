@@ -1476,6 +1476,8 @@ static void task_mem_free(struct kref *ref)
 {
 	struct ipu_task_entry *tsk =
 			container_of(ref, struct ipu_task_entry, refcount);
+	if (tsk->parent)
+		kref_put(tsk->parent, task_mem_free);
 	kfree(tsk);
 }
 
@@ -1489,13 +1491,18 @@ int create_split_child_task(struct ipu_split_task *sp_task)
 		return PTR_ERR(tsk);
 
 	sp_task->child_task = tsk;
+	kref_get(&tsk->refcount);
 	tsk->task_no = sp_task->task_no;
 
 	ret = prepare_task(tsk);
-	if (ret < 0)
+	if (ret < 0) {
+		kref_put(&tsk->refcount, task_mem_free);
+		sp_task->child_task = NULL;
 		goto err;
+	}
 
 	tsk->parent = sp_task->parent_task;
+	kref_get(&tsk->parent->refcount);
 	tsk->set.sp_setting = sp_task->parent_task->set.sp_setting;
 
 	list_add(&tsk->node, &tsk->parent->split_list);
@@ -1794,7 +1801,8 @@ err_exit:
 		tsk = sp_task[j].child_task;
 		if (!tsk)
 			continue;
-		kfree(tsk);
+		kref_put(&tsk->refcount, task_mem_free);
+		sp_task[j].child_task = NULL;
 	}
 	t->state = STATE_ERR;
 	return ret;
@@ -3392,6 +3400,7 @@ int ipu_queue_task(struct ipu_task *task)
 	if (IS_ERR(tsk))
 		return PTR_ERR(tsk);
 
+	kref_get(&tsk->refcount);
 	CHECK_PERF(&tsk->ts_queue);
 	ret = prepare_task(tsk);
 	if (ret < 0)
