@@ -290,7 +290,6 @@ struct ipu_task_entry {
 	wait_queue_head_t split_waitq;
 
 	struct list_head node;
-	struct list_head split_list;
 	struct ipu_soc *ipu;
 	struct device *dev;
 	struct task_set set;
@@ -371,6 +370,10 @@ module_param(debug, int, 0600);
 static struct timespec ts_frame_max;
 static u32 ts_frame_avg;
 static atomic_t frame_cnt;
+#endif
+#ifdef DBG_IPU_TASKMEM
+static atomic_t task_mem_allocs = ATOMIC_INIT(0);
+static atomic_t task_mem_frees  = ATOMIC_INIT(0);
 #endif
 
 static bool deinterlace_3_field(struct ipu_task_entry *t)
@@ -1469,6 +1472,9 @@ static struct ipu_task_entry *create_task_entry(struct ipu_task *task)
 	else
 		tsk->timeout = DEF_TIMEOUT_MS;
 
+#ifdef DBG_IPU_TASKMEM
+	atomic_inc(&task_mem_allocs);
+#endif
 	return tsk;
 }
 
@@ -1476,6 +1482,12 @@ static void task_mem_free(struct kref *ref)
 {
 	struct ipu_task_entry *tsk =
 			container_of(ref, struct ipu_task_entry, refcount);
+	if (tsk->parent)
+		kref_put(&tsk->parent->refcount, task_mem_free);
+#ifdef DBG_IPU_TASKMEM
+	memset(tsk, 0xef, sizeof(*tsk));
+	atomic_inc(&task_mem_frees);
+#endif
 	kfree(tsk);
 }
 
@@ -1488,17 +1500,19 @@ int create_split_child_task(struct ipu_split_task *sp_task)
 	if (IS_ERR(tsk))
 		return PTR_ERR(tsk);
 
-	sp_task->child_task = tsk;
 	tsk->task_no = sp_task->task_no;
 
 	ret = prepare_task(tsk);
-	if (ret < 0)
+	if (ret < 0) {
+		kref_put(&tsk->refcount, task_mem_free);
 		goto err;
+	}
 
+	sp_task->child_task = tsk;
 	tsk->parent = sp_task->parent_task;
+	kref_get(&tsk->parent->refcount);
 	tsk->set.sp_setting = sp_task->parent_task->set.sp_setting;
 
-	list_add(&tsk->node, &tsk->parent->split_list);
 	dev_dbg(tsk->dev, "[0x%p] sp_tsk Q list,no-0x%x\n", tsk, tsk->task_no);
 	tsk->state = STATE_QUEUE;
 	CHECK_PERF(&tsk->ts_queue);
@@ -1732,7 +1746,6 @@ static int queue_split_task(struct ipu_task_entry *t,
 	mutex_init(vdic_lock);
 	lockdep_set_class(vdic_lock, &vdic_lock_key);
 	init_waitqueue_head(&t->split_waitq);
-	INIT_LIST_HEAD(&t->split_list);
 	for (j = 0; j < size; j++) {
 		memset(&sp_task[j], 0, sizeof(*sp_task));
 		sp_task[j].parent_task = t;
@@ -1794,7 +1807,8 @@ err_exit:
 		tsk = sp_task[j].child_task;
 		if (!tsk)
 			continue;
-		kfree(tsk);
+		kref_put(&tsk->refcount, task_mem_free);
+		sp_task[j].child_task = NULL;
 	}
 	t->state = STATE_ERR;
 	return ret;
@@ -3170,15 +3184,14 @@ out:
 				 tsk, tsk->task_no, tsk->task_id);
 		}
 		spin_unlock_irqrestore(&ipu_task_list_lock, flags);
-		if (!tsk->ipu)
-			continue;
-		if (tsk->state != STATE_OK) {
+		if (tsk->ipu && tsk->state != STATE_OK) {
 			dev_err(tsk->dev,
 				"ERR:[0x%p] no-0x%x,id:%d, sp_tsk state: %s\n",
 					tsk, tsk->task_no, tsk->task_id,
 					state_msg[tsk->state].msg);
 		}
 		kref_put(&tsk->refcount, task_mem_free);
+		sp_task[j].child_task = 0;
 	}
 
 	kfree(parent->vditmpbuf[0]);
@@ -3207,7 +3220,6 @@ static inline int find_task(struct ipu_task_entry **t, int thread_id)
 			list_del(&tsk->node);
 			tsk->task_in_list = 0;
 			*t = tsk;
-			kref_get(&tsk->refcount);
 			dev_dbg(tsk->dev,
 			"thread_id:%d,[0x%p] task_no:0x%x,mode:0x%x list_del\n",
 			thread_id, tsk, tsk->task_no, tsk->set.mode);
@@ -3279,28 +3291,22 @@ static int ipu_task_thread(void *argv)
 			if (ret < 0) {
 				split_fail = 1;
 			} else {
-				struct list_head *pos;
+				int childidx;
 
 				spin_lock_irqsave(&ipu_task_list_lock, flags);
 
-				sp_tsk0 = list_first_entry(&tsk->split_list,
-						struct ipu_task_entry, node);
-				list_del(&sp_tsk0->node);
-
-				list_for_each(pos, &tsk->split_list) {
+				sp_tsk0 = sp_task[0].child_task;
+				for (childidx = 1; childidx < size; childidx++) {
 					struct ipu_task_entry *tmp;
-
-					tmp = list_entry(pos,
-						struct ipu_task_entry, node);
+					tmp = sp_task[childidx].child_task;
 					tmp->task_in_list = 1;
+					kref_get(&tmp->refcount);
+					list_add_tail(&tmp->node, &ipu_task_list);
 					dev_dbg(tmp->dev,
 						"[0x%p] no-0x%x,id:%d sp_tsk "
 						"add_to_list.\n", tmp,
 						tmp->task_no, tmp->task_id);
 				}
-				/* add to global list */
-				list_splice(&tsk->split_list, &ipu_task_list);
-
 				spin_unlock_irqrestore(&ipu_task_list_lock,
 									flags);
 				/* let the parent thread do the first sp_task */
@@ -3410,6 +3416,7 @@ int ipu_queue_task(struct ipu_task *task)
 	init_waitqueue_head(&tsk->task_waitq);
 
 	spin_lock_irqsave(&ipu_task_list_lock, flags);
+	kref_get(&tsk->refcount);
 	list_add_tail(&tsk->node, &ipu_task_list);
 	tsk->task_in_list = 1;
 	dev_dbg(tsk->dev, "[0x%p,no-0x%x] list_add_tail\n", tsk, tsk->task_no);
@@ -3439,6 +3446,7 @@ int ipu_queue_task(struct ipu_task *task)
 		tsk->task_in_list = 0;
 		dev_dbg(tsk->dev, "[0x%p] no:0x%x list_del\n",
 				tsk, tsk->task_no);
+		kref_put(&tsk->refcount, task_mem_free);
 	}
 	spin_unlock_irqrestore(&ipu_task_list_lock, flags);
 
@@ -3650,6 +3658,22 @@ static struct file_operations mxc_ipu_fops = {
 	.unlocked_ioctl = mxc_ipu_ioctl,
 };
 
+#ifdef DBG_IPU_TASKMEM
+static ssize_t show_task_mem_stats(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	return scnprintf(buf, PAGE_SIZE, "ALLOCS=%u\nFREES= %u\n",
+			 atomic_read(&task_mem_allocs), atomic_read(&task_mem_frees));
+}
+static DEVICE_ATTR(task_mem_stats, 0444, show_task_mem_stats, NULL);
+static struct attribute *attrs[] = {
+	&dev_attr_task_mem_stats.attr,
+	NULL,
+};
+static const struct attribute_group attr_group = {
+	.attrs = attrs,
+};
+#endif
+
 int register_ipu_device(struct ipu_soc *ipu, int id)
 {
 	int ret = 0;
@@ -3707,6 +3731,10 @@ int register_ipu_device(struct ipu_soc *ipu, int id)
 		goto kthread1_fail;
 	}
 
+#ifdef DBG_IPU_TASKMEM
+	if (sysfs_create_group(&ipu->dev->kobj, &attr_group) < 0)
+		dev_err(ipu->dev, "could not register sysfs attrs\n");
+#endif
 
 	return ret;
 
