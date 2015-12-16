@@ -137,9 +137,13 @@ static int training_cycles = 1000;
 module_param(training_cycles, int, 0644);
 MODULE_PARM_DESC(training_cycles, "Number of read cycles to perform during link training");
 
-static int training_threshold = 5;
+static int training_threshold = 3;
 module_param(training_threshold, int, 0644);
 MODULE_PARM_DESC(training_threshold, "Error/retry threshold during link training, in percent");
+
+static int logain_score_bias = 20;
+module_param(logain_score_bias, int, 0644);
+MODULE_PARM_DESC(login_score_bias, "Smallest difference in retry scores for LOGAIN 0 to be chosen");
 
 /*
  * Driver-private data structures
@@ -1268,9 +1272,9 @@ static int run_link_training(struct max927x *me, int live)
 	}
 
 	if (counter >= 2) {
-		me->current_logain = (score[0] < score[1]) ? 0 : 1;
-		dev_notice(me->dev, "choosing lower of (%d, %d) to set LOGAIN=%d\n",
-			   score[0], score[1], me->current_logain);
+		me->current_logain = (logain_score_bias + score[0] < score[1]) ? 0 : 1;
+		dev_notice(me->dev, "choosing lower of (%d, %d) (bias %d) to set LOGAIN=%d\n",
+			   score[0], score[1], logain_score_bias, me->current_logain);
 		ret = ser_set_logain(me);
 		if (ret < 0)
 			dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
@@ -1824,9 +1828,9 @@ static void initial_training(struct work_struct *work)
 			return;
 		}
 	}
-	logain = (score[0] < score[1] ? 0 : 1);
-	dev_notice(me->dev, "%s: retry counts (%d, %d), selecting LOGAIN %d\n",
-		   __func__, score[0], score[1], logain);
+	logain = (logain_score_bias + score[0] < score[1] ? 0 : 1);
+	dev_notice(me->dev, "%s: retry counts (%d, %d) (bias %d), selecting LOGAIN %d\n",
+		   __func__, score[0], score[1], logain_score_bias, logain);
 	me->current_logain = logain;
 	ret = ser_set_logain(me);
 	if (ret < 0) {
