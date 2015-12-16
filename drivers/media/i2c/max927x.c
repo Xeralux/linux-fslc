@@ -1258,7 +1258,7 @@ static int run_link_training(struct max927x *me, int live)
 			me->training = 0;
 			return ret;
 		}
-		if (ret < threshold)
+		if (live && ret < threshold)
 			break;
 		score[me->current_logain] = ret;
 		me->current_logain = 1 - me->current_logain;
