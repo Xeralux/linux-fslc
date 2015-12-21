@@ -420,6 +420,7 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 			return ret;
 		if (ret >= 0)
 			break;
+		msleep(10);
 	}
 
 	if ((xferflags & I2C_XFER_NOCOUNT) == 0) {
