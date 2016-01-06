@@ -31,7 +31,7 @@
 #include <media/v4l2-device.h>
 #include "v4l2-int-device.h"
 #include <media/v4l2-subdev.h>
-#include <media/v4l2-of.h>
+#include <linux/of_graph.h>
 #include <media/media-device.h>
 #include <media/media-entity.h>
 #include <linux/i2c.h>
@@ -634,13 +634,13 @@ static int find_remotes(struct device_node *node,
 	struct device_node *cur_endpoint, *next_endpoint, *remote_node;
 	int i, remote_count = 0;
 
-	for (cur_endpoint = v4l2_of_get_next_endpoint(node, NULL);
+	for (cur_endpoint = of_graph_get_next_endpoint(node, NULL);
 	     cur_endpoint != NULL; cur_endpoint = next_endpoint) {
-		remote_node = v4l2_of_get_remote_port_parent(cur_endpoint);
+		remote_node = of_graph_get_remote_port_parent(cur_endpoint);
 		for (i = 0; i < visitcount && remote_node != visited[i]; i++);
 		if (i < visitcount) {
 			of_node_put(remote_node);
-			next_endpoint = v4l2_of_get_next_endpoint(node, cur_endpoint);
+			next_endpoint = of_graph_get_next_endpoint(node, cur_endpoint);
 			of_node_put(cur_endpoint);
 			continue;
 		}
@@ -656,7 +656,7 @@ static int find_remotes(struct device_node *node,
 		} else
 			of_node_put(remote_node);
 		remote_count += 1;
-		next_endpoint = v4l2_of_get_next_endpoint(node, cur_endpoint);
+		next_endpoint = of_graph_get_next_endpoint(node, cur_endpoint);
 		of_node_put(cur_endpoint);
 	}
 
