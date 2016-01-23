@@ -1566,6 +1566,7 @@ static int mxc_v4l_dqueue(cam_data *cam, struct v4l2_buffer *buf)
 	buf->m = cam->frame[frame->index].buffer.m;
 	buf->timestamp = cam->frame[frame->index].buffer.timestamp;
 	buf->field = cam->frame[frame->index].buffer.field;
+	buf->length = cam->frame[frame->index].buffer.length;
 	spin_unlock_irqrestore(&cam->dqueue_int_lock, lock_flags);
 
 	up(&cam->busy_lock);
@@ -1980,7 +1981,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 		}
 
 		mxc_streamoff(cam);
-		if (req->memory & V4L2_MEMORY_MMAP) {
+		if (req->memory == V4L2_MEMORY_MMAP) {
 			mxc_free_frame_buf(cam);
 			retval = mxc_allocate_frame_buf(cam, req->count);
 		}
@@ -1993,6 +1994,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	case VIDIOC_QUERYBUF: {
 		struct v4l2_buffer *buf = arg;
 		int index = buf->index;
+		u32 memory = buf->memory;
 		pr_debug("   case VIDIOC_QUERYBUF\n");
 
 		if (buf->type != V4L2_BUF_TYPE_VIDEO_CAPTURE) {
@@ -2003,18 +2005,17 @@ static long mxc_v4l_do_ioctl(struct file *file,
 			break;
 		}
 
-		if (buf->memory & V4L2_MEMORY_MMAP) {
+		if (memory == V4L2_MEMORY_MMAP) {
 			memset(buf, 0, sizeof(buf));
 			buf->index = index;
+			buf->memory = memory;
 		}
 
 		down(&cam->param_lock);
-		if (buf->memory & V4L2_MEMORY_USERPTR) {
+		if (memory == V4L2_MEMORY_USERPTR) {
 			mxc_v4l2_release_bufs(cam);
 			retval = mxc_v4l2_prepare_bufs(cam, buf);
-		}
-
-		if (buf->memory & V4L2_MEMORY_MMAP)
+		} else if (memory == V4L2_MEMORY_MMAP)
 			retval = mxc_v4l2_buffer_status(cam, buf);
 		up(&cam->param_lock);
 		break;
