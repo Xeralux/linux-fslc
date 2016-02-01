@@ -179,20 +179,21 @@ typedef struct __attribute__((__packed__)) cam_param {
 struct ap0100_m034_data {
 	struct i2c_client *client;
 	struct device *dev;
-    int ap0100_in_wdr_mode;
-    unsigned char mode_init_buf[INIT_BUF_MAX];
-    int mode_init_buf_count; // how many modes to do in sequence
-    enum SENSOR_SYSFS_STATUS cur_sss_status;
-    int last_sss_set_errcode;
-    int sensor_read_len;
-    bool already_reset;
-    u8  read_buf[256];
+	int ap0100_in_wdr_mode;
+	unsigned char mode_init_buf[INIT_BUF_MAX];
+	int mode_init_buf_count; // how many modes to do in sequence
+	enum SENSOR_SYSFS_STATUS cur_sss_status;
+	int last_sss_set_errcode;
+	int sensor_read_len;
+	bool already_reset;
+	u8  read_buf[256];
 	bool use_test_input;
 	enum ap0100_m034_frame_mode mode;
 	struct v4l2_fract pending_fi;
 	struct v4l2_subdev	subdev;
 	struct media_pad pad;
 	bool operational;
+	bool streaming;
 	unsigned error_count;
 	struct mutex lock;
 	bool unavailable;
@@ -2226,6 +2227,16 @@ out:
 	return ret;
 }
 
+static int ap0100_m034_stream_control(struct v4l2_subdev *sd, int enable)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_v4l2(sd);
+
+	mutex_lock(&data->lock);
+	data->streaming = (enable ? true : false);
+	mutex_unlock(&data->lock);
+	return 0;
+}
+
 #define REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_SHIFT 5
 #define REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_MASK (1 << REG_MCU_BOOT_OPT_SPI_CFG_DISABLE_SHIFT)
 
@@ -2410,6 +2421,7 @@ static struct v4l2_subdev_video_ops ap0100_m034_subdev_video_ops = {
 	.s_routing = ap0100_m034_s_routing,
 	.try_mbus_fmt = ap0100_m034_try_mbus_fmt,
 	.s_mbus_fmt = ap0100_m034_s_mbus_fmt,
+	.s_stream = ap0100_m034_stream_control,
 };
 
 static struct v4l2_subdev_ops ap0100_m034_subdev_ops = {
