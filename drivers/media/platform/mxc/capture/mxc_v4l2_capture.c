@@ -1496,13 +1496,20 @@ static int mxc_v4l_dqueue(cam_data *cam, struct v4l2_buffer *buf)
 	int retval = 0;
 	struct mxc_v4l_frame *frame;
 	unsigned long lock_flags;
+	int trycount;
 
 	dev_dbg(cam->dev, "in %s\n", __func__);
 
-	if (!wait_event_interruptible_timeout(cam->enc_queue,
-					      cam->enc_counter != 0,
-					      10 * HZ)) {
-		dev_err(cam->dev, "%s: timeout, enc_counter %x\n",
+	for (trycount = 1; trycount <= 3; trycount += 1) {
+		if (wait_event_interruptible_timeout(cam->enc_queue,
+						     cam->enc_counter != 0,
+						     15 * HZ))
+			break;
+		dev_info(cam->dev, "%s: timeout (try %d)\n",
+			 __func__, trycount);
+	}
+	if (trycount > 3) {
+		dev_err(cam->dev, "%s: too many timeouts, enc_counter %x\n",
 			__func__, cam->enc_counter);
 		return -ETIME;
 	} else if (signal_pending(current)) {
