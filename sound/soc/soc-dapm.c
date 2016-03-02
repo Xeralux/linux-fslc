@@ -3663,22 +3663,28 @@ void snd_soc_dapm_connect_dai_link_widgets(struct snd_soc_card *card)
 
 		/* connect BE DAI playback if widgets are valid */
 		if (codec_dai->playback_widget && cpu_dai->playback_widget) {
+			char *cpu_codec_name, *codec_platform_name;
 			r.source = cpu_dai->playback_widget->name;
 			r.sink = codec_dai->playback_widget->name;
+			cpu_codec_name = (cpu_dai->codec ? cpu_dai->codec->name : "no cpu_dai codec");
+			codec_platform_name = (codec_dai->platform ? codec_dai->platform->name : "no codec_dai platform");
 			dev_dbg(rtd->dev, "connected DAI link %s:%s -> %s:%s\n",
-				cpu_dai->codec->name, r.source,
-				codec_dai->platform->name, r.sink);
+				cpu_codec_name, r.source,
+				codec_platform_name, r.sink);
 
 			snd_soc_dapm_add_route(&card->dapm, &r, true);
 		}
 
 		/* connect BE DAI capture if widgets are valid */
 		if (codec_dai->capture_widget && cpu_dai->capture_widget) {
+			char *codec_codec_name, *cpu_platform_name;
 			r.source = codec_dai->capture_widget->name;
 			r.sink = cpu_dai->capture_widget->name;
+			codec_codec_name = (codec_dai->codec ? codec_dai->codec->name : "no codec_dai codec");
+			cpu_platform_name = (cpu_dai->platform ? cpu_dai->platform->name : "no cpu_dai platform");
 			dev_dbg(rtd->dev, "connected DAI link %s:%s -> %s:%s\n",
-				codec_dai->codec->name, r.source,
-				cpu_dai->platform->name, r.sink);
+				codec_codec_name, r.source,
+				cpu_platform_name, r.sink);
 
 			snd_soc_dapm_add_route(&card->dapm, &r, true);
 		}
