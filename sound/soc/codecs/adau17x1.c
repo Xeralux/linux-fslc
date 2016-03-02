@@ -154,9 +154,8 @@ static const char * const adau17x1_dac_mux_text[] = {
 int adau17x1_dsp_mux_enum_put(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_dapm_widget_list *wlist = snd_kcontrol_chip(kcontrol);
-	struct snd_soc_dapm_widget *w = wlist->widgets[0];
-	struct adau *adau = snd_soc_codec_get_drvdata(w->codec);
+	struct snd_soc_codec *codec = snd_soc_dapm_kcontrol_codec(kcontrol);
+	struct adau *adau = snd_soc_codec_get_drvdata(codec);
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	unsigned int val, change;
 	struct snd_soc_dapm_update update;
@@ -183,14 +182,14 @@ int adau17x1_dsp_mux_enum_put(struct snd_kcontrol *kcontrol,
 		break;
 	}
 
-	change = snd_soc_test_bits(w->codec, e->reg, 0xff, val);
+	change = snd_soc_test_bits(codec, e->reg, 0xff, val);
 	if (change) {
 		update.kcontrol = kcontrol;
 		update.reg = e->reg;
 		update.mask = 0xff;
 		update.val = val;
 
-		snd_soc_dapm_mux_update_power(w->dapm, kcontrol,
+		snd_soc_dapm_mux_update_power(&codec->dapm, kcontrol,
 			ucontrol->value.enumerated.item[0], e, &update);
 
 	}
@@ -202,12 +201,12 @@ EXPORT_SYMBOL_GPL(adau17x1_dsp_mux_enum_put);
 int adau17x1_dsp_mux_enum_get(struct snd_kcontrol *kcontrol,
 	struct snd_ctl_elem_value *ucontrol)
 {
-	struct snd_soc_dapm_widget_list *wlist = snd_kcontrol_chip(kcontrol);
-	struct snd_soc_dapm_widget *widget = wlist->widgets[0];
+	struct snd_soc_codec *codec = snd_soc_dapm_kcontrol_codec(kcontrol);
+	struct adau *adau = snd_soc_codec_get_drvdata(codec);
 	struct soc_enum *e = (struct soc_enum *)kcontrol->private_value;
 	unsigned int val;
 
-	val = snd_soc_read(widget->codec, e->reg);
+	val = snd_soc_read(codec, e->reg);
 	ucontrol->value.enumerated.item[0] = val == 0;
 
 	return 0;
