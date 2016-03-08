@@ -1617,7 +1617,7 @@ static int _ap0100_m034_sensor_mode_init(struct ap0100_m034_data* data)
 			return -EINVAL;
 		}
 		err = _ap0100_m034_sensor_set_mode(data,(enum ap0100_set_mode)mode);
-		dev_info(dev, "%s, %s (%d), ret=%d", __func__, mode_name[mode], mode, err);
+		dev_dbg(dev, "%s, %s (%d), ret=%d", __func__, mode_name[mode], mode, err);
 		if (err < 0)
 			return err;
 	}
@@ -1803,7 +1803,7 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 						break;
 					dev_dbg(dev, "%s, retry %s, err=%d", __func__, mode_name[sensor_mode], err);
 				}
-				dev_info(dev, "%s, %s (%d), ret=%d\n", __func__, mode_name[sensor_mode], sensor_mode, err);
+				dev_dbg(dev, "%s, %s (%d), ret=%d\n", __func__, mode_name[sensor_mode], sensor_mode, err);
 				data->last_sss_set_errcode = err;
 			}
 			break;
@@ -2316,7 +2316,7 @@ static int _ap0100_m034_probe(struct ap0100_m034_data* data)
 {
 	struct device *dev = data->dev;
 	int ret, tmpret;
-	dev_info(dev, __func__);
+	dev_dbg(dev, __func__);
 
 	if(data->operational)
 		return 0;
