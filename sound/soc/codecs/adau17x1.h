@@ -46,6 +46,8 @@ struct adau {
 	bool dsp_capture_bypass;
 
 	struct regmap *regmap;
+
+	void *platform_data;
 };
 
 int adau17x1_probe(struct snd_soc_codec *codec);

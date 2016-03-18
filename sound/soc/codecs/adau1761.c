@@ -504,7 +504,11 @@ static int adau1761_set_bias_level(struct snd_soc_codec *codec,
 static enum adau1761_output_mode adau1761_get_lineout_mode(
 	struct snd_soc_codec *codec)
 {
-	struct adau1761_platform_data *pdata = codec->dev->platform_data;
+	struct adau *adau = snd_soc_codec_get_drvdata(codec);
+	struct adau1761_platform_data *pdata = NULL;
+
+	if (adau)
+		pdata = adau->platform_data;
 
 	if (pdata)
 		return pdata->lineout_mode;
@@ -514,8 +518,8 @@ static enum adau1761_output_mode adau1761_get_lineout_mode(
 
 static int adau1761_setup_digmic_jackdetect(struct snd_soc_codec *codec)
 {
-	struct adau1761_platform_data *pdata = codec->dev->platform_data;
 	struct adau *adau = snd_soc_codec_get_drvdata(codec);
+	struct adau1761_platform_data *pdata = NULL;
 	enum adau1761_digmic_jackdet_pin_mode mode;
 	const struct snd_soc_dapm_widget *widgets = NULL;
 	const struct snd_soc_dapm_route *routes = NULL;
@@ -524,6 +528,8 @@ static int adau1761_setup_digmic_jackdetect(struct snd_soc_codec *codec)
 	unsigned int val = 0;
 	int ret;
 
+	if (adau)
+		pdata = adau->platform_data;
 	if (pdata)
 		mode = pdata->digmic_jackdetect_pin_mode;
 	else
@@ -611,10 +617,12 @@ static int adau1761_setup_digmic_jackdetect(struct snd_soc_codec *codec)
 static int adau1761_setup_headphone_mode(struct snd_soc_codec *codec)
 {
 	struct adau *adau = snd_soc_codec_get_drvdata(codec);
-	struct adau1761_platform_data *pdata = codec->dev->platform_data;
+	struct adau1761_platform_data *pdata = NULL;
 	enum adau1761_output_mode mode;
 	int ret;
 
+	if (adau)
+		pdata = adau->platform_data;
 	if (pdata)
 		mode = pdata->headphone_mode;
 	else
@@ -704,6 +712,38 @@ static bool adau1761_readable_register(struct device *dev, unsigned int reg)
 	return adau17x1_readable_register(dev, reg);
 }
 
+static int adau1761_parse_dts (struct snd_soc_codec *codec,
+	struct adau1761_platform_data *pdata)
+{
+	struct device_node	*ofnode = codec->dev->of_node;
+	u32			val32;
+
+	pdata->input_differential = of_property_read_bool (ofnode, "input-differential");
+	pdata->jackdetect_active_low = of_property_read_bool (ofnode, "jackdet-active-low");
+
+	val32 = ADAU1761_OUTPUT_MODE_LINE;
+	of_property_read_u32 (ofnode, "lineout-mode", &val32);
+	pdata->lineout_mode = val32;
+
+	val32 = ADAU1761_OUTPUT_MODE_HEADPHONE;
+	of_property_read_u32 (ofnode, "headphone-mode", &val32);
+	pdata->headphone_mode = val32;
+
+	val32 = ADAU1761_DIGMIC_JACKDET_PIN_MODE_NONE;
+	of_property_read_u32 (ofnode, "digmic-jackdet-pinmode", &val32);
+	pdata->digmic_jackdetect_pin_mode = val32;
+
+	val32 = ADAU1761_JACKDETECT_DEBOUNCE_5MS;
+	of_property_read_u32 (ofnode, "jackdet-debounce-time", &val32);
+	pdata->jackdetect_debounce_time = val32;
+
+	val32 = ADAU17X1_MICBIAS_0_90_AVDD;
+	of_property_read_u32 (ofnode, "micbias-voltage", &val32);
+	pdata->micbias_voltage = val32;
+
+	return 0;
+}
+
 static int adau1761_probe(struct snd_soc_codec *codec)
 {
 	struct adau1761_platform_data *pdata = codec->dev->platform_data;
@@ -714,7 +754,21 @@ static int adau1761_probe(struct snd_soc_codec *codec)
 	if (ret < 0)
 		return ret;
 
-	if (pdata && pdata->input_differential) {
+	if (pdata) {
+		snd_printk (KERN_NOTICE "adau1761: platform_data present; ignoring DTS.\n");
+	} else if (codec->dev->of_node) {
+		//  devm_kfree(dev, ptr)
+		pdata = devm_kzalloc (codec->dev, sizeof (*pdata), GFP_KERNEL);
+		if (!pdata)
+			return -ENOMEM;
+
+		ret = adau1761_parse_dts (codec, pdata);
+		if (ret < 0)
+			return ret;
+	}
+	adau->platform_data = pdata;
+
+	if (pdata->input_differential) {
 		regmap_update_bits(adau->regmap, ADAU1761_LEFT_DIFF_INPUT_VOL,
 			ADAU1761_DIFF_INPUT_VOL_LDEN,
 			ADAU1761_DIFF_INPUT_VOL_LDEN);

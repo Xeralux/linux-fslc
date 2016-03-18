@@ -532,6 +532,7 @@
 	adau1761:adau1761@3b {
 		compatible = "adau1761";
 		reg = <0x3b>;
+		input-differential;
 	};
 };
 
