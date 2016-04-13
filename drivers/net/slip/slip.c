@@ -1203,6 +1203,7 @@ static int sl_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 {
 	struct slip *sl = netdev_priv(dev);
 	unsigned long *p = (unsigned long *)&rq->ifr_ifru;
+	int err = 0;
 
 	if (sl == NULL)		/* Allocation failed ?? */
 		return -ENODEV;
@@ -1218,8 +1219,8 @@ static int sl_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 	case SIOCSKEEPALIVE:
 		/* max for unchar */
 		if ((unsigned)*p > 255) {
-			spin_unlock_bh(&sl->lock);
-			return -EINVAL;
+			err = -EINVAL;
+			break;
 		}
 		sl->keepalive = (u8)*p;
 		if (sl->keepalive != 0) {
@@ -1238,8 +1239,8 @@ static int sl_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 
 	case SIOCSOUTFILL:
 		if ((unsigned)*p > 255) { /* max for unchar */
-			spin_unlock_bh(&sl->lock);
-			return -EINVAL;
+			err = -EINVAL;
+			break;
 		}
 		sl->outfill = (u8)*p;
 		if (sl->outfill != 0) {
@@ -1260,8 +1261,8 @@ static int sl_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 		 */
 		if (sl->tty != current->signal->tty &&
 						sl->pid != current->pid) {
-			spin_unlock_bh(&sl->lock);
-			return -EPERM;
+			err = -EPERM;
+			break;
 		}
 		sl->leased = 0;
 		if (*p)
@@ -1270,9 +1271,13 @@ static int sl_ioctl(struct net_device *dev, struct ifreq *rq, int cmd)
 
 	case SIOCGLEASE:
 		*p = sl->leased;
+		break;
+
+	default:
+		err = -EINVAL;
 	}
 	spin_unlock_bh(&sl->lock);
-	return 0;
+	return err;
 }
 #endif
 /* VSV changes end */
