@@ -13,6 +13,7 @@
 #include <linux/module.h>
 #include <linux/i2c.h>
 #include <linux/bcd.h>
+#include <linux/of.h>
 #include <linux/rtc.h>
 
 #define DRV_VERSION "0.3"
@@ -645,7 +646,7 @@ isl1208_probe(struct i2c_client *client, const struct i2c_device_id *id)
 	if (client->irq > 0) {
 		rc = devm_request_threaded_irq(&client->dev, client->irq, NULL,
 					       isl1208_rtc_interrupt,
-					       IRQF_SHARED,
+					       IRQF_SHARED|IRQF_ONESHOT,
 					       isl1208_driver.driver.name,
 					       client);
 		if (!rc) {
@@ -666,6 +667,9 @@ isl1208_probe(struct i2c_client *client, const struct i2c_device_id *id)
 		return PTR_ERR(rtc);
 
 	i2c_set_clientdata(client, rtc);
+
+	if (client->irq == 0)
+		rtc->uie_unsupported = 1;
 
 	rc = isl1208_i2c_get_sr(client);
 	if (rc < 0) {
@@ -692,6 +696,11 @@ isl1208_remove(struct i2c_client *client)
 	return 0;
 }
 
+static struct of_device_id	isl1208_of_match[] = {
+	{ .compatible = "isl,1208", },
+	{ },
+};
+
 static const struct i2c_device_id isl1208_id[] = {
 	{ "isl1208", 0 },
 	{ "isl1218", 0 },
@@ -702,6 +711,7 @@ MODULE_DEVICE_TABLE(i2c, isl1208_id);
 static struct i2c_driver isl1208_driver = {
 	.driver = {
 		   .name = "rtc-isl1208",
+		   .of_match_table = of_match_ptr (isl1208_of_match),
 		   },
 	.probe = isl1208_probe,
 	.remove = isl1208_remove,
