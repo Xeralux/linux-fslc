@@ -1301,7 +1301,7 @@ static struct i2c_client *of_i2c_register_device(struct i2c_adapter *adap,
 	return result;
 }
 
-static void of_i2c_register_devices(struct i2c_adapter *adap)
+void of_i2c_register_devices(struct i2c_adapter *adap)
 {
 	struct device_node *node;
 
@@ -1348,8 +1348,10 @@ struct i2c_adapter *of_find_i2c_adapter_by_node(struct device_node *node)
 }
 EXPORT_SYMBOL(of_find_i2c_adapter_by_node);
 #else
-static void of_i2c_register_devices(struct i2c_adapter *adap) { }
+void of_i2c_register_devices(struct i2c_adapter *adap) { }
 #endif /* CONFIG_OF */
+
+EXPORT_SYMBOL(of_i2c_register_devices);
 
 static int i2c_do_add_adapter(struct i2c_driver *driver,
 			      struct i2c_adapter *adap)
