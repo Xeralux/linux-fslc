@@ -308,6 +308,7 @@ dtb-$(CONFIG_SOC_IMX6Q) += \
 	imx6q-sabreauto-enetirq.dtb \
 	imx6q-sabreauto-flexcan1.dtb \
 	imx6q-sabreauto-gpmi-weim.dtb \
+	imx6q-sensity_falcon.dtb \
 	imx6qp-sabreauto.dtb \
 	imx6qp-sabreauto-ecspi.dtb \
 	imx6qp-sabreauto-flexcan1.dtb \
