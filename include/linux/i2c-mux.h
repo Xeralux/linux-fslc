@@ -44,6 +44,8 @@ struct i2c_adapter *i2c_add_mux_adapter(struct i2c_adapter *parent,
 
 void i2c_del_mux_adapter(struct i2c_adapter *adap);
 
+void *i2c_mux_pdata(struct i2c_adapter *adap);
+
 #endif /* __KERNEL__ */
 
 #endif /* _LINUX_I2C_MUX_H */
