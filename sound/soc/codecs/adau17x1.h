@@ -45,6 +45,8 @@ struct adau {
 
 	struct regmap *regmap;
 	struct sigmadsp *sigmadsp;
+
+	void *platform_data;
 };
 
 int adau17x1_add_widgets(struct snd_soc_codec *codec);
