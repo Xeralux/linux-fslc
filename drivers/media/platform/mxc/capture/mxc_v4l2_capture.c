@@ -240,7 +240,7 @@ static int mxc_free_frame_buf(cam_data *cam)
 {
 	int i;
 
-	pr_debug("MVC: In mxc_free_frame_buf\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	for (i = 0; i < FRAME_NUM; i++) {
 		if (cam->frame[i].vaddress != 0) {
@@ -266,8 +266,8 @@ static int mxc_allocate_frame_buf(cam_data *cam, int count)
 {
 	int i;
 
-	pr_debug("In MVC:mxc_allocate_frame_buf - size=%d\n",
-		cam->v2f.fmt.pix.sizeimage);
+	dev_dbg(cam->dev, "mxc_allocate_frame_buf - size=%d\n",
+		  cam->v2f.fmt.pix.sizeimage);
 
 	for (i = 0; i < count; i++) {
 		cam->frame[i].vaddress =
@@ -276,8 +276,7 @@ static int mxc_allocate_frame_buf(cam_data *cam, int count)
 				       &cam->frame[i].paddress,
 				       GFP_DMA | GFP_KERNEL);
 		if (cam->frame[i].vaddress == 0) {
-			pr_err("ERROR: v4l2 capture: "
-				"mxc_allocate_frame_buf failed.\n");
+			dev_err(cam->dev, "mxc_allocate_frame_buf failed.\n");
 			mxc_free_frame_buf(cam);
 			return -ENOBUFS;
 		}
@@ -305,7 +304,7 @@ static void mxc_free_frames(cam_data *cam)
 {
 	int i;
 
-	pr_debug("In MVC:mxc_free_frames\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	for (i = 0; i < FRAME_NUM; i++)
 		cam->frame[i].buffer.flags = V4L2_BUF_FLAG_MAPPED;
@@ -326,11 +325,10 @@ static void mxc_free_frames(cam_data *cam)
  */
 static int mxc_v4l2_buffer_status(cam_data *cam, struct v4l2_buffer *buf)
 {
-	pr_debug("In MVC:mxc_v4l2_buffer_status\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (buf->index < 0 || buf->index >= FRAME_NUM) {
-		pr_err("ERROR: v4l2 capture: mxc_v4l2_buffer_status buffers "
-		       "not allocated\n");
+		dev_err(cam->dev, "%s: buffers not allocated\n", __func__);
 		return -EINVAL;
 	}
 
@@ -340,19 +338,19 @@ static int mxc_v4l2_buffer_status(cam_data *cam, struct v4l2_buffer *buf)
 
 static int mxc_v4l2_release_bufs(cam_data *cam)
 {
-	pr_debug("In MVC:mxc_v4l2_release_bufs\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 	return 0;
 }
 
 static int mxc_v4l2_prepare_bufs(cam_data *cam, struct v4l2_buffer *buf)
 {
-	pr_debug("In MVC:mxc_v4l2_prepare_bufs\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (buf->index < 0 || buf->index >= FRAME_NUM || buf->length <
 			PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage)) {
-		pr_err("ERROR: v4l2 capture: mxc_v4l2_prepare_bufs buffers "
-			"not allocated,index=%d, length=%d\n", buf->index,
-			buf->length);
+		dev_err(cam->dev, "%s: buffers not allocated, "
+			"index=%d, length=%d\n", __func__,
+			buf->index, buf->length);
 		return -EINVAL;
 	}
 
@@ -407,28 +405,25 @@ static int mxc_streamon(cam_data *cam)
 	unsigned long lock_flags;
 	int err = 0;
 
-	pr_debug("In MVC:mxc_streamon\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (NULL == cam) {
-		pr_err("ERROR! cam parameter is NULL\n");
+		dev_err(cam->dev, "%s: cam parameter is NULL\n", __func__);
 		return -1;
 	}
 
 	if (cam->capture_on) {
-		pr_err("ERROR: v4l2 capture: Capture stream has been turned "
-		       " on\n");
+		dev_err(cam->dev, "%s: capture stream already on\n", __func__);
 		return -1;
 	}
 
 	if (list_empty(&cam->ready_q)) {
-		pr_err("ERROR: v4l2 capture: mxc_streamon buffer has not been "
-			"queued yet\n");
+		dev_err(cam->dev, "%s: buffer has not been queued yet\n", __func__);
 		return -EINVAL;
 	}
 	if (cam->enc_update_eba &&
 		cam->ready_q.prev == cam->ready_q.next) {
-		pr_err("ERROR: v4l2 capture: mxc_streamon buffer need "
-		       "ping pong at least two buffers\n");
+		dev_err(cam->dev, "%s: need at least two buffers\n", __func__);
 		return -EINVAL;
 	}
 
@@ -489,7 +484,7 @@ static int mxc_streamoff(cam_data *cam)
 {
 	int err = 0;
 
-	pr_debug("In MVC:mxc_streamoff\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (cam->capture_on == false)
 		return 0;
@@ -536,12 +531,12 @@ static int verify_preview(cam_data *cam, struct v4l2_window *win)
 	bool foregound_fb = false;
 	mm_segment_t old_fs;
 
-	pr_debug("In MVC: verify_preview\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	do {
 		fbi = (struct fb_info *)registered_fb[i];
 		if (fbi == NULL) {
-			pr_err("ERROR: verify_preview frame buffer NULL.\n");
+			dev_err(cam->dev, "%s: frame buffer NULL\n", __func__);
 			return -1;
 		}
 
@@ -559,7 +554,8 @@ static int verify_preview(cam_data *cam, struct v4l2_window *win)
 			}
 			if (ipu_ch == MEM_BG_SYNC) {
 				bg_fbi = fbi;
-				pr_debug("Found background frame buffer.\n");
+				dev_dbg(cam->dev, "%s: Found background frame buffer.\n",
+					  __func__);
 			}
 		}
 
@@ -583,7 +579,7 @@ static int verify_preview(cam_data *cam, struct v4l2_window *win)
 
 		if (win->w.width + win->w.left > bg_fbi->var.xres ||
 		    win->w.height + win->w.top > bg_fbi->var.yres) {
-			pr_err("ERROR: FG window position exceeds.\n");
+			dev_err(cam->dev, "%s: FG window position exceeds.\n", __func__);
 			return -1;
 		}
 	} else {
@@ -615,8 +611,7 @@ static int verify_preview(cam_data *cam, struct v4l2_window *win)
 	}
 
 	if (*width == 0 || *height == 0) {
-		pr_err("ERROR: v4l2 capture: width or height"
-			" too small.\n");
+		dev_err(cam->dev, "%s: width or height too small.\n", __func__);
 		return -EINVAL;
 	}
 
@@ -627,13 +622,12 @@ static int verify_preview(cam_data *cam, struct v4l2_window *win)
 		if (*width % 8)
 			*width += 8 - *width % 8;
 		if (*width + win->w.left > width_bound) {
-			pr_err("ERROR: v4l2 capture: width exceeds "
-				"resize limit.\n");
+			dev_err(cam->dev, "%s: width exceeds resize limit.\n",
+				__func__);
 			return -1;
 		}
-		pr_err("ERROR: v4l2 capture: width exceeds limit. "
-			"Resize to %d.\n",
-			*width);
+		dev_err(cam->dev, "%s: width exceeds limit, fesize to %d.\n",
+			__func__, *width);
 	}
 
 	if ((cam->crop_bounds.height / *height > 8) ||
@@ -643,13 +637,12 @@ static int verify_preview(cam_data *cam, struct v4l2_window *win)
 		if (*height % 8)
 			*height += 8 - *height % 8;
 		if (*height + win->w.top > height_bound) {
-			pr_err("ERROR: v4l2 capture: height exceeds "
-				"resize limit.\n");
+			dev_err(cam->dev, "%s: height exceeds resize limit.\n",
+				__func__);
 			return -1;
 		}
-		pr_err("ERROR: v4l2 capture: height exceeds limit "
-			"resize to %d.\n",
-			*height);
+		dev_err(cam->dev, "%s: height exceeds limit, resize to %d.\n",
+			__func__, *height);
 	}
 
 	return 0;
@@ -666,7 +659,7 @@ static int start_preview(cam_data *cam)
 {
 	int err = 0;
 
-	pr_debug("MVC: start_preview\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (cam->v4l2_fb.flags == V4L2_FBUF_FLAG_OVERLAY)
 	#ifdef CONFIG_MXC_IPU_PRP_VF_SDC
@@ -692,18 +685,12 @@ static int start_preview(cam_data *cam)
 	if (cam->vf_enable_csi)
 		err = cam->vf_enable_csi(cam);
 
-	pr_debug("End of %s: v2f pix widthxheight %d x %d\n",
-		 __func__,
-		 cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height);
-	pr_debug("End of %s: crop_bounds widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_bounds.width, cam->crop_bounds.height);
-	pr_debug("End of %s: crop_defrect widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_defrect.width, cam->crop_defrect.height);
-	pr_debug("End of %s: crop_current widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_current.width, cam->crop_current.height);
+	dev_dbg(cam->dev, "%s: v2f %d x %d, crop bounds %d x %d, "
+		  "crop_defrect %d x %d, crop_current %d x %d\n",
+		  __func__, cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height,
+		  cam->crop_bounds.width, cam->crop_bounds.height,
+		  cam->crop_defrect.width, cam->crop_defrect.height,
+		  cam->crop_current.width, cam->crop_current.height);
 
 	return err;
 }
@@ -763,35 +750,29 @@ static int stop_preview(cam_data *cam)
 static int mxc_v4l2_g_fmt(cam_data *cam, struct v4l2_format *f)
 {
 	int retval = 0;
-
-	pr_debug("In MVC: mxc_v4l2_g_fmt type=%d\n", f->type);
+	const char *typename = "invalid";
 
 	switch (f->type) {
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
-		pr_debug("   type is V4L2_BUF_TYPE_VIDEO_CAPTURE\n");
+		typename = "V4L2_BUF_TYPE_VIDEO_CAPTURE";
 		f->fmt.pix = cam->v2f.fmt.pix;
 		break;
 	case V4L2_BUF_TYPE_VIDEO_OVERLAY:
-		pr_debug("   type is V4L2_BUF_TYPE_VIDEO_OVERLAY\n");
+		typename = "V4L2_BUF_TYPE_VIDEO_OVERLAY";
 		f->fmt.win = cam->win;
 		break;
 	default:
-		pr_debug("   type is invalid\n");
 		retval = -EINVAL;
 	}
 
-	pr_debug("End of %s: v2f pix widthxheight %d x %d\n",
-		 __func__,
-		 cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height);
-	pr_debug("End of %s: crop_bounds widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_bounds.width, cam->crop_bounds.height);
-	pr_debug("End of %s: crop_defrect widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_defrect.width, cam->crop_defrect.height);
-	pr_debug("End of %s: crop_current widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_current.width, cam->crop_current.height);
+	dev_dbg(cam->dev, "in %s, type=%d (%s), v2f %d x %d, "
+		  "crop_bounds %d x %d, crop_defrect %d x %d, "
+		  "crop_current %d x%d\n",
+		  __func__, f->type, typename,
+		  cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height,
+		  cam->crop_bounds.width, cam->crop_bounds.height,
+		  cam->crop_defrect.width, cam->crop_defrect.height,
+		  cam->crop_current.width, cam->crop_current.height);
 
 	return retval;
 }
@@ -812,14 +793,13 @@ static int mxc_v4l2_s_fmt(cam_data *cam, struct v4l2_format *f)
 	int bytesperline = 0;
 	int *width, *height;
 
-	pr_debug("In MVC: mxc_v4l2_s_fmt\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	switch (f->type) {
 	case V4L2_BUF_TYPE_VIDEO_CAPTURE:
-		pr_debug("   type=V4L2_BUF_TYPE_VIDEO_CAPTURE\n");
+		dev_dbg(cam->dev, "%s: type=V4L2_BUF_TYPE_VIDEO_CAPTURE\n", __func__);
 		if (!valid_mode(f->fmt.pix.pixelformat)) {
-			pr_err("ERROR: v4l2 capture: mxc_v4l2_s_fmt: format "
-			       "not supported\n");
+			dev_err(cam->dev, "%s: format not supported\n", __func__);
 			return -EINVAL;
 		}
 
@@ -846,8 +826,7 @@ static int mxc_v4l2_s_fmt(cam_data *cam, struct v4l2_format *f)
 		*height -= *height % 8;
 
 		if (*width == 0 || *height == 0) {
-			pr_err("ERROR: v4l2 capture: width or height"
-				" too small.\n");
+			dev_err(cam->dev, "%s: width or height too small.\n", __func__);
 			return -EINVAL;
 		}
 
@@ -857,9 +836,8 @@ static int mxc_v4l2_s_fmt(cam_data *cam, struct v4l2_format *f)
 			*width = cam->crop_current.width / 8;
 			if (*width % 8)
 				*width += 8 - *width % 8;
-			pr_err("ERROR: v4l2 capture: width exceeds limit "
-				"resize to %d.\n",
-			       *width);
+			dev_err(cam->dev, "%s: width exceeds limit, resize to %d.\n",
+				__func__, *width);
 		}
 
 		if ((cam->crop_current.height / *height > 8) ||
@@ -868,9 +846,9 @@ static int mxc_v4l2_s_fmt(cam_data *cam, struct v4l2_format *f)
 			*height = cam->crop_current.height / 8;
 			if (*height % 8)
 				*height += 8 - *height % 8;
-			pr_err("ERROR: v4l2 capture: height exceeds limit "
-			       "resize to %d.\n",
-			       *height);
+			dev_err(cam->dev, "%s: height exceeds limit, "
+				"resize to %d.\n", __func__,
+				*height);
 		}
 
 		switch (f->fmt.pix.pixelformat) {
@@ -929,7 +907,7 @@ static int mxc_v4l2_s_fmt(cam_data *cam, struct v4l2_format *f)
 		cam->v2f.fmt.pix = f->fmt.pix;
 		break;
 	case V4L2_BUF_TYPE_VIDEO_OVERLAY:
-		pr_debug("   type=V4L2_BUF_TYPE_VIDEO_OVERLAY\n");
+		dev_dbg(cam->dev, "%s: type=V4L2_BUF_TYPE_VIDEO_OVERLAY\n", __func__);
 		retval = verify_preview(cam, &f->fmt.win);
 		cam->win = f->fmt.win;
 		break;
@@ -937,18 +915,14 @@ static int mxc_v4l2_s_fmt(cam_data *cam, struct v4l2_format *f)
 		retval = -EINVAL;
 	}
 
-	pr_debug("End of %s: v2f pix widthxheight %d x %d\n",
-		 __func__,
-		 cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height);
-	pr_debug("End of %s: crop_bounds widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_bounds.width, cam->crop_bounds.height);
-	pr_debug("End of %s: crop_defrect widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_defrect.width, cam->crop_defrect.height);
-	pr_debug("End of %s: crop_current widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_current.width, cam->crop_current.height);
+	dev_dbg(cam->dev, "%s: v2f %d x %d, "
+		  "crop_bounds %d x %d, crop_defrect %d x %d, "
+		  "crop_current %d x%d\n",
+		  __func__,
+		  cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height,
+		  cam->crop_bounds.width, cam->crop_bounds.height,
+		  cam->crop_defrect.width, cam->crop_defrect.height,
+		  cam->crop_current.width, cam->crop_current.height);
 
 	return retval;
 }
@@ -966,7 +940,7 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 {
 	int status = 0;
 
-	pr_debug("In MVC:mxc_v4l2_g_ctrl\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	/* probably don't need to store the values that can be retrieved,
 	 * locally, but they are for now. */
@@ -991,7 +965,7 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 			status = vidioc_int_g_ctrl(cam->sensor, c);
 			cam->bright = c->value;
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_BRIGHTNESS): no sensor\n", __func__);
 			status = -ENODEV;
 		}
 		break;
@@ -1001,7 +975,7 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 			status = vidioc_int_g_ctrl(cam->sensor, c);
 			cam->hue = c->value;
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_HUE): no sensor\n", __func__);
 			status = -ENODEV;
 		}
 		break;
@@ -1011,7 +985,7 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 			status = vidioc_int_g_ctrl(cam->sensor, c);
 			cam->contrast = c->value;
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_CONTRAST): no sensor\n", __func__);
 			status = -ENODEV;
 		}
 		break;
@@ -1021,7 +995,7 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 			status = vidioc_int_g_ctrl(cam->sensor, c);
 			cam->saturation = c->value;
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_SATURATION): no sensor\n", __func__);
 			status = -ENODEV;
 		}
 		break;
@@ -1031,7 +1005,7 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 			status = vidioc_int_g_ctrl(cam->sensor, c);
 			cam->red = c->value;
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_RED_BALANCE): no sensor\n", __func__);
 			status = -ENODEV;
 		}
 		break;
@@ -1041,7 +1015,7 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 			status = vidioc_int_g_ctrl(cam->sensor, c);
 			cam->blue = c->value;
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_BLUE_BALANCE): no sensor\n", __func__);
 			status = -ENODEV;
 		}
 		break;
@@ -1051,12 +1025,13 @@ static int mxc_v4l2_g_ctrl(cam_data *cam, struct v4l2_control *c)
 			status = vidioc_int_g_ctrl(cam->sensor, c);
 			cam->ae_mode = c->value;
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_BLACK_LEVEL): no sensor\n", __func__);
 			status = -ENODEV;
 		}
 		break;
 	default:
-		pr_debug("%s: unsupported control id 0x%x!\n", __func__, c->id);
+		dev_dbg(cam->dev, "%s: unsupported control id 0x%x\n",
+			  __func__, c->id);
 		status = -EINVAL;
 		break;
 	}
@@ -1084,7 +1059,7 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 	int tmp_rotation = IPU_ROTATE_NONE;
 	struct sensor_data *sensor_data;
 
-	pr_debug("In MVC:mxc_v4l2_s_ctrl\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	switch (c->id) {
 	case V4L2_CID_HFLIP:
@@ -1163,7 +1138,7 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 			cam->hue = c->value;
 			ret = vidioc_int_s_ctrl(cam->sensor, c);
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_HUE): no sensor\n", __func__);
 			ret = -ENODEV;
 		}
 		break;
@@ -1172,7 +1147,7 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 			cam->contrast = c->value;
 			ret = vidioc_int_s_ctrl(cam->sensor, c);
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_CONTRAST): no sensor\n", __func__);
 			ret = -ENODEV;
 		}
 		break;
@@ -1181,7 +1156,7 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 			cam->bright = c->value;
 			ret = vidioc_int_s_ctrl(cam->sensor, c);
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_BRIGHTNESS): no sensor\n", __func__);
 			ret = -ENODEV;
 		}
 		break;
@@ -1190,7 +1165,7 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 			cam->saturation = c->value;
 			ret = vidioc_int_s_ctrl(cam->sensor, c);
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_SATURATION): no sensor\n", __func__);
 			ret = -ENODEV;
 		}
 		break;
@@ -1199,7 +1174,7 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 			cam->red = c->value;
 			ret = vidioc_int_s_ctrl(cam->sensor, c);
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_RED_BALANCE): no sensor\n", __func__);
 			ret = -ENODEV;
 		}
 		break;
@@ -1208,7 +1183,7 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 			cam->blue = c->value;
 			ret = vidioc_int_s_ctrl(cam->sensor, c);
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_BLUE_BALANCE): no sensor\n", __func__);
 			ret = -ENODEV;
 		}
 		break;
@@ -1217,7 +1192,7 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 			cam->ae_mode = c->value;
 			ret = vidioc_int_s_ctrl(cam->sensor, c);
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(V4L2_CID_EXPOSURE): no sensor\n", __func__);
 			ret = -ENODEV;
 		}
 		break;
@@ -1257,7 +1232,8 @@ static int mxc_v4l2_s_ctrl(cam_data *cam, struct v4l2_control *c)
 		vidioc_int_dev_init(cam->sensor);
 		break;
 	default:
-		pr_debug("   default case\n");
+		dev_dbg(cam->dev, "%s: no handler for control 0x%x\n",
+			  __func__, c->id);
 		ret = -EINVAL;
 		break;
 	}
@@ -1283,10 +1259,10 @@ static int mxc_v4l2_s_param(cam_data *cam, struct v4l2_streamparm *parm)
 	u32 current_fps, parm_fps;
 	int err = 0;
 
-	pr_debug("In mxc_v4l2_s_param\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (parm->type != V4L2_BUF_TYPE_VIDEO_CAPTURE) {
-		pr_err(KERN_ERR "mxc_v4l2_s_param invalid type\n");
+		dev_err(cam->dev, "%s: invalid type\n", __func__);
 		return -EINVAL;
 	}
 
@@ -1299,7 +1275,7 @@ static int mxc_v4l2_s_param(cam_data *cam, struct v4l2_streamparm *parm)
 	/* First check that this device can support the changes requested. */
 	err = vidioc_int_g_parm(cam->sensor, &currentparm);
 	if (err) {
-		pr_err("%s: vidioc_int_g_parm returned an error %d\n",
+		dev_err(cam->dev, "%s: vidioc_int_g_parm returned an error (%d)\n",
 			__func__, err);
 		goto exit;
 	}
@@ -1309,18 +1285,17 @@ static int mxc_v4l2_s_param(cam_data *cam, struct v4l2_streamparm *parm)
 	parm_fps = parm->parm.capture.timeperframe.denominator
 			/ parm->parm.capture.timeperframe.numerator;
 
-	pr_debug("   Current capabilities are %x\n",
-			currentparm.parm.capture.capability);
-	pr_debug("   Current capturemode is %d  change to %d\n",
-			currentparm.parm.capture.capturemode,
-			parm->parm.capture.capturemode);
-	pr_debug("   Current framerate is %d  change to %d\n",
-			current_fps, parm_fps);
+	dev_dbg(cam->dev, "%s: caps: %x, capturemode cur: %d new: %d, "
+		  "framerate cur: %d, new: %d\n", __func__,
+		  currentparm.parm.capture.capability,
+		  currentparm.parm.capture.capturemode,
+		  parm->parm.capture.capturemode,
+		  current_fps, parm_fps);
 
 	/* This will change any camera settings needed. */
 	err = vidioc_int_s_parm(cam->sensor, parm);
 	if (err) {
-		pr_err("%s: vidioc_int_s_parm returned an error %d\n",
+		dev_err(cam->dev, "%s: vidioc_int_s_parm returned an error %d\n",
 			__func__, err);
 		goto exit;
 	}
@@ -1344,7 +1319,8 @@ static int mxc_v4l2_s_param(cam_data *cam, struct v4l2_streamparm *parm)
 	csi_param.csi = cam->csi;
 	csi_param.mclk = 0;
 
-	pr_debug("   clock_curr=mclk=%d\n", ifparm.u.bt656.clock_curr);
+	dev_dbg(cam->dev, "%s: clock_curr=mclk=%d\n",
+		  __func__, ifparm.u.bt656.clock_curr);
 	if (ifparm.u.bt656.clock_curr == 0)
 		csi_param.clk_mode = IPU_CSI_CLK_MODE_CCIR656_INTERLACED;
 	else
@@ -1368,8 +1344,8 @@ static int mxc_v4l2_s_param(cam_data *cam, struct v4l2_streamparm *parm)
 	/* if the capturemode changed, the size bounds will have changed. */
 	cam_fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 	vidioc_int_g_fmt_cap(cam->sensor, &cam_fmt);
-	pr_debug("   g_fmt_cap returns widthxheight of input as %d x %d\n",
-			cam_fmt.fmt.pix.width, cam_fmt.fmt.pix.height);
+	dev_dbg(cam->dev, "%s: g_fmt_cap returns widthxheight of input as %d x %d\n",
+		  __func__, cam_fmt.fmt.pix.width, cam_fmt.fmt.pix.height);
 
 	cam->v2f = cam_fmt;
 
@@ -1420,23 +1396,24 @@ exit:
  */
 static int mxc_v4l2_s_std(cam_data *cam, v4l2_std_id e)
 {
-	pr_debug("In mxc_v4l2_s_std %Lx\n", e);
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (e == V4L2_STD_PAL) {
-		pr_debug("   Setting standard to PAL %Lx\n", V4L2_STD_PAL);
+		dev_dbg(cam->dev, "%s: setting standard to PAL %Lx\n",
+			  __func__, V4L2_STD_PAL);
 		cam->standard.id = V4L2_STD_PAL;
 		video_index = TV_PAL;
 	} else if (e == V4L2_STD_NTSC) {
-		pr_debug("   Setting standard to NTSC %Lx\n",
-				V4L2_STD_NTSC);
+		dev_dbg(cam->dev, "%s: setting standard to NTSC %Lx\n",
+			  __func__, V4L2_STD_NTSC);
 		/* Get rid of the white dot line in NTSC signal input */
 		cam->standard.id = V4L2_STD_NTSC;
 		video_index = TV_NTSC;
 	} else {
 		cam->standard.id = V4L2_STD_ALL;
 		video_index = TV_NOT_LOCKED;
-		pr_err("ERROR: unrecognized std! %Lx (PAL=%Lx, NTSC=%Lx\n",
-			e, V4L2_STD_PAL, V4L2_STD_NTSC);
+		dev_err(cam->dev, "%s: unrecognized std! %Lx (PAL=%Lx, NTSC=%Lx)\n",
+			__func__, e, V4L2_STD_PAL, V4L2_STD_NTSC);
 	}
 
 	cam->standard.index = video_index;
@@ -1466,7 +1443,7 @@ static int mxc_v4l2_g_std(cam_data *cam, v4l2_std_id *e)
 {
 	struct v4l2_format tv_fmt;
 
-	pr_debug("In mxc_v4l2_g_std\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (cam->device_type == 1) {
 		/* Use this function to get what the TV-In device detects the
@@ -1479,8 +1456,7 @@ static int mxc_v4l2_g_std(cam_data *cam, v4l2_std_id *e)
 		 * changes, the settings need to change. */
 		if (cam->standard_autodetect) {
 			if (cam->standard.id != tv_fmt.fmt.pix.pixelformat) {
-				pr_debug("MVC: mxc_v4l2_g_std: "
-					"Changing standard\n");
+				dev_dbg(cam->dev, "%s: changing standard\n", __func__);
 				mxc_v4l2_s_std(cam, tv_fmt.fmt.pix.pixelformat);
 			}
 		}
@@ -1506,18 +1482,16 @@ static int mxc_v4l_dqueue(cam_data *cam, struct v4l2_buffer *buf)
 	struct mxc_v4l_frame *frame;
 	unsigned long lock_flags;
 
-	pr_debug("In MVC:mxc_v4l_dqueue\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (!wait_event_interruptible_timeout(cam->enc_queue,
 					      cam->enc_counter != 0,
 					      10 * HZ)) {
-		pr_err("ERROR: v4l2 capture: mxc_v4l_dqueue timeout "
-			"enc_counter %x\n",
-		       cam->enc_counter);
+		dev_err(cam->dev, "%s: timeout, enc_counter %x\n",
+			__func__, cam->enc_counter);
 		return -ETIME;
 	} else if (signal_pending(current)) {
-		pr_err("ERROR: v4l2 capture: mxc_v4l_dqueue() "
-			"interrupt received\n");
+		dev_err(cam->dev, "%s: interrupt received\n", __func__);
 		return -ERESTARTSYS;
 	}
 
@@ -1532,13 +1506,11 @@ static int mxc_v4l_dqueue(cam_data *cam, struct v4l2_buffer *buf)
 	if (frame->buffer.flags & V4L2_BUF_FLAG_DONE) {
 		frame->buffer.flags &= ~V4L2_BUF_FLAG_DONE;
 	} else if (frame->buffer.flags & V4L2_BUF_FLAG_QUEUED) {
-		pr_err("ERROR: v4l2 capture: VIDIOC_DQBUF: "
-			"Buffer not filled.\n");
+		dev_err(cam->dev, "%s: buffer not filled\n", __func__);
 		frame->buffer.flags &= ~V4L2_BUF_FLAG_QUEUED;
 		retval = -EINVAL;
 	} else if ((frame->buffer.flags & 0x7) == V4L2_BUF_FLAG_MAPPED) {
-		pr_err("ERROR: v4l2 capture: VIDIOC_DQBUF: "
-			"Buffer not queued.\n");
+		dev_err(cam->dev, "%s: buffer not queued\n", __func__);
 		retval = -EINVAL;
 	}
 
@@ -1576,25 +1548,25 @@ static int mxc_v4l_open(struct file *file)
 	int err = 0;
 	struct sensor_data *sensor;
 
-	pr_debug("\nIn MVC: mxc_v4l_open\n");
-	pr_debug("   device name is %s\n", dev->name);
+	dev_dbg(&dev->dev, "in %s, device name is %s\n",
+		  __func__, dev->name);
 
 	if (!cam) {
-		pr_err("ERROR: v4l2 capture: Internal error, "
-			"cam_data not found!\n");
+		dev_err(&dev->dev, "%s: internal error, cam_data not found!\n",
+			__func__);
 		return -EBADF;
 	}
 
 	if (cam->sensor == NULL ||
 	    cam->sensor->type != v4l2_int_type_slave) {
-		pr_err("ERROR: v4l2 capture: slave not found!\n");
+		dev_err(cam->dev, "%s: no sensor\n", __func__);
 		return -EAGAIN;
 	}
 
 	sensor = cam->sensor->priv;
 	if (!sensor) {
-		pr_err("%s: Internal error, sensor_data is not found!\n",
-		       __func__);
+		dev_err(cam->dev, "%s: internal error, sensor_data not found\n",
+			__func__);
 		return -EBADF;
 	}
 
@@ -1676,22 +1648,18 @@ static int mxc_v4l_open(struct file *file)
 
 		cam->v2f = cam_fmt;
 
-		pr_debug("End of %s: v2f pix widthxheight %d x %d\n",
-			__func__,
-			cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height);
-		pr_debug("End of %s: crop_bounds widthxheight %d x %d\n",
-			__func__,
-			cam->crop_bounds.width, cam->crop_bounds.height);
-		pr_debug("End of %s: crop_defrect widthxheight %d x %d\n",
-			__func__,
-			cam->crop_defrect.width, cam->crop_defrect.height);
-		pr_debug("End of %s: crop_current widthxheight %d x %d\n",
-			__func__,
-			cam->crop_current.width, cam->crop_current.height);
+		dev_dbg(cam->dev, "%s: v2f %d x %d, "
+			  "crop_bounds %d x %d, crop_defrect %d x %d, "
+			  "crop_current %d x%d\n",
+			  __func__, 
+			  cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height,
+			  cam->crop_bounds.width, cam->crop_bounds.height,
+			  cam->crop_defrect.width, cam->crop_defrect.height,
+			  cam->crop_current.width, cam->crop_current.height);
 
 		csi_param.data_fmt = cam_fmt.fmt.pix.pixelformat;
-		pr_debug("On Open: Input to ipu size is %d x %d\n",
-				cam_fmt.fmt.pix.width, cam_fmt.fmt.pix.height);
+		dev_dbg(cam->dev, "%s: input to ipu size is %d x %d\n", __func__,
+			  cam_fmt.fmt.pix.width, cam_fmt.fmt.pix.height);
 		ipu_csi_set_window_size(cam->ipu, cam->crop_current.width,
 					cam->crop_current.height,
 					cam->csi);
@@ -1728,24 +1696,25 @@ static int mxc_v4l_close(struct file *file)
 	int err = 0;
 	cam_data *cam = video_get_drvdata(dev);
 	struct sensor_data *sensor;
-	pr_debug("In MVC:mxc_v4l_close\n");
+
+	dev_dbg(&dev->dev, "in %s\n", __func__);
 
 	if (!cam) {
-		pr_err("ERROR: v4l2 capture: Internal error, "
-			"cam_data not found!\n");
+		dev_err(&dev->dev, "%s: internal error, "
+			"cam_data not found!\n", __func__);
 		return -EBADF;
 	}
 
 	if (!cam->sensor) {
-		pr_err("%s: Internal error, camera is not found!\n",
-		       __func__);
+		dev_err(&dev->dev, "%s: internal error, camera is not found!\n",
+			__func__);
 		return -EBADF;
 	}
 
 	sensor = cam->sensor->priv;
 	if (!sensor) {
-		pr_err("%s: Internal error, sensor_data is not found!\n",
-		       __func__);
+		dev_err(cam->dev, "%s: Internal error, sensor_data is not found!\n",
+			__func__);
 		return -EBADF;
 	}
 
@@ -1762,7 +1731,7 @@ static int mxc_v4l_close(struct file *file)
 		clk_disable_unprepare(sensor->sensor_clk);
 		wait_event_interruptible(cam->power_queue,
 					 cam->low_power == false);
-		pr_debug("mxc_v4l_close: release resource\n");
+		dev_dbg(cam->dev, "%s: release resource\n", __func__);
 
 		if (strcmp(mxc_capture_inputs[cam->current_input].name,
 			   "CSI MEM") == 0) {
@@ -1849,8 +1818,8 @@ static ssize_t mxc_v4l_read(struct file *file, char *buf, size_t count,
 	if (!wait_event_interruptible_timeout(cam->still_queue,
 					      cam->still_counter != 0,
 					      10 * HZ)) {
-		pr_err("ERROR: v4l2 capture: mxc_v4l_read timeout counter %x\n",
-		       cam->still_counter);
+		dev_err(cam->dev, "%s: timeout counter %x\n",
+			__func__, cam->still_counter);
 		err = -ETIME;
 		goto exit1;
 	}
@@ -1900,7 +1869,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	int retval = 0;
 	unsigned long lock_flags;
 
-	pr_debug("In MVC: mxc_v4l_do_ioctl %x\n", ioctlnr);
+	dev_dbg(cam->dev, "in %s\n", __func__);
 	wait_event_interruptible(cam->power_queue, cam->low_power == false);
 	/* make this _really_ smp-safe */
 	if (ioctlnr != VIDIOC_DQBUF)
@@ -1913,7 +1882,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_QUERYCAP: {
 		struct v4l2_capability *cap = arg;
-		pr_debug("   case VIDIOC_QUERYCAP\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_QUERYCAP\n", __func__);
 		strcpy(cap->driver, "mxc_v4l2");
 		cap->version = KERNEL_VERSION(0, 1, 11);
 		cap->capabilities = V4L2_CAP_VIDEO_CAPTURE |
@@ -1930,7 +1899,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_G_FMT: {
 		struct v4l2_format *gf = arg;
-		pr_debug("   case VIDIOC_G_FMT\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_G_FMT\n", __func__);
 		retval = mxc_v4l2_g_fmt(cam, gf);
 		break;
 	}
@@ -1951,7 +1920,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_S_FMT: {
 		struct v4l2_format *sf = arg;
-		pr_debug("   case VIDIOC_S_FMT\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_S_FMT\n", __func__);
 		retval = mxc_v4l2_s_fmt(cam, sf);
 		break;
 	}
@@ -1961,17 +1930,17 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_REQBUFS: {
 		struct v4l2_requestbuffers *req = arg;
-		pr_debug("   case VIDIOC_REQBUFS\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_REQBUFS\n", __func__);
 
 		if (req->count > FRAME_NUM) {
-			pr_err("ERROR: v4l2 capture: VIDIOC_REQBUFS: "
-			       "not enough buffers\n");
+			dev_err(cam->dev, "%s(VIDIOC_REQBUFS): "
+				"not enough buffers\n", __func__);
 			req->count = FRAME_NUM;
 		}
 
 		if ((req->type != V4L2_BUF_TYPE_VIDEO_CAPTURE)) {
-			pr_err("ERROR: v4l2 capture: VIDIOC_REQBUFS: "
-			       "wrong buffer type\n");
+			dev_err(cam->dev, "%s(VIDIOC_REQBUFS): "
+				"wrong buffer type\n", __func__);
 			retval = -EINVAL;
 			break;
 		}
@@ -1991,12 +1960,11 @@ static long mxc_v4l_do_ioctl(struct file *file,
 		struct v4l2_buffer *buf = arg;
 		int index = buf->index;
 		u32 memory = buf->memory;
-		pr_debug("   case VIDIOC_QUERYBUF\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_QUERYBUF\n", __func__);
 
 		if (buf->type != V4L2_BUF_TYPE_VIDEO_CAPTURE) {
-			pr_err("ERROR: v4l2 capture: "
-			       "VIDIOC_QUERYBUFS: "
-			       "wrong buffer type\n");
+			dev_err(cam->dev, "%s(VIDIOC_QUERYBUF): "
+				"wrong buffer type\n", __func__);
 			retval = -EINVAL;
 			break;
 		}
@@ -2023,7 +1991,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	case VIDIOC_QBUF: {
 		struct v4l2_buffer *buf = arg;
 		int index = buf->index;
-		pr_debug("   case VIDIOC_QBUF\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_QBUF\n", __func__);
 
 		spin_lock_irqsave(&cam->queue_int_lock, lock_flags);
 		if ((cam->frame[index].buffer.flags & 0x7) ==
@@ -2034,13 +2002,13 @@ static long mxc_v4l_do_ioctl(struct file *file,
 				      &cam->ready_q);
 		} else if (cam->frame[index].buffer.
 			   flags & V4L2_BUF_FLAG_QUEUED) {
-			pr_err("ERROR: v4l2 capture: VIDIOC_QBUF: "
-			       "buffer already queued\n");
+			dev_err(cam->dev, "%s(VIDIOC_QBUF): "
+				"buffer already queued\n", __func__);
 			retval = -EINVAL;
 		} else if (cam->frame[index].buffer.
 			   flags & V4L2_BUF_FLAG_DONE) {
-			pr_err("ERROR: v4l2 capture: VIDIOC_QBUF: "
-			       "overwrite done buffer.\n");
+			dev_err(cam->dev, "%s(VIDIOC_QBUF): "
+				"overwrite done buffer.\n", __func__);
 			cam->frame[index].buffer.flags &=
 			    ~V4L2_BUF_FLAG_DONE;
 			cam->frame[index].buffer.flags |=
@@ -2058,7 +2026,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_DQBUF: {
 		struct v4l2_buffer *buf = arg;
-		pr_debug("   case VIDIOC_DQBUF\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_DQBUF\n", __func__);
 
 		if ((cam->enc_counter == 0) &&
 			(file->f_flags & O_NONBLOCK)) {
@@ -2074,7 +2042,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 * V4l2 VIDIOC_STREAMON ioctl
 	 */
 	case VIDIOC_STREAMON: {
-		pr_debug("   case VIDIOC_STREAMON\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_STREAMON\n", __func__);
 		retval = mxc_streamon(cam);
 		break;
 	}
@@ -2083,7 +2051,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 * V4l2 VIDIOC_STREAMOFF ioctl
 	 */
 	case VIDIOC_STREAMOFF: {
-		pr_debug("   case VIDIOC_STREAMOFF\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_STREAMOFF\n", __func__);
 		retval = mxc_streamoff(cam);
 		break;
 	}
@@ -2092,7 +2060,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 * V4l2 VIDIOC_G_CTRL ioctl
 	 */
 	case VIDIOC_G_CTRL: {
-		pr_debug("   case VIDIOC_G_CTRL\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_G_CTRL\n", __func__);
 		retval = mxc_v4l2_g_ctrl(cam, arg);
 		break;
 	}
@@ -2101,7 +2069,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 * V4l2 VIDIOC_S_CTRL ioctl
 	 */
 	case VIDIOC_S_CTRL: {
-		pr_debug("   case VIDIOC_S_CTRL\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_S_CTRL\n", __func__);
 		retval = mxc_v4l2_s_ctrl(cam, arg);
 		break;
 	}
@@ -2111,7 +2079,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_CROPCAP: {
 		struct v4l2_cropcap *cap = arg;
-		pr_debug("   case VIDIOC_CROPCAP\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_CROPCAP\n", __func__);
 		if (cap->type != V4L2_BUF_TYPE_VIDEO_CAPTURE &&
 		    cap->type != V4L2_BUF_TYPE_VIDEO_OVERLAY) {
 			retval = -EINVAL;
@@ -2127,7 +2095,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_G_CROP: {
 		struct v4l2_crop *crop = arg;
-		pr_debug("   case VIDIOC_G_CROP\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_G_CROP\n", __func__);
 
 		if (crop->type != V4L2_BUF_TYPE_VIDEO_CAPTURE &&
 		    crop->type != V4L2_BUF_TYPE_VIDEO_OVERLAY) {
@@ -2144,7 +2112,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	case VIDIOC_S_CROP: {
 		struct v4l2_crop *crop = arg;
 		struct v4l2_rect *b = &cam->crop_bounds;
-		pr_debug("   case VIDIOC_S_CROP\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_S_CROP\n", __func__);
 
 		if (crop->type != V4L2_BUF_TYPE_VIDEO_CAPTURE &&
 		    crop->type != V4L2_BUF_TYPE_VIDEO_OVERLAY) {
@@ -2172,9 +2140,9 @@ static long mxc_v4l_do_ioctl(struct file *file,
 		crop->c.left -= crop->c.left % 4;
 		cam->crop_current = crop->c;
 
-		pr_debug("   Cropping Input to ipu size %d x %d\n",
-				cam->crop_current.width,
-				cam->crop_current.height);
+		dev_dbg(cam->dev, "%s: cropping input to ipu size %d x %d\n",
+			  __func__, cam->crop_current.width,
+			  cam->crop_current.height);
 		ipu_csi_set_window_size(cam->ipu, cam->crop_current.width,
 					cam->crop_current.height,
 					cam->csi);
@@ -2189,7 +2157,8 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_OVERLAY: {
 		int *on = arg;
-		pr_debug("   VIDIOC_OVERLAY on=%d\n", *on);
+		dev_dbg(cam->dev, "%s: VIDIOC_OVERLAY on=%d\n",
+			  __func__, *on);
 		if (*on) {
 			cam->overlay_on = true;
 			retval = start_preview(cam);
@@ -2206,7 +2175,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_G_FBUF: {
 		struct v4l2_framebuffer *fb = arg;
-		pr_debug("   case VIDIOC_G_FBUF\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_G_FBUF\n", __func__);
 		*fb = cam->v4l2_fb;
 		fb->capability = V4L2_FBUF_CAP_EXTERNOVERLAY;
 		break;
@@ -2217,18 +2186,19 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	 */
 	case VIDIOC_S_FBUF: {
 		struct v4l2_framebuffer *fb = arg;
-		pr_debug("   case VIDIOC_S_FBUF\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_S_FBUF\n", __func__);
 		cam->v4l2_fb = *fb;
 		break;
 	}
 
 	case VIDIOC_G_PARM: {
 		struct v4l2_streamparm *parm = arg;
-		pr_debug("   case VIDIOC_G_PARM\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_G_PARM\n", __func__);
 		if (cam->sensor)
 			retval = vidioc_int_g_parm(cam->sensor, parm);
 		else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(VIDIOC_G_PARM): no sensor\n",
+				__func__);
 			retval = -ENODEV;
 		}
 		break;
@@ -2236,11 +2206,12 @@ static long mxc_v4l_do_ioctl(struct file *file,
 
 	case VIDIOC_S_PARM:  {
 		struct v4l2_streamparm *parm = arg;
-		pr_debug("   case VIDIOC_S_PARM\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_S_PARM\n", __func__);
 		if (cam->sensor)
 			retval = mxc_v4l2_s_param(cam, parm);
 		else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(VIDIOC_S_PARM): no sensor\n",
+				__func__);
 			retval = -ENODEV;
 		}
 		break;
@@ -2249,7 +2220,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	/* linux v4l2 bug, kernel c0485619 user c0405619 */
 	case VIDIOC_ENUMSTD: {
 		struct v4l2_standard *e = arg;
-		pr_debug("   case VIDIOC_ENUMSTD\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_ENUMSTD\n", __func__);
 		if (cam->device_type == 1)
 			*e = cam->standard;
 		else
@@ -2259,11 +2230,12 @@ static long mxc_v4l_do_ioctl(struct file *file,
 
 	case VIDIOC_G_STD: {
 		v4l2_std_id *e = arg;
-		pr_debug("   case VIDIOC_G_STD\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_G_STD\n", __func__);
 		if (cam->sensor)
 			retval = (cam->device_type == 1 ? mxc_v4l2_g_std(cam, e) : -ENODATA);
 		else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(VIDIOC_G_STD): no sensor\n",
+				__func__);
 			retval = -ENODEV;
 		}
 		break;
@@ -2271,7 +2243,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 
 	case VIDIOC_S_STD: {
 		v4l2_std_id *e = arg;
-		pr_debug("   case VIDIOC_S_STD\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_S_STD\n", __func__);
 		retval = (cam->device_type == 1 ? mxc_v4l2_s_std(cam, *e) : -ENODATA);
 
 		break;
@@ -2279,7 +2251,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 
 	case VIDIOC_ENUMOUTPUT: {
 		struct v4l2_output *output = arg;
-		pr_debug("   case VIDIOC_ENUMOUTPUT\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_ENUMOUTPUT\n", __func__);
 		if (output->index >= MXC_V4L2_CAPTURE_NUM_OUTPUTS) {
 			retval = -EINVAL;
 			break;
@@ -2290,14 +2262,14 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	}
 	case VIDIOC_G_OUTPUT: {
 		int *p_output_num = arg;
-		pr_debug("   case VIDIOC_G_OUTPUT\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_G_OUTPUT\n", __func__);
 		*p_output_num = cam->output;
 		break;
 	}
 
 	case VIDIOC_S_OUTPUT: {
 		int *p_output_num = arg;
-		pr_debug("   case VIDIOC_S_OUTPUT\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_S_OUTPUT\n", __func__);
 		if (*p_output_num >= MXC_V4L2_CAPTURE_NUM_OUTPUTS) {
 			retval = -EINVAL;
 			break;
@@ -2308,7 +2280,7 @@ static long mxc_v4l_do_ioctl(struct file *file,
 
 	case VIDIOC_ENUMINPUT: {
 		struct v4l2_input *input = arg;
-		pr_debug("   case VIDIOC_ENUMINPUT\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_ENUMINPUT\n", __func__);
 		if (input->index >= MXC_V4L2_CAPTURE_NUM_INPUTS) {
 			retval = -EINVAL;
 			break;
@@ -2319,14 +2291,14 @@ static long mxc_v4l_do_ioctl(struct file *file,
 
 	case VIDIOC_G_INPUT: {
 		int *index = arg;
-		pr_debug("   case VIDIOC_G_INPUT\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_G_INPUT\n", __func__);
 		*index = cam->current_input;
 		break;
 	}
 
 	case VIDIOC_S_INPUT: {
 		int *index = arg;
-		pr_debug("   case VIDIOC_S_INPUT\n");
+		dev_dbg(cam->dev, "%s: VIDIOC_S_INPUT\n", __func__);
 		if (*index >= MXC_V4L2_CAPTURE_NUM_INPUTS) {
 			retval = -EINVAL;
 			break;
@@ -2368,7 +2340,8 @@ static long mxc_v4l_do_ioctl(struct file *file,
 		if (cam->sensor)
 			retval = vidioc_int_enum_fmt_cap(cam->sensor, f);
 		else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(VIDIOC_ENUM_FMT): no sensor\n",
+				__func__);
 			retval = -ENODEV;
 		}
 		break;
@@ -2378,7 +2351,8 @@ static long mxc_v4l_do_ioctl(struct file *file,
 		if (cam->sensor)
 			retval = vidioc_int_enum_framesizes(cam->sensor, fsize);
 		else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(VIDIOC_ENUM_FRAMESIZES): no sensor\n",
+				__func__);
 			retval = -ENODEV;
 		}
 		break;
@@ -2389,7 +2363,8 @@ static long mxc_v4l_do_ioctl(struct file *file,
 			retval = vidioc_int_enum_frameintervals(cam->sensor,
 								fival);
 		} else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(VIDIOC_ENUM_FRAMEINTERVALS): no sensor\n",
+				__func__);
 			retval = -ENODEV;
 		}
 		break;
@@ -2401,7 +2376,8 @@ static long mxc_v4l_do_ioctl(struct file *file,
 		if (cam->sensor)
 			retval = vidioc_int_g_chip_ident(cam->sensor, (int *)p);
 		else {
-			pr_err("ERROR: v4l2 capture: slave not found!\n");
+			dev_err(cam->dev, "%s(VIDIOC_DBG_G_CHIP_IDENT): no sensor\n",
+				__func__);
 			retval = -ENODEV;
 		}
 		break;
@@ -2413,7 +2389,8 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	case VIDIOC_G_FREQUENCY:
 	case VIDIOC_S_FREQUENCY:
 	default:
-		pr_debug("   case default or not supported\n");
+		dev_dbg(cam->dev, "%s: case default or not supported\n",
+			  __func__);
 		retval = -EINVAL;
 		break;
 	}
@@ -2421,7 +2398,8 @@ static long mxc_v4l_do_ioctl(struct file *file,
 	if (ioctlnr != VIDIOC_DQBUF)
 		up(&cam->busy_lock);
 
-	pr_debug("   exiting ioctl with retval=%d\n", retval);
+	dev_dbg(cam->dev, "%s: exiting with retval=%d\n",
+		  __func__, retval);
 
 	return retval;
 }
@@ -2434,7 +2412,6 @@ static long mxc_v4l_do_ioctl(struct file *file,
 static long mxc_v4l_ioctl(struct file *file, unsigned int cmd,
 			 unsigned long arg)
 {
-	pr_debug("In MVC:mxc_v4l_ioctl\n");
 	return video_usercopy(file, cmd, arg, mxc_v4l_do_ioctl);
 }
 
@@ -2454,9 +2431,8 @@ static int mxc_mmap(struct file *file, struct vm_area_struct *vma)
 	int res = 0;
 	cam_data *cam = video_get_drvdata(dev);
 
-	pr_debug("In MVC:mxc_mmap\n");
-	pr_debug("   pgoff=0x%lx, start=0x%lx, end=0x%lx\n",
-		 vma->vm_pgoff, vma->vm_start, vma->vm_end);
+	dev_dbg(&dev->dev, "%s: pgoff=0x%lx, start=0x%lx, end=0x%lx\n",
+		  __func__, vma->vm_pgoff, vma->vm_start, vma->vm_end);
 
 	/* make this _really_ smp-safe */
 	if (down_interruptible(&cam->busy_lock))
@@ -2467,8 +2443,7 @@ static int mxc_mmap(struct file *file, struct vm_area_struct *vma)
 
 	if (remap_pfn_range(vma, vma->vm_start,
 			    vma->vm_pgoff, size, vma->vm_page_prot)) {
-		pr_err("ERROR: v4l2 capture: mxc_mmap: "
-			"remap_pfn_range failed\n");
+		dev_err(&dev->dev, "%s: remap_pfn_range failed\n", __func__);
 		res = -ENOBUFS;
 		goto mxc_mmap_exit;
 	}
@@ -2495,8 +2470,6 @@ static unsigned int mxc_poll(struct file *file, struct poll_table_struct *wait)
 	cam_data *cam = video_get_drvdata(dev);
 	wait_queue_head_t *queue = NULL;
 	int res = POLLIN | POLLRDNORM;
-
-	pr_debug("In MVC:mxc_poll\n");
 
 	if (down_interruptible(&cam->busy_lock))
 		return -EINTR;
@@ -2554,8 +2527,6 @@ static void camera_callback(u32 mask, void *dev)
 	if (cam == NULL)
 		return;
 
-	pr_debug("In MVC:camera_callback\n");
-
 	spin_lock(&cam->queue_int_lock);
 	spin_lock(&cam->dqueue_int_lock);
 	if (!list_empty(&cam->working_q)) {
@@ -2587,8 +2558,7 @@ static void camera_callback(u32 mask, void *dev)
 			cam->enc_counter++;
 			wake_up_interruptible(&cam->enc_queue);
 		} else
-			pr_err("ERROR: v4l2 capture: camera_callback: "
-				"buffer not queued\n");
+			dev_err(cam->dev, "%s: buffer not queued\n", __func__);
 	}
 
 next:
@@ -2630,39 +2600,41 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 	const struct of_device_id *of_id =
 			of_match_device(mxc_v4l2_dt_ids, &pdev->dev);
 	struct device_node *np = pdev->dev.of_node;
+	struct device *dev = &pdev->dev;
 	int ipu_id, csi_id, mclk_source;
 	unsigned vdev;
 	int ret = 0;
 	struct v4l2_device *v4l2_dev;
 
-	pr_debug("In MVC: init_camera_struct\n");
+	dev_dbg(dev, "init_camera_struct\n");
 
 	ret = of_property_read_u32(np, "vdev", &vdev);
 	if (ret) {
-		dev_err(&pdev->dev, "vdev missing or invalid\n");
+		dev_err(dev, "vdev missing or invalid\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "ipu_id", &ipu_id);
 	if (ret) {
-		dev_err(&pdev->dev, "ipu_id missing or invalid\n");
+		dev_err(dev, "ipu_id missing or invalid\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "csi_id", &csi_id);
 	if (ret) {
-		dev_err(&pdev->dev, "csi_id missing or invalid\n");
+		dev_err(dev, "csi_id missing or invalid\n");
 		return ret;
 	}
 
 	ret = of_property_read_u32(np, "mclk_source", &mclk_source);
 	if (ret) {
-		dev_err(&pdev->dev, "sensor mclk missing or invalid\n");
+		dev_err(dev, "sensor mclk missing or invalid\n");
 		return ret;
 	}
 
 	/* Default everything to 0 */
 	memset(cam, 0, sizeof(cam_data));
+	cam->dev = dev;
 
 	/* get devtype to distinguish if the cpu is imx5 or imx6
 	 * IMX5_V4L2 specify the cpu is imx5
@@ -2674,10 +2646,10 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 
 	cam->ipu = ipu_get_soc(ipu_id);
 	if (cam->ipu == NULL) {
-		pr_err("ERROR: v4l2 capture: failed to get ipu\n");
+		dev_err(dev, "failed to get ipu\n");
 		return -EINVAL;
 	} else if (cam->ipu == ERR_PTR(-ENODEV)) {
-		pr_err("ERROR: v4l2 capture: get invalid ipu\n");
+		dev_err(dev, "get invalid ipu\n");
 		return -ENODEV;
 	}
 
@@ -2691,18 +2663,18 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 	*(cam->video_dev) = mxc_v4l_template;
 
 	video_set_drvdata(cam->video_dev, cam);
-	dev_set_drvdata(&pdev->dev, (void *)cam);
+	dev_set_drvdata(dev, (void *)cam);
 	cam->video_dev->minor = -1;
 
 	v4l2_dev = kzalloc(sizeof(*v4l2_dev), GFP_KERNEL);
 	if (!v4l2_dev) {
-		dev_err(&pdev->dev, "failed to allocate v4l2_dev structure\n");
+		dev_err(dev, "failed to allocate v4l2_dev structure\n");
 		video_device_release(cam->video_dev);
 		return -ENOMEM;
 	}
 
-	if (v4l2_device_register(&pdev->dev, v4l2_dev) < 0) {
-		dev_err(&pdev->dev, "register v4l2 device failed\n");
+	if (v4l2_device_register(dev, v4l2_dev) < 0) {
+		dev_err(dev, "register v4l2 device failed\n");
 		video_device_release(cam->video_dev);
 		kfree(v4l2_dev);
 		return -ENODEV;
@@ -2816,14 +2788,19 @@ static DEVICE_ATTR(fsl_csi_property, S_IRUGO, show_csi, NULL);
  */
 static int mxc_v4l2_probe(struct platform_device *pdev)
 {
+	struct device *dev = &pdev->dev;
+	int err;
+
 	/* Create cam and initialize it. */
 	cam_data *cam = kmalloc(sizeof(cam_data), GFP_KERNEL);
 	if (cam == NULL) {
-		pr_err("ERROR: v4l2 capture: failed to register camera\n");
+		dev_err(dev, "failed to register camera\n");
 		return -1;
 	}
 
-	init_camera_struct(cam, pdev);
+	err = init_camera_struct(cam, pdev);
+	if (err)
+		return err;
 	pdev->dev.release = camera_platform_release;
 
 	/* Set up the v4l2 device and register it*/
@@ -2835,25 +2812,28 @@ static int mxc_v4l2_probe(struct platform_device *pdev)
 		< 0) {
 		kfree(cam);
 		cam = NULL;
-		pr_err("ERROR: v4l2 capture: video_register_device failed\n");
+		dev_err(dev, "video_register_device failed\n");
 		return -1;
 	}
-	pr_debug("   Video device registered: %s #%d\n",
-		 cam->video_dev->name, cam->video_dev->minor);
+
+	dev_info(dev, "V4L2 device '%s' on IPU%d_CSI%d registered as %s\n",
+		cam->video_dev->name,
+		cam->ipu_id + 1, cam->csi,
+		video_device_node_name(cam->video_dev));
 
 	if (device_create_file(&cam->video_dev->dev,
 			&dev_attr_fsl_v4l2_capture_property))
-		dev_err(&pdev->dev, "Error on creating sysfs file"
+		dev_err(dev, "Error on creating sysfs file"
 			" for capture\n");
 
 	if (device_create_file(&cam->video_dev->dev,
 			&dev_attr_fsl_v4l2_overlay_property))
-		dev_err(&pdev->dev, "Error on creating sysfs file"
+		dev_err(dev, "Error on creating sysfs file"
 			" for overlay\n");
 
 	if (device_create_file(&cam->video_dev->dev,
 			&dev_attr_fsl_csi_property))
-		dev_err(&pdev->dev, "Error on creating sysfs file"
+		dev_err(dev, "Error on creating sysfs file"
 			" for csi number\n");
 
 	return 0;
@@ -2871,8 +2851,7 @@ static int mxc_v4l2_remove(struct platform_device *pdev)
 {
 	cam_data *cam = (cam_data *)platform_get_drvdata(pdev);
 	if (cam->open_count) {
-		pr_err("ERROR: v4l2 capture:camera open "
-			"-- setting ops to NULL\n");
+		dev_err(&pdev->dev, "camera open -- setting ops to NULL\n");
 		return -EBUSY;
 	} else {
 		struct v4l2_device *v4l2_dev = cam->video_dev->v4l2_dev;
@@ -2883,7 +2862,7 @@ static int mxc_v4l2_remove(struct platform_device *pdev)
 		device_remove_file(&cam->video_dev->dev,
 			&dev_attr_fsl_csi_property);
 
-		pr_info("V4L2 freeing image input device\n");
+		dev_info(&pdev->dev, "V4L2 freeing image input device\n");
 		v4l2_int_device_unregister(cam->self);
 		video_unregister_device(cam->video_dev);
 
@@ -2894,7 +2873,7 @@ static int mxc_v4l2_remove(struct platform_device *pdev)
 		kfree(v4l2_dev);
 	}
 
-	pr_info("V4L2 unregistering video\n");
+	dev_info(&pdev->dev, "V4L2 unregistering video\n");
 	return 0;
 }
 
@@ -2913,7 +2892,7 @@ static int mxc_v4l2_suspend(struct platform_device *pdev, pm_message_t state)
 {
 	cam_data *cam = platform_get_drvdata(pdev);
 
-	pr_debug("In MVC:mxc_v4l2_suspend\n");
+	dev_dbg(&pdev->dev, "in mxc_v4l2_suspend\n");
 
 	if (cam == NULL)
 		return -1;
@@ -2959,8 +2938,6 @@ static int mxc_v4l2_suspend(struct platform_device *pdev, pm_message_t state)
 static int mxc_v4l2_resume(struct platform_device *pdev)
 {
 	cam_data *cam = platform_get_drvdata(pdev);
-
-	pr_debug("In MVC:mxc_v4l2_resume\n");
 
 	if (cam == NULL)
 		return -1;
@@ -3023,17 +3000,16 @@ static int mxc_v4l2_master_attach(struct v4l2_int_device *slave)
 	int i;
 	struct sensor_data *sdata = slave->priv;
 
-	pr_debug("In MVC: mxc_v4l2_master_attach\n");
-	pr_debug("   slave.name = %s\n", slave->name);
-	pr_debug("   master.name = %s\n", slave->u.slave->master->name);
+	dev_dbg(cam->dev, "%s: slave name = %s, master name = %s\n",
+		  __func__, slave->name, slave->u.slave->master->name);
 
 	if (slave == NULL) {
-		pr_err("ERROR: v4l2 capture: slave parameter not valid.\n");
+		dev_err(cam->dev, "%s: slave parameter not valid.\n", __func__);
 		return -1;
 	}
 
 	if (sdata->vdev != cam->vdev) {
-		pr_debug("%s: vdev doesn't match\n", __func__);
+		dev_dbg(cam->dev, "%s: vdev doesn't match\n", __func__);
 		return -1;
 	}
 
@@ -3043,8 +3019,8 @@ static int mxc_v4l2_master_attach(struct v4l2_int_device *slave)
 		cam->all_sensors[cam->sensor_index] = slave;
 		cam->sensor_index++;
 	} else {
-		pr_err("ERROR: v4l2 capture: slave number exceeds "
-		       "the maximum.\n");
+		dev_err(cam->dev, "%s: slave number exceeds "
+			"the maximum.\n", __func__);
 		return -1;
 	}
 
@@ -3076,18 +3052,12 @@ static int mxc_v4l2_master_attach(struct v4l2_int_device *slave)
 
 	cam->v2f = cam_fmt;
 
-	pr_debug("End of %s: v2f pix widthxheight %d x %d\n",
-		 __func__,
-		 cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height);
-	pr_debug("End of %s: crop_bounds widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_bounds.width, cam->crop_bounds.height);
-	pr_debug("End of %s: crop_defrect widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_defrect.width, cam->crop_defrect.height);
-	pr_debug("End of %s: crop_current widthxheight %d x %d\n",
-		 __func__,
-		 cam->crop_current.width, cam->crop_current.height);
+	dev_dbg(cam->dev, "%s: v2f %d x %d, crop bounds %d x %d, "
+		  "crop_defrect %d x %d, crop_current %d x %d\n",
+		  __func__, cam->v2f.fmt.pix.width, cam->v2f.fmt.pix.height,
+		  cam->crop_bounds.width, cam->crop_bounds.height,
+		  cam->crop_defrect.width, cam->crop_defrect.height,
+		  cam->crop_current.width, cam->crop_current.height);
 
 	return 0;
 }
@@ -3100,7 +3070,7 @@ static void mxc_v4l2_master_detach(struct v4l2_int_device *slave)
 	unsigned int i;
 	cam_data *cam = slave->u.slave->master->priv;
 
-	pr_debug("In MVC:mxc_v4l2_master_detach\n");
+	dev_dbg(cam->dev, "in %s\n", __func__);
 
 	if (cam->sensor_index > 1) {
 		for (i = 0; i < cam->sensor_index; i++) {

@@ -107,6 +107,7 @@ struct camera_sensor {
  * common v4l2 driver structure.
  */
 typedef struct _cam_data {
+	struct device *dev;
 	struct video_device *video_dev;
 	int device_type;
 
