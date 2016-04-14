@@ -19,6 +19,8 @@ obj-$(CONFIG_MXC_CAMERA_SUBDEV_PIPELINE) += mxc_subdev_pipeline.o
 obj-$(CONFIG_MXC_CAMERA_SUBDEV_MIPI) += mxc_subdev_mipi.o
 obj-$(CONFIG_MXC_CAMERA_SUBDEV_PARALLEL) += mxc_subdev_parallel.o
 
+obj-$(CONFIG_SSMN_AP0100_M034) += ap0100_m034.o
+
 adv7180_tvin-objs := adv7180.o
 obj-$(CONFIG_MXC_TVIN_ADV7180) += adv7180_tvin.o
 
