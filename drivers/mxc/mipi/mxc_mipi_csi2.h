@@ -39,7 +39,7 @@ struct mipi_csi2_info {
 	struct clk	*pixel_clk;
 	void __iomem	*mipi_csi2_base;
 	struct platform_device	*pdev;
-
+	unsigned vdev;
 	struct mutex mutex_lock;
 };
 
