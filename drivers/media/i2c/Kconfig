@@ -716,6 +716,15 @@ config VIDEO_MAX927X
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called max927x.
+
+config VIDEO_TC35874X
+	tristate "TC35874X MIPI-parallel bridge"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	---help---
+	  Limited support for the Toshiba TC35874X MIPI-parallel bridge
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called tc35874x.
 endmenu
 
 menu "Sensors used on soc_camera driver"
