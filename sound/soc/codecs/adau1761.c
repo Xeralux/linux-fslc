@@ -832,7 +832,7 @@ int adau1761_probe(struct device *dev, struct regmap *regmap,
 		firmware_name = NULL;
 	} else {
 		dai_drv = &adau1761_dai_driver;
-		firmware_name = ADAU1761_FIRMWARE;
+		firmware_name = NULL; /* ADAU1761_FIRMWARE; */
 	}
 
 	ret = adau17x1_probe(dev, regmap, type, switch_mode, firmware_name);
