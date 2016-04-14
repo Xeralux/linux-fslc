@@ -285,7 +285,7 @@ struct ipu_task_entry {
 	u8	ipu_id;
 	u8	task_in_list;
 	u8	split_done;
-	struct mutex split_lock;
+	spinlock_t split_lock;
 	struct mutex vdic_lock;
 	wait_queue_head_t split_waitq;
 
@@ -363,6 +363,8 @@ static atomic_t frame_no;
 static struct class *ipu_class;
 static struct device *ipu_dev;
 static int debug;
+static struct lock_class_key vdic_lock_key;
+static struct lock_class_key chantbl_lock_key;
 module_param(debug, int, 0600);
 #ifdef DBG_IPU_PERF
 static struct timespec ts_frame_max;
@@ -1508,10 +1510,10 @@ static inline int sp_task_check_done(struct ipu_split_task *sp_task,
 	int i;
 	int ret = 0;
 	struct ipu_task_entry *tsk;
-	struct mutex *lock = &parent->split_lock;
+	spinlock_t *lock = &parent->split_lock;
 
 	*idx = -EINVAL;
-	mutex_lock(lock);
+	spin_lock(lock);
 	for (i = 0; i < num; i++) {
 		tsk = sp_task[i].child_task;
 		if (tsk && tsk->split_done) {
@@ -1522,7 +1524,7 @@ static inline int sp_task_check_done(struct ipu_split_task *sp_task,
 	}
 
 out:
-	mutex_unlock(lock);
+	spin_unlock(lock);
 	return ret;
 }
 
@@ -1718,13 +1720,14 @@ static int queue_split_task(struct ipu_task_entry *t,
 	int ret = 0;
 	int i, j;
 	struct ipu_task_entry *tsk = NULL;
-	struct mutex *lock = &t->split_lock;
+	spinlock_t *lock = &t->split_lock;
 	struct mutex *vdic_lock = &t->vdic_lock;
 
 	dev_dbg(t->dev, "Split task 0x%p, no-0x%x, size:%d\n",
 			 t, t->task_no, size);
-	mutex_init(lock);
+	spin_lock_init(lock);
 	mutex_init(vdic_lock);
+	lockdep_set_class(vdic_lock, &vdic_lock_key);
 	init_waitqueue_head(&t->split_waitq);
 	INIT_LIST_HEAD(&t->split_list);
 	for (j = 0; j < size; j++) {
@@ -3036,7 +3039,7 @@ static void get_res_do_task(struct ipu_task_entry *t)
 {
 	uint32_t	found;
 	uint32_t	split_child;
-	struct mutex	*lock;
+	spinlock_t	*lock;
 
 	found = get_vdoa_ipu_res(t);
 	if (!found) {
@@ -3063,9 +3066,9 @@ static void get_res_do_task(struct ipu_task_entry *t)
 	split_child = need_split(t) && t->parent;
 	if (split_child) {
 		lock = &t->parent->split_lock;
-		mutex_lock(lock);
+		spin_lock(lock);
 		t->split_done = 1;
-		mutex_unlock(lock);
+		spin_unlock(lock);
 		wake_up(&t->parent->split_waitq);
 	}
 
@@ -3079,7 +3082,7 @@ static void wait_split_task_complete(struct ipu_task_entry *parent,
 	int ret = 0, rc;
 	int j, idx = -1;
 	unsigned long flags;
-	struct mutex *lock = &parent->split_lock;
+	spinlock_t *lock = &parent->split_lock;
 	int k, busy_vf, busy_pp;
 	struct ipu_soc *ipu;
 	DECLARE_PERF_VAR;
@@ -3104,13 +3107,13 @@ static void wait_split_task_complete(struct ipu_task_entry *parent,
 				continue;
 			}
 			tsk = sp_task[idx].child_task;
-			mutex_lock(lock);
+			spin_lock(lock);
 			if (!tsk->split_done || !tsk->ipu)
 				dev_err(tsk->dev,
 				"ERR:no-0x%x,split not done:%d/null ipu:0x%p\n",
 				 tsk->task_no, tsk->split_done, tsk->ipu);
 			tsk->split_done = 0;
-			mutex_unlock(lock);
+			spin_unlock(lock);
 
 			dev_dbg(tsk->dev,
 				"[0x%p] no-0x%x sp_tsk[%d] done,state:%d.\n",
@@ -3563,19 +3566,20 @@ static long mxc_ipu_ioctl(struct file *file,
 			list_for_each_entry(mem, &ipu_alloc_list, list) {
 				if (mem->phy_addr == offset) {
 					list_del(&mem->list);
-					dma_free_coherent(ipu_dev,
-							  mem->size,
-							  mem->cpu_addr,
-							  mem->phy_addr);
-					kfree(mem);
 					ret = 0;
 					break;
 				}
 			}
 			mutex_unlock(&ipu_alloc_lock);
-			if (0 == ret)
+			if (0 == ret) {
+				dma_free_coherent(ipu_dev,
+						  mem->size,
+						  mem->cpu_addr,
+						  mem->phy_addr);
+				kfree(mem);
 				dev_dbg(ipu_dev, "free %d bytes @ 0x%08X\n",
 					mem->size, mem->phy_addr);
+			}
 
 			break;
 		}
@@ -3623,22 +3627,24 @@ static int mxc_ipu_release(struct inode *inode, struct file *file)
 {
 	struct ipu_alloc_list *mem;
 	struct ipu_alloc_list *n;
+	LIST_HEAD(to_free);
 
 	mutex_lock(&ipu_alloc_lock);
 	list_for_each_entry_safe(mem, n, &ipu_alloc_list, list) {
 		if ((mem->cpu_addr != 0) &&
-			(file->private_data == mem->file_index)) {
-			list_del(&mem->list);
-			dma_free_coherent(ipu_dev,
-					  mem->size,
-					  mem->cpu_addr,
-					  mem->phy_addr);
-			dev_dbg(ipu_dev, "rel-free %d bytes @ 0x%08X\n",
-				mem->size, mem->phy_addr);
-			kfree(mem);
-		}
+			(file->private_data == mem->file_index))
+			list_move(&mem->list, &to_free);
 	}
 	mutex_unlock(&ipu_alloc_lock);
+	list_for_each_entry_safe(mem, n, &to_free, list) {
+		dma_free_coherent(ipu_dev,
+				  mem->size,
+				  mem->cpu_addr,
+				  mem->phy_addr);
+		dev_dbg(ipu_dev, "rel-free %d bytes @ 0x%08X\n",
+			mem->size, mem->phy_addr);
+		kfree(mem);
+	}
 	atomic_dec(&file_index);
 
 	return 0;
@@ -3683,6 +3689,7 @@ int register_ipu_device(struct ipu_soc *ipu, int id)
 		ipu_dev->coherent_dma_mask = DMA_BIT_MASK(32);
 
 		mutex_init(&ipu_ch_tbl.lock);
+		lockdep_set_class(&ipu_ch_tbl.lock, &chantbl_lock_key);
 	}
 	max_ipu_no = ++id;
 	ipu->rot_dma[0].size = 0;
