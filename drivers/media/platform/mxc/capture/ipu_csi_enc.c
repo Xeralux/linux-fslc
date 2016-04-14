@@ -136,11 +136,13 @@ static int csi_enc_setup(cam_data *cam)
 
 	if (mipi_csi2_info) {
 		if (mipi_csi2_get_status(mipi_csi2_info)) {
+			unsigned vdev_id = mipi_csi2_get_vdev(mipi_csi2_info);
 			ipu_id = mipi_csi2_get_bind_ipu(mipi_csi2_info);
 			csi_id = mipi_csi2_get_bind_csi(mipi_csi2_info);
 
 			if (cam->ipu == ipu_get_soc(ipu_id)
-				&& cam->csi == csi_id) {
+				&& cam->csi == csi_id
+				&& cam->vdev == vdev_id) {
 				params.csi_mem.mipi_en = true;
 				params.csi_mem.mipi_vc =
 				mipi_csi2_get_virtual_channel(mipi_csi2_info);
@@ -308,11 +310,13 @@ static int csi_enc_disabling_tasks(void *private)
 
 	if (mipi_csi2_info) {
 		if (mipi_csi2_get_status(mipi_csi2_info)) {
+			unsigned vdev_id = mipi_csi2_get_vdev(mipi_csi2_info);
 			ipu_id = mipi_csi2_get_bind_ipu(mipi_csi2_info);
 			csi_id = mipi_csi2_get_bind_csi(mipi_csi2_info);
 
 			if (cam->ipu == ipu_get_soc(ipu_id)
-				&& cam->csi == csi_id)
+				&& cam->csi == csi_id
+				&& cam->vdev == vdev_id)
 				mipi_csi2_pixelclk_disable(mipi_csi2_info);
 		}
 	}
