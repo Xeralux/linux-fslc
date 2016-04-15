@@ -314,11 +314,6 @@
 	pinctrl-0 = <&pinctrl_ecspi2_mn>;
 	status = "okay";
 
-	spidev@0 {
-		compatible = "spidev";
-		spi-max-frequency = <12000000>;
-		reg = <0>;
-	};
 };
 
 &ecspi3 {
@@ -342,12 +337,6 @@
 		interrupts = <0 2>;
 	};
 
-//	/*  Entry for basic bus testing.  */
-//	spidev@0 {
-//		compatible = "spidev";
-//		spi-max-frequency = <12000000>;
-//		reg = <0>;
-//	};
 };
 
 
