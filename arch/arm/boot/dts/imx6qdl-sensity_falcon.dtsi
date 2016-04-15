@@ -510,7 +510,6 @@
 		compatible = "nxp,pca9557";
 		gpio-controller;
 		#gpio-cells = <2>;
-		gpio_base = <248>;	/* /sys/kernel/debug/gpio */
 		reg = <0x18>;
 	};
 };
