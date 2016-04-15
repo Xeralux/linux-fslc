@@ -450,6 +450,7 @@ static void power_up_remote(struct max927x *me)
 		(ret < 0 ? "failed" : "succeeded"), ret, me->power_on_mdelay);
 	if (me->power_on_mdelay != 0)
 		msleep(me->power_on_mdelay);
+	smp_mb__before_atomic();
 	atomic_xchg(&me->remote_power_enabled, 1);
 }
 
@@ -919,6 +920,7 @@ static int gpio_dir_in(struct gpio_chip *gc, unsigned num)
 		if (ret == 0)
 			ret = ser_update(me, MAX9271_GPIO_EN, gpio_en);
 		if (ret == 0) {
+			smp_mb__before_atomic();
 			atomic_xchg(&me->ser_gpios_set, gpio_set);
 			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
 		}
@@ -965,6 +967,7 @@ static int gpio_dir_out(struct gpio_chip *gc, unsigned num, int outval)
 		if (ret == 0)
 			ret = ser_update(me, MAX9271_GPIO_EN, gpio_en);
 		if (ret == 0) {
+			smp_mb__before_atomic();
 			atomic_xchg(&me->ser_gpios_set, gpio_set);
 			atomic_xchg(&me->ser_gpios_enabled, gpio_en);
 		}
@@ -1011,8 +1014,10 @@ static void gpio_set(struct gpio_chip *gc, unsigned num, int setval)
 				dev_dbg(me->dev, "%s: new gpio_set=0x%x\n",
 					__func__, gpio_set);
 				ret = ser_update(me, MAX9271_GPIO_SET, gpio_set);
-				if (ret == 0)
+				if (ret == 0) {
+					smp_mb__before_atomic();
 					atomic_xchg(&me->ser_gpios_set, gpio_set);
+				}
 			}
 		}
 	} else {
@@ -1198,12 +1203,14 @@ static int link_test(struct max927x *me, int count_singles)
 				break;
 			if (ret == -ETIMEDOUT) {
 				dev_warn(me->dev, "%s: timeout error\n", __func__);
+				smp_mb__before_atomic();
 				atomic_xchg(&me->i2c_xfer_flags, oldflags);
 				return ret;
 			}
 		}
 		if (j >= i2c_retries) {
 			dev_warn(me->dev, "%s: too many retries on cycle %d\n", __func__, i);
+			smp_mb__before_atomic();
 			atomic_xchg(&me->i2c_xfer_flags, oldflags);
 			return -EIO;
 		} else
@@ -1222,6 +1229,7 @@ static int link_test(struct max927x *me, int count_singles)
 	}
 
 	dev_notice(me->dev, "%s: exiting, ret=%d", __func__, ret);
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_xfer_flags, oldflags);
 	return ret;
 }
@@ -1361,6 +1369,7 @@ static ssize_t deserializer_i2c_test(struct device *dev, struct device_attribute
 	if (atomic_cmpxchg(&me->i2c_test_in_progress, 0, 1))
 		return -EBUSY;
 	run_i2c_test(me, MAX9272_CHIPID, cycles);
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_test_in_progress, 0);
 	return count;
 }
@@ -1376,6 +1385,7 @@ static ssize_t serializer_i2c_test(struct device *dev, struct device_attribute *
 	if (atomic_cmpxchg(&me->i2c_test_in_progress, 0, 1))
 		return -EBUSY;
 	run_i2c_test(me, MAX9271_CHIPID, cycles);
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_test_in_progress, 0);
 	return count;
 }
@@ -1402,6 +1412,7 @@ static ssize_t i2c_test_results(struct device *dev, struct device_attribute *att
 			  d->write_retries, d->read_retries, d->mismatches,
 			  d->max_retries, d->transaction_count,
 			  (d->cycles == 0 ? "<none>" : (d->failures == 0 ? "PASS" : "FAIL")));
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_test_in_progress, 0);
 	return count;
 }
@@ -1494,6 +1505,7 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 	mutex_lock(&me->lock);
 	me->curstate = STATE_UNINITIALIZED;
 	me->training = 0;
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
 
 	device_for_each_child(&me->adap.dev, me, unregister_remote_i2c_device);
@@ -1528,6 +1540,7 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 finish_reset:
 	me->adap.dev.of_node = me->i2c_node;
 	of_i2c_register_devices(&me->adap);
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_xfer_flags, 0);
 	me->curstate = STATE_READY;
 	mutex_unlock(&me->lock);
@@ -1731,6 +1744,7 @@ static void max927x_finish_probe(struct max927x *me)
 {
 	int ret;
 
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
 	/*
 	 * Now that the serializer/deserializer pair is fully up
@@ -1766,6 +1780,7 @@ static void max927x_finish_probe(struct max927x *me)
 		dev_err(me->dev, "could not create sysfs groups\n");
 
 	me->curstate = STATE_READY;
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_xfer_flags, 0);
 	mutex_unlock(&me->lock);
 	return;
@@ -1779,6 +1794,7 @@ static void initial_training(struct work_struct *work)
 
 	mutex_lock(&me->lock);
 	me->training = 1;
+	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
 
 	for (logain = 0; logain < 2; logain++) {
