@@ -174,20 +174,16 @@
 	};
 
 	rfkill_slot1: rfkill-slot1 {
-		compatible = "rfkill-gpio";
-		rfkill-name = "pcie-slot1";
-		rfkill-type = <5>;
-		gpios = <&gpio4 14 0>;
-		gpio-names = "shutdown";
+		compatible = "net,rfkill-gpio";
+		type = <5>;
+		shutdown-gpios = <&gpio4 14 0>;
 		enable-quirk;
 	};
 
 	rfkill_slot2: rfkill-slot2 {
-		compatible = "rfkill-gpio";
-		rfkill-name = "pcie-slot2";
-		rfkill-type = <5>;
-		gpios = <&gpio3 31 0>;
-		gpio-names = "shutdown";
+		compatible = "net,rfkill-gpio";
+		type = <5>;
+		shutdown-gpios = <&gpio3 31 0>;
 	};
 
 	camboard_ch0_reset: camboard-ch0-reset {
@@ -304,11 +300,6 @@
 	pinctrl-0 = <&pinctrl_ecspi1_mn>;
 	status = "okay";
 
-	spidev@0 {
-		compatible = "spidev";
-		spi-max-frequency = <12000000>;
-		reg = <0>;
-	};
 };
 
 &ecspi2 {
@@ -319,11 +310,6 @@
 	pinctrl-0 = <&pinctrl_ecspi2_mn>;
 	status = "okay";
 
-	spidev@0 {
-		compatible = "spidev";
-		spi-max-frequency = <12000000>;
-		reg = <0>;
-	};
 };
 
 &ecspi3 {
@@ -347,12 +333,6 @@
 		interrupts = <0 2>;
 	};
 
-//	/*  Entry for basic bus testing.  */
-//	spidev@0 {
-//		compatible = "spidev";
-//		spi-max-frequency = <12000000>;
-//		reg = <0>;
-//	};
 };
 
 
@@ -515,7 +495,6 @@
 		compatible = "nxp,pca9557";
 		gpio-controller;
 		#gpio-cells = <2>;
-		gpio_base = <248>;	/* /sys/kernel/debug/gpio */
 		reg = <0x18>;
 	};
 };
@@ -547,12 +526,12 @@
 		reg = <0x48>;
 		remote-reg = <0x40>;
 		slave-supply = <&camboard_ch0_fixed_5v0>;
-		slave-on-delay-ms = <1150>;
+		slave-on-delay-ms = <1250>;
 		/*The voltage goes from about 5V to 1.125V after 2s*/
 		/*Longer does not really help*/
 		slave-off-delay-ms = <2000>;
     /*REVTXAMP REV_TRF REV_DIG_FLT REV_LOGAIN REV_HIGAIN REV_HIBW REV_HIVTH I2C_SLVSH I2C_MSTBT CMLLVL PREEMP SPREAD*/
-    cfg-0 = <5 0 0 0 0 0 0 3 4 10 0 0>;
+    cfg-0 = <10 0 0 1 0 0 0 3 4 10 0 0>;
 
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -705,12 +684,12 @@
 		reg = <0x48>;
 		remote-reg = <0x40>;
 		slave-supply = <&camboard_ch1_fixed_5v0>;
-		slave-on-delay-ms = <1150>;
+		slave-on-delay-ms = <1250>;
 		/*The voltage goes from about 5V to 1.125V after 2s*/
 		/*Longer does not really help*/
 		slave-off-delay-ms = <2000>;
     /*REVTXAMP REV_TRF REV_DIG_FLT REV_LOGAIN REV_HIGAIN REV_HIBW REV_HIVTH I2C_SLVSH I2C_MSTBT CMLLVL PREEMP SPREAD*/
-    cfg-0 = <5 0 0 0 0 0 0 3 4 10 0 0>;
+    cfg-0 = <10 0 0 1 0 0 0 3 4 10 0 0>;
 
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -869,7 +848,7 @@
 &usdhc3 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_usdhc3_mn>;
-	cd-gpios = <&gpio6 11 0>;
+	cd-gpios = <&gpio6 11 GPIO_ACTIVE_LOW>;
 	bus-width = <4>;
 	no-1-8-v;
 	status = "okay";
@@ -1309,7 +1288,7 @@
 				MX6QDL_PAD_NANDF_CLE__GPIO6_IO07	PADCTL_GPIO_DEFAULT
 				MX6QDL_PAD_NANDF_WP_B__GPIO6_IO09	PADCTL_GPIO_DEFAULT
 				MX6QDL_PAD_NANDF_RB0__GPIO6_IO10	PADCTL_GPIO_DEFAULT
-				MX6QDL_PAD_NANDF_CS0__GPIO6_IO11	PADCTL_GPIO_DEFAULT
+				MX6QDL_PAD_NANDF_CS0__GPIO6_IO11	0x80000000 /* uSDHC3 CD */
 				MX6QDL_PAD_NANDF_CS1__GPIO6_IO14	PADCTL_GPIO_DEFAULT
 			//	MX6QDL_PAD_NANDF_CS3__GPIO6_IO16	PADCTL_GPIO_DEFAULT
 				MX6QDL_PAD_EIM_BCLK__GPIO6_IO31		PADCTL_GPIO_DEFAULT

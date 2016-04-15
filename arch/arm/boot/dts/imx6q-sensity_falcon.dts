@@ -16,9 +16,19 @@
 / {
 	model = "Sensity Systems Falcon (MX6Q)";
 	compatible = "sensity,falcon", "fsl,imx6q";
+
+	reserved-memory {
+		linux,cma {
+			size = <0x32000000>; /* 800 MiB */
+		};
+	};
 };
 
 &sata {
+	fsl,transmit-level-mV = <1025>;
+	fsl,transmit-boost-mdB = <3330>;
+	fsl,transmit-atten-16ths = <9>;
+	fsl,receive-eq-mdB = <3000>;
 	status = "okay";
 };
 
@@ -47,4 +57,8 @@
 };
 &camboard_ch1_fixed_5v0 {
 	gpio = <&camboard_gpio 3 GPIO_ACTIVE_LOW>;
+};
+
+&gpc {
+	fsl,ldo-bypass = <0>;
 };
