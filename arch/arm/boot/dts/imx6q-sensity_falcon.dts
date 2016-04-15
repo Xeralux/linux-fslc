@@ -19,6 +19,10 @@
 };
 
 &sata {
+	fsl,transmit-level-mV = <1025>;
+	fsl,transmit-boost-mdB = <3330>;
+	fsl,transmit-atten-16ths = <9>;
+	fsl,receive-eq-mdB = <3000>;
 	status = "okay";
 };
 
