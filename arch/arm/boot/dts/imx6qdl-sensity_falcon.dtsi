@@ -304,11 +304,6 @@
 	pinctrl-0 = <&pinctrl_ecspi1_mn>;
 	status = "okay";
 
-	spidev@0 {
-		compatible = "spidev";
-		spi-max-frequency = <12000000>;
-		reg = <0>;
-	};
 };
 
 &ecspi2 {
