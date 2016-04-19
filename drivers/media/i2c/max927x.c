@@ -423,15 +423,8 @@ static int remote_i2c_xfer(struct i2c_adapter *adap,
 		msleep(10);
 	}
 
-	if ((xferflags & I2C_XFER_NOCOUNT) == 0) {
+	if ((xferflags & I2C_XFER_NOCOUNT) == 0)
 		atomic_inc(&me->i2c_retry_counts[(ntries > i2c_retries ? i2c_retries : ntries)]);
-
-		if (WARN_ON(ret < 0)) {
-			atomic_inc(&me->i2c_error_count);
-			dev_warn(me->dev, "I2C transfer to addr 0x%04x error %d after %d tries (%d msgs)\n",
-				 msgs[0].addr, ret, ntries, num);
-		}
-	}
 
 	return ret;
 
