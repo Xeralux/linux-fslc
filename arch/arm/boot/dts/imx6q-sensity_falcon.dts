@@ -16,6 +16,12 @@
 / {
 	model = "Sensity Systems Falcon (MX6Q)";
 	compatible = "sensity,falcon", "fsl,imx6q";
+
+	reserved-memory {
+		linux,cma {
+			size = <0x32000000>; /* 800 MiB */
+		};
+	};
 };
 
 &sata {
