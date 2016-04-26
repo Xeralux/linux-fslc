@@ -58,3 +58,7 @@
 &camboard_ch1_fixed_5v0 {
 	gpio = <&camboard_gpio 3 GPIO_ACTIVE_LOW>;
 };
+
+&gpc {
+	fsl,ldo-bypass = <0>;
+};
