@@ -106,6 +106,7 @@ enum AP0100_REG {
   REG_CAM_AET_FLICKER_FREQ_HZ = 0xC8D1, //1, changes after change-config
   REG_CAM_PGA_PGA_CONTROL = 0xCA80, //bit 1 needs change-config, bit 0 needs vertical blanking
   REG_RULE_AE_WEIGHT_TABLE_0_0 = 0xA40A, //1, changes during vertical blanking
+  REG_CAM_TEMPMON_CTL = 0xCAA8,
   REG_CAM_TEMP_CUR = 0xCAAF,
   REG_CAM_TEMP_MIN = 0xCAB0,
   REG_CAM_TEMP_MAX = 0xCAB1,
@@ -1818,6 +1819,56 @@ static ssize_t sensor_sysfs_write(struct device *dev,
 }
 static DEVICE_ATTR(ap0100_param, 0666, (void *)sensor_sysfs_read, (void *)sensor_sysfs_write);
 
+static int _ap0100_m034_reset_tempmon(struct ap0100_m034_data *data)
+{
+	struct i2c_client *client = data->client;
+	static struct ap0100_m034_reg_data ap0100_tempmon_ctl_regs[] = {
+		{2, REG_CAM_TEMPMON_CTL},
+		{0xC2, REG_CMD, CMD_SYS_SET_STATE, WRITE_IS_CMD},
+	};
+	int ret = 0;
+	unsigned val;
+
+	ret = _ap0100_m034_cmd_status(client, &data->error_count);
+	if (ret < 0) {
+		dev_err(&client->dev, "%s err=%d reading cmd status",
+			__func__, ret);
+		return ret;
+	}
+
+	for (val = 0; ret == 0 && val <= 1; val += 1) {
+		ap0100_tempmon_ctl_regs[0].data = val;
+		ret = _ap0100_handle_registers(client, ap0100_tempmon_ctl_regs,
+					       ARRAY_SIZE(ap0100_tempmon_ctl_regs),
+					       &data->error_count);
+		if (ret < 0)
+			break;
+		msleep(50);
+		ret = _ap0100_m034_cmd_status(client, &data->error_count);
+	}
+
+	if (ret < 0) {
+		dev_err(&client->dev, "%s err=%d updating registers", __func__, ret);
+		return ret;
+	}
+
+	return ret;
+}
+static ssize_t ap0100_reset_tempmon_ctrl(struct device *dev,
+					 struct device_attribute *attr,
+					 const char *buf, size_t count)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	int ret;
+
+	mutex_lock(&data->lock);
+	ret = _ap0100_m034_reset_tempmon(data);
+	mutex_unlock(&data->lock);
+
+	return (ret < 0 ? ret : count);
+}
+static DEVICE_ATTR(tempmon_reset, 0222, NULL, ap0100_reset_tempmon_ctrl);
+
 static ssize_t ap0100_show_min_temp(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
@@ -2331,6 +2382,11 @@ static int _ap0100_m034_probe(struct ap0100_m034_data* data)
 		goto error;
 	}
 
+	ret = _ap0100_m034_reset_tempmon(data);
+	if(ret < 0) {
+		goto error;
+	}
+
 	ret = sysfs_create_group(&dev->kobj, &attr_group);
 	if(ret < 0)
 		goto error;
@@ -2402,6 +2458,7 @@ static struct attribute *init_attributes[] = {
 	&dev_attr_fw_metadata.attr,
 	&dev_attr_serial.attr,
 	&dev_attr_unavailable.attr,
+	&dev_attr_tempmon_reset.attr,
 	&dev_attr_min_temp.attr,
 	&dev_attr_max_temp.attr,
 	&dev_attr_cur_temp.attr,
