@@ -898,11 +898,12 @@ static int snd_pcm_action_lock_irq(struct action_ops *ops,
 				   struct snd_pcm_substream *substream,
 				   int state)
 {
+	unsigned long flags;
 	int res;
 
-	snd_pcm_stream_lock_irq(substream);
+	snd_pcm_stream_lock_irqsave(substream, flags);
 	res = snd_pcm_action(ops, substream, state);
-	snd_pcm_stream_unlock_irq(substream);
+	snd_pcm_stream_unlock_irqrestore(substream, flags);
 	return res;
 }
 
