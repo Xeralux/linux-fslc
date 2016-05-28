@@ -2,7 +2,7 @@
  * Maxim 9721 seralizer/9272 deserializer driver
  *
  * Copyright (c) 2013-2014 Leopard Imaging, Inc.
- * Copyright (c) 2015 Sensity Systems, Inc.
+ * Copyright (c) 2015-2016 Sensity Systems, Inc.
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -33,6 +33,7 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/init.h>
+#include <linux/sched.h>
 #include <linux/types.h>
 #include <linux/slab.h>
 #include <linux/delay.h>
@@ -120,30 +121,11 @@ struct max927x_property {
  * that were successful after <n> retries, where n ranges
  * from 0 to I2C_RETRIES_MAX.
  */
-#define I2C_RETRIES_MAX 15
-#define I2C_RETRIES_DEFAULT 10
+#define I2C_RETRIES_MAX 30
+#define I2C_RETRIES_DEFAULT 20
 static unsigned long i2c_retries = I2C_RETRIES_DEFAULT;
 module_param(i2c_retries, ulong, 0644);
 MODULE_PARM_DESC(i2c_retries, "Default number of times to retry I2C xfers");
-
-/*
- * Most register updates work on the first try, except
- * in the case where the register is on the remote and
- * communication hasn't been fully established yet.
- */
-#define REG_RETRIES 5
-
-static int training_cycles = 1000;
-module_param(training_cycles, int, 0644);
-MODULE_PARM_DESC(training_cycles, "Number of read cycles to perform during link training");
-
-static int training_threshold = 3;
-module_param(training_threshold, int, 0644);
-MODULE_PARM_DESC(training_threshold, "Error/retry threshold during link training, in percent");
-
-static int logain_score_bias = 20;
-module_param(logain_score_bias, int, 0644);
-MODULE_PARM_DESC(login_score_bias, "Smallest difference in retry scores for LOGAIN 0 to be chosen");
 
 /*
  * Driver-private data structures
@@ -152,10 +134,7 @@ MODULE_PARM_DESC(login_score_bias, "Smallest difference in retry scores for LOGA
 struct i2c_test_data {
 	unsigned int cycles;
 	unsigned int failures;
-	unsigned int write_retries;
-	unsigned int read_retries;
 	unsigned int mismatches;
-	unsigned int max_retries;
 	unsigned int transaction_count;
 	char tested_device[32];
 };
@@ -179,8 +158,6 @@ struct max927x {
 	struct i2c_client *ser, *des;
 	struct mutex lock;
 	max927x_state_t curstate;
-	int training;
-	struct work_struct training_work;
 	link_init_fn ctrl_link_init;
 	struct regulator *remote_power;
 	atomic_t remote_power_enabled;
@@ -194,6 +171,7 @@ struct max927x {
 	struct device_node *i2c_node;
 	struct media_pad pads[2]; /* 0=serializer, 1=deserializer */
 	atomic_t i2c_error_count;
+	atomic_t i2c_mismatch_count;
 	atomic_t i2c_retry_counts[I2C_RETRIES_MAX+1];
 	u32 of_cfg_settings[NUM_CFG_PROPS];
 	atomic_t i2c_test_in_progress;
@@ -222,7 +200,7 @@ static int i2c_reg_read(struct i2c_client *client, u8 reg, u8 *val)
 {
 	struct i2c_msg msgs[2];
 	u8 regnum = reg;
-	int ntries, ret;
+	int ret;
 
 	msgs[0].addr = msgs[1].addr = client->addr;
 	msgs[0].flags = 0;
@@ -230,17 +208,15 @@ static int i2c_reg_read(struct i2c_client *client, u8 reg, u8 *val)
 	msgs[0].len = msgs[1].len = 1;
 	msgs[0].buf = &regnum;
 	msgs[1].buf = val;
-	for (ntries = 0, ret = -EIO; ntries < REG_RETRIES && ret < 0;
-	     ret = i2c_transfer(client->adapter, msgs, 2), ntries += 1);
+	ret = i2c_transfer(client->adapter, msgs, 2);
 	return (ret < 0 ? ret : 0);
 }
 
 static int i2c_reg_write(struct i2c_client *client, u8 reg, u8 val)
 {
 	u8 buf[2] = {reg, val};
-	int ntries, ret;
-	for (ntries = 0, ret = -EIO; ntries < REG_RETRIES && ret < 0;
-	     ret = i2c_master_send(client, buf, 2), ntries += 1);
+	int ret;
+	ret = i2c_master_send(client, buf, 2);
 	return (ret < 0 ? ret : 0);
 }
 
@@ -248,35 +224,42 @@ static int i2c_reg_write(struct i2c_client *client, u8 reg, u8 val)
  * Serializer settings
  */
 
-/*
- * ser_set_logain:
- *
- * Just writes the LOGAIN setting into the appropriate register,
- * with no checks.  For use during early setup, when we don't have
- * the reverse channel available for reading back settings.  We
- * write multiple times, to try to make sure the setting succeeds.
- */
-static int ser_set_logain(struct max927x *me)
+static int ser_read_internal(struct max927x *me, max9271_setting_t which, u8 *valp, bool docheck)
 {
-	const struct max927x_setting *s = &max9271_settings[MAX9271_LOGAIN];
-	u8 val = (me->current_logain << s->pos);
-	int i;
-	for (i = 0; i < REG_RETRIES-1; i++)
-		i2c_reg_write(me->ser, s->reg, val);
-	return i2c_reg_write(me->ser, s->reg, val);
+	const struct max927x_setting *s = &max9271_settings[which];
+	u8 val, checkval;
+	int ret = i2c_reg_read(me->ser, s->reg, &val);
+
+	if (ret < 0) {
+		dev_dbg(me->dev, "%s: which=%s, read status=%d\n", __func__, s->name, ret);
+		return ret;
+	}
+	val = (val >> s->pos) & ~(0xFF << s->width);
+	if (docheck) {
+		ret = i2c_reg_read(me->ser, s->reg, &checkval);
+		if (ret < 0) {
+			dev_dbg(me->dev, "%s: which=%s, 2nd read status=%d\n", __func__, s->name, ret);
+			return ret;
+		}
+		checkval = (checkval >> s->pos) & ~(0xFF << s->width);
+		if (val != checkval) {
+			atomic_inc(&me->i2c_mismatch_count);
+			return -EAGAIN;
+		}
+	}
+	*valp = val;
+	return 0;
 }
 
 static int ser_read(struct max927x *me, max9271_setting_t which, u8 *valp)
 {
-	const struct max927x_setting *s = &max9271_settings[which];
-	u8 val;
-	int ret = i2c_reg_read(me->ser, s->reg, &val);
-
-	if (ret < 0)
-		dev_dbg(me->dev, "%s: which=%s, read status=%d\n", __func__, s->name, ret);
-	else
-		*valp = (val >> s->pos) & ~(0xFF << s->width);
-	return ret;
+	int i, ret;
+	for (i = 0; i < 5; i++) {
+		ret = ser_read_internal(me, which, valp, true);
+		if (ret != -EAGAIN)
+			break;
+	}
+	return (ret == -EAGAIN ? -EIO : ret);
 }
 
 static int ser_update_internal(struct max927x *me, max9271_setting_t which, u8 newval, bool docheck)
@@ -326,9 +309,8 @@ static int ser_update_internal(struct max927x *me, max9271_setting_t which, u8 n
 		dev_warn(me->dev, "error %d updating %s in register 0x%x\n", ret, s->name, s->reg);
 	}
 	if (ret >=0 && checkval != updval) {
-		dev_warn(me->dev, "%s: read back val 0x%x mismatch with desired 0x%x updating %s\n",
-			 __func__, val, updval, s->name);
-		ret = -EIO;
+		atomic_inc(&me->i2c_mismatch_count);
+		ret = -EAGAIN;
 	}
 	return ret;
 }
@@ -340,7 +322,13 @@ static int ser_update_nocheck(struct max927x *me, max9272_setting_t which, u8 ne
 
 static int ser_update(struct max927x *me, max9272_setting_t which, u8 newval)
 {
-	return ser_update_internal(me, which, newval, true);
+	int i, ret;
+	for (i = 0; i < 5; i++) {
+		ret = ser_update_internal(me, which, newval, true);
+		if (ret != -EAGAIN)
+			break;
+	}
+	return (ret == -EAGAIN ? -EIO : ret);
 }
 
 /*
@@ -444,7 +432,8 @@ static void power_up_remote(struct max927x *me)
 	if (me->power_on_mdelay != 0)
 		msleep(me->power_on_mdelay);
 	smp_mb__before_atomic();
-	atomic_xchg(&me->remote_power_enabled, 1);
+	if (ret == 0)
+		atomic_xchg(&me->remote_power_enabled, 1);
 }
 
 static void power_down_remote(struct max927x *me)
@@ -532,7 +521,7 @@ static struct attribute_group properties_attr_group = {
 };
 
 static const property_id_t ser_init_properties[] = {
-	CFG_REV_DIG_FLT, CFG_REV_HIGAIN, CFG_REV_HIBW, CFG_REV_HIVTH
+	CFG_REV_DIG_FLT, CFG_REV_LOGAIN, CFG_REV_HIGAIN, CFG_REV_HIBW, CFG_REV_HIVTH
 };
 
 /*
@@ -564,6 +553,8 @@ static int ser_control_init(struct max927x *me)
 
 	for (i = 0; i < ARRAY_SIZE(ser_init_properties); i++) {
 		property_id_t which = ser_init_properties[i];
+		if (which == CFG_REV_LOGAIN)
+			me->current_logain = me->of_cfg_settings[which];
 		ret = ser_update(me, properties[which].setting->idx,
 				 me->of_cfg_settings[which]);
 		if (ret < 0) {
@@ -599,6 +590,7 @@ static int ser_control_init(struct max927x *me)
 
 	power_up_remote(me);
 
+	me->current_rev_amp = me->of_cfg_settings[CFG_REV_AMP];
 	ret = des_update(me, MAX9272_REV_AMP, me->of_cfg_settings[CFG_REV_AMP]);
 	if (ret == 0)
 		ret = des_update(me, MAX9272_REV_TRF, me->of_cfg_settings[CFG_REV_TRF]);
@@ -644,7 +636,6 @@ static int ser_control_init(struct max927x *me)
 	}
 	if (ret < 0) {
 		dev_err(me->dev, "error initializing deserializer: %d\n", ret);
-		power_down_remote(me);
 		return ret;
 	}
 
@@ -666,7 +657,6 @@ static int ser_control_init(struct max927x *me)
 		ret = ser_update(me, MAX9271_HVEN, 1);
 	if (ret < 0) {
 		dev_err(me->dev, "error finalizing serializer config: %d\n", ret);
-		power_down_remote(me);
 		return ret;
 	}
 
@@ -724,53 +714,35 @@ static int des_control_init(struct max927x *me)
 
 	power_up_remote(me);
 
-	if (max9272_rev_amp_to_millivolts(me->current_rev_amp) == 60) {
-		me->current_logain = 1;
-		ret = ser_set_logain(me);
-		dev_notice(me->dev, "resetting LOGAIN to %d: ret=%d\n",
-			   me->current_logain, ret);
-		max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
-		ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
-		dev_notice(me->dev, "resetting REV_AMP to %u mVolts: ret=%d\n",
-			   max9272_rev_amp_to_millivolts(me->current_rev_amp), ret);
-	} else {
-		ret = ser_set_logain(me);
-		if (ret < 0)
-			dev_err(me->dev, "could not initialize LOGAIN\n");
-	}
-
 	/*
 	 * Disable SEREN and enable CLINKEN on the serializer in a single register
 	 * write.  If we can read back the setting, we know the control channel is good.
 	 * Retry/delay loop here is just in case - it shouldn't really be needed.
 	 */
-	for (i = 1; i <= REG_RETRIES; i++) {
+	for (i = 1; i <= 5; i++) {
 		dev_dbg(me->dev, "setting up control link on serializer (attempt #%d)\n", i);
 		ret = i2c_reg_write(me->ser, 0x04, 0x47);
 		if (ret == 0) {
-			int j;
 			u8 val = 0;
-			for (j = 1; j <= REG_RETRIES; j++) {
-				msleep(10);
-				ret = i2c_reg_read(me->ser, 0x04, &val);
-				if (ret == 0) {
-					if (val == 0x47)
-						break;
-					else
-						ret = -EIO;
-				}
-			}
-			if (ret == 0)
+			msleep(10);
+			ret = i2c_reg_read(me->ser, 0x04, &val);
+			if (ret == 0 && val == 0x47)
 				break;
+			else {
+				dev_dbg(me->dev, "mismatch reading reg 4\n");
+				ret = -EIO;
+			}
 		}
 	}
-	if (ret < 0) {
+	if (i > 5) {
 		dev_err(me->dev, "could not initialize control link in serializer, ret=%d\n", ret);
 		return ret;
 	}
 
 	for (i = 0; i < ARRAY_SIZE(ser_init_properties); i++) {
 		property_id_t which = ser_init_properties[i];
+		if (which == CFG_REV_LOGAIN)
+			me->current_logain = me->of_cfg_settings[which];
 		ret = ser_update(me, properties[which].setting->idx,
 				 me->of_cfg_settings[which]);
 		if (ret < 0) {
@@ -827,7 +799,6 @@ static int des_control_init(struct max927x *me)
 	}
 	if (ret < 0) {
 		dev_err(me->dev, "error initializing serializer: %d\n", ret);
-		power_down_remote(me);
 		return ret;
 	}
 
@@ -851,7 +822,6 @@ static int des_control_init(struct max927x *me)
 		ret = des_update(me, MAX9272_HVEN, 1);
 	if (ret < 0) {
 		dev_err(me->dev, "error finalizing deserializer config: %d\n", ret);
-		power_down_remote(me);
 		return ret;
 	}
 
@@ -1083,7 +1053,7 @@ static void run_i2c_test(struct max927x *me, unsigned int which, unsigned int cy
 	struct i2c_test_data *d = &me->i2c_test_results;
 	const struct max927x_setting *s;
 	char *device_name;
-	unsigned int i, j, percent_complete;
+	unsigned int i, percent_complete;
 	u8 reg, mask, origval;
 	int ret;
 
@@ -1114,54 +1084,34 @@ static void run_i2c_test(struct max927x *me, unsigned int which, unsigned int cy
 
 		d->cycles += 1;
 		writeval = (i << s->pos) & mask;
-		for (j = 0; j < i2c_retries; j++) {
-			ret = i2c_reg_write(target, reg, writeval);
-			d->transaction_count += 1;
-			if (ret >= 0)
-				break;
-			d->write_retries += 1;
-		}
+		ret = i2c_reg_write(target, reg, writeval);
+		d->transaction_count += 1;
 
-		if (d->write_retries > d->max_retries)
-			d->max_retries = d->write_retries;
-
-		if (j >= i2c_retries) {
-			dev_warn(me->dev, "I2C test (%s): write failure on cycle %u\n",
-				 device_name, i);
+		if (ret < 0)
 			d->failures += 1;
-			continue;
-		}
-
-		for (j = 0; j < i2c_retries; j++) {
+		else {
 			ret = i2c_reg_read(target, reg, &readval);
 			d->transaction_count += 1;
-			if (ret >= 0)
-				break;
-			d->read_retries += 1;
-		}
-
-		if (d->read_retries > d->max_retries)
-			d->max_retries = d->read_retries;
-
-		if (j >= i2c_retries) {
-			dev_warn(me->dev, "I2C test (%s): read failure on cycle %u\n",
-				 device_name, i);
-			d->failures += 1;
-			continue;
-		}
-
-		readval &= mask;
-		if (readval != writeval) {
-			dev_warn(me->dev, "I2C test (%s): write 0x%x read 0x%x mismatch on cycle %u\n",
-				 device_name, writeval, readval, i);
-			d->mismatches += 1;
+			if (ret < 0)
+				d->failures += 1;
+			else {
+				readval &= mask;
+				if (readval != writeval)
+					d->mismatches += 1;
+			}
 		}
 		percent_complete = (i * 100) / cycles;
-		if (percent_complete > 0 && percent_complete % 10 == 0 && percent_complete * cycles / 100 == i)
-			dev_notice(me->dev, "I2C test (%s): %u cycles (%u%%) complete with %u failures\n",
-				   device_name, i, percent_complete, d->failures);
+		if (i % 1000 == 0)
+			dev_notice(me->dev, "I2C test (%s): %u cycles (%u%%) complete, mismatches: %u, failures: %u\n",
+				   device_name, i, percent_complete, d->mismatches, d->failures);
+		if (signal_pending(current)) {
+			dev_notice(me->dev, "I2C test exiting early: signal pending\n");
+			break;
+		}
 	}
-	dev_notice(me->dev, "I2C test (%s): complete, %u failures\n", device_name, d->failures);
+	dev_notice(me->dev, "I2C test (%s): complete, cycles: %d, mismatches: %u, failures: %u\n",
+		   device_name, (i > cycles ? cycles: i), d->mismatches, d->failures);
+
 	if (which == MAX9272_CHIPID)
 		ret = des_update(me, MAX9272_I2CDSTA, origval);
 	else
@@ -1169,130 +1119,6 @@ static void run_i2c_test(struct max927x *me, unsigned int which, unsigned int cy
 	if (ret < 0)
 		dev_err(me->dev, "I2C test: could not restore original register value\n");
 }
-
-static int link_test(struct max927x *me, int count_singles)
-{
-	struct i2c_client *target = me->remote;
-	const struct max927x_setting *s = &max9271_settings[MAX9271_ID];
-	unsigned int oldflags = atomic_read(&me->i2c_xfer_flags);
-	unsigned int j;
-	unsigned int retries[I2C_RETRIES_MAX+1];
-	u8 reg, desired;
-	int ret, i;
-
-	reg = s->reg;
-	desired = (me->remote == me->ser ? MAX9271_CHIPID : MAX9272_CHIPID);
-
-	memset(retries, 0, sizeof(retries));
-
-	atomic_or(I2C_XFER_NORETRIES|I2C_XFER_NOCOUNT, &me->i2c_xfer_flags);
-
-	for (i = 1; i <= training_cycles; i++) {
-		u8 readval;
-
-		for (j = 0; j < i2c_retries; j++) {
-			ret = i2c_reg_read(target, reg, &readval);
-			if (ret >= 0 && readval == desired)
-				break;
-			if (ret == -ETIMEDOUT) {
-				dev_warn(me->dev, "%s: timeout error\n", __func__);
-				smp_mb__before_atomic();
-				atomic_xchg(&me->i2c_xfer_flags, oldflags);
-				return ret;
-			}
-		}
-		if (j >= i2c_retries) {
-			dev_warn(me->dev, "%s: too many retries on cycle %d\n", __func__, i);
-			smp_mb__before_atomic();
-			atomic_xchg(&me->i2c_xfer_flags, oldflags);
-			return -EIO;
-		} else
-			retries[j] += 1;
-	}
-
-	/*
-	 * Compute weighted score as sum of:
-	 *   for each retry count > 1, retry count * number of occurrences
-	 */
-	for (ret = 0, i = (count_singles ? 1 : 2); i < i2c_retries; i++) {
-		ret += i * retries[i];
-		if (retries[i] > 0)
-			dev_dbg(me->dev, "%s: %u occurrences of %u retries\n",
-				__func__, retries[i], i);
-	}
-
-	dev_notice(me->dev, "%s: exiting, ret=%d", __func__, ret);
-	smp_mb__before_atomic();
-	atomic_xchg(&me->i2c_xfer_flags, oldflags);
-	return ret;
-}
-
-/*
- * run_link_training expects lock mutex to be held
- */
-static int run_link_training(struct max927x *me, int live)
-{
-	int threshold = training_threshold * training_cycles / 100;
-	int counter, ret, score[2];
-
-	dev_notice(me->dev, "begin link training (link %sactive), REV_AMP=%u mVolts, LOGAIN=%d, threshold=%d\n",
-		   (live ? "" : "in"),
-		   max9272_rev_amp_to_millivolts(me->current_rev_amp),
-		   me->current_logain, threshold);
-
-	me->training = 1;
-	for (counter = 0; counter < 2; counter++) {
-		mutex_unlock(&me->lock);
-		ret = link_test(me, 1);
-		mutex_lock(&me->lock);
-		if (ret < 0) {
-			if (live) {
-				dev_warn(me->dev, "%s: link test failed while live, aborting\n",
-					 __func__);
-				me->training = 0;
-				return ret;
-			}
-			max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
-			dev_notice(me->dev, "error during link training, resetting control link with REV_AMP at %u mVolts\n",
-				   max9272_rev_amp_to_millivolts(me->current_rev_amp));
-			ret = me->ctrl_link_init(me);
-			dev_notice(me->dev, "early exit from link training, REV_AMP=%u mVolts, LOGAIN=%d, result=%d\n",
-				   max9272_rev_amp_to_millivolts(me->current_rev_amp),
-				   me->current_logain, ret);
-			me->training = 0;
-			return ret;
-		}
-		if (live && ret < threshold)
-			break;
-		score[me->current_logain] = ret;
-		me->current_logain = 1 - me->current_logain;
-		dev_notice(me->dev, "threshold exceeded (%d), switching LOGAIN to %d\n",
-			   ret, me->current_logain);
-		ret = ser_set_logain(me);
-		if (ret < 0) {
-			dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
-			break;
-		}
-	}
-
-	if (counter >= 2) {
-		me->current_logain = (logain_score_bias + score[0] < score[1]) ? 0 : 1;
-		dev_notice(me->dev, "choosing lower of (%d, %d) (bias %d) to set LOGAIN=%d\n",
-			   score[0], score[1], logain_score_bias, me->current_logain);
-		ret = ser_set_logain(me);
-		if (ret < 0)
-			dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
-	}
-
-	me->training = 0;
-
-	dev_notice(me->dev, "exit link training, REV_AMP=%u mVolts, LOGAIN=%d, result=%d\n",
-		   max9272_rev_amp_to_millivolts(me->current_rev_amp),
-		   me->current_logain, ret);
-
-	return ret;
-}
-
 
 /*
  * Enabling or disabling the serial link for data should
@@ -1357,7 +1183,7 @@ static ssize_t deserializer_i2c_test(struct device *dev, struct device_attribute
 	struct max927x *me = to_max927x_from_dev(dev);
 	unsigned int cycles;
 
-	if (kstrtouint(buf, 10, &cycles) || cycles < 100)
+	if (kstrtouint(buf, 10, &cycles) || cycles < 10)
 		return -EINVAL;
 	if (atomic_cmpxchg(&me->i2c_test_in_progress, 0, 1))
 		return -EBUSY;
@@ -1373,7 +1199,7 @@ static ssize_t serializer_i2c_test(struct device *dev, struct device_attribute *
 	struct max927x *me = to_max927x_from_dev(dev);
 	unsigned int cycles;
 
-	if (kstrtouint(buf, 10, &cycles) || cycles < 100)
+	if (kstrtouint(buf, 10, &cycles) || cycles < 10)
 		return -EINVAL;
 	if (atomic_cmpxchg(&me->i2c_test_in_progress, 0, 1))
 		return -EBUSY;
@@ -1395,16 +1221,10 @@ static ssize_t i2c_test_results(struct device *dev, struct device_attribute *att
 			  "Tested:             %s\n"
 			  "Test cycles run:    %u\n"
 			  "Failures:           %u\n"
-			  "Retries (write):    %u\n"
-			  "Retries (read):     %u\n"
 			  "Mismatches:         %u\n"
-			  "Max retries:        %u\n"
-			  "Total transactions: %u\n"
-			  "Result:             %s\n",
+			  "Total transactions: %u\n",
 			  d->tested_device, d->cycles, d->failures,
-			  d->write_retries, d->read_retries, d->mismatches,
-			  d->max_retries, d->transaction_count,
-			  (d->cycles == 0 ? "<none>" : (d->failures == 0 ? "PASS" : "FAIL")));
+			  d->mismatches, d->transaction_count);
 	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_test_in_progress, 0);
 	return count;
@@ -1476,61 +1296,62 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 	struct max927x *me = to_max927x_from_dev(dev);
 	int ret;
 
-	// buf is non-NULL when we're called directly via sysfs handlers,
-	// or NULL when we're called internally from do_training() and already
-	// hold the mutex.
-	if (buf != NULL) {
-		if (count >= 3 && memcmp(buf, "try", 3) == 0) {
-			if (!mutex_trylock(&me->lock))
-				return -EBUSY;
-		} else
-			mutex_lock(&me->lock);
-		if (me->training) {
-			mutex_unlock(&me->lock);
+	if (count >= 3 && memcmp(buf, "try", 3) == 0) {
+		if (!mutex_trylock(&me->lock))
 			return -EBUSY;
-		}
-	}
+	} else
+		mutex_lock(&me->lock);
 
 	dev_dbg(dev, "device reset requested\n");
 
-	mutex_unlock(&me->lock);
-	cancel_work_sync(&me->training_work);
-	mutex_lock(&me->lock);
+	smp_mb__before_atomic();
 	me->curstate = STATE_UNINITIALIZED;
-	me->training = 0;
 	smp_mb__before_atomic();
 	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
 
 	device_for_each_child(&me->adap.dev, me, unregister_remote_i2c_device);
 
-	max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
-	me->current_logain = 0;
-
+	me->current_rev_amp = me->of_cfg_settings[CFG_REV_AMP];
+	me->current_logain = me->of_cfg_settings[CFG_REV_LOGAIN];
 	ret = me->ctrl_link_init(me);
-
 	if (ret < 0) {
-		if (me->local == me->des) {
-			max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
-			dev_notice(dev, "%s: setting REV_AMP to %u mVolts to retry link setup\n",
-				   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp));
+		u8 save_rev_amp = me->current_rev_amp;
+		unsigned int mv;
+		for (mv = 60; mv <= 100; mv += 20) {
+			u8 new_rev_amp;
+			max9272_millivolts_to_rev_amp(mv, &new_rev_amp);
+			if (new_rev_amp == save_rev_amp)
+				continue;
+			dev_info(dev, "%s: retrying link init with REV_AMP at %u mVolts\n",
+				 __func__, mv);
+			me->current_rev_amp = new_rev_amp;
 			ret = me->ctrl_link_init(me);
-			if (ret == 0) {
-				dev_notice(dev, "%s: skipping link training due to REV_AMP reset\n",
-					   __func__);
-				goto finish_reset;
+			if (ret >= 0) {
+				me->current_rev_amp = save_rev_amp;
+				ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
+				dev_info(dev, "%s: restoring REV_AMP to %u mVolts\n", __func__,
+					 max9272_rev_amp_to_millivolts(me->current_rev_amp));
+				// Now just try updating LOGAIN on the remote to see if
+				// we can talk to it at all with REV_AMP back at its normal
+				// setting
+				if (ret >= 0) {
+					ret = ser_update_nocheck(me, MAX9271_LOGAIN, me->current_logain);
+					if (ret < 0)
+						dev_err(dev, "%s: could not set LOGAIN on remote after resetting REV_AMP\n",
+							__func__);
+					else
+						break;
+				}
 			}
 		}
+	}
+
+	if (ret < 0) {
 		dev_err(dev, "%s: link initialization failed\n", __func__);
 		mutex_unlock(&me->lock);
 		return ret;
 	}
 
-	ret = run_link_training(me, 0);
-	if (ret < 0) {
-		mutex_unlock(&me->lock);
-		return ret;
-	}
-finish_reset:
 	me->adap.dev.of_node = me->i2c_node;
 	of_i2c_register_devices(&me->adap);
 	smp_mb__before_atomic();
@@ -1541,30 +1362,6 @@ finish_reset:
 	return count;
 }
 static DEVICE_ATTR(reset, 0220, NULL, do_reset);
-
-static ssize_t do_training(struct device *dev, struct device_attribute *attr,
-			   const char *buf, size_t count)
-{
-	struct max927x *me = to_max927x_from_dev(dev);
-	int ret;
-
-	if (count >= 3 && memcmp(buf, "try", 3) == 0) {
-		if (!mutex_trylock(&me->lock))
-			return -EBUSY;
-	} else
-		mutex_lock(&me->lock);
-
-	if (me->curstate < STATE_READY || me->training) {
-		mutex_unlock(&me->lock);
-		return -EBUSY;
-	}
-	ret = run_link_training(me, 1);
-	if (ret < 0)
-		return do_reset(dev, attr, NULL, count);
-	mutex_unlock(&me->lock);
-	return count;
-}
-static DEVICE_ATTR(retrain_link, 0220, NULL, do_training);
 
 static ssize_t show_corrected_errs(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -1609,6 +1406,22 @@ static ssize_t clear_remote_i2c_errs(struct device *dev,
 
 static DEVICE_ATTR(i2c_error_count, 0664, show_remote_i2c_errs, clear_remote_i2c_errs);
 
+static ssize_t show_i2c_mismatches(struct device *dev, struct device_attribute *attr, char *buf)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	return scnprintf(buf, PAGE_SIZE, "%u\n", atomic_read(&me->i2c_mismatch_count));
+}
+
+static ssize_t clear_i2c_mismatches(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct max927x *me = to_max927x_from_dev(dev);
+	atomic_xchg(&me->i2c_mismatch_count, 0);
+	return count;
+}
+
+static DEVICE_ATTR(i2c_mismatch_count, 0664, show_i2c_mismatches, clear_i2c_mismatches);
 
 static ssize_t show_current_logain(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -1668,9 +1481,9 @@ static struct attribute *misc_attributes[] = {
 	&dev_attr_corrected_link_errors.attr,
 	&dev_attr_detected_link_errors.attr,
 	&dev_attr_i2c_error_count.attr,
+	&dev_attr_i2c_mismatch_count.attr,
 	&dev_attr_current_logain.attr,
 	&dev_attr_current_rev_amp.attr,
-	&dev_attr_retrain_link.attr,
 	NULL,
 };
 
@@ -1748,7 +1561,6 @@ static void max927x_finish_probe(struct max927x *me)
 	ret = setup_gpiochip(me);
 	if (ret < 0) {
 		dev_err(me->dev, "GPIO setup failed\n");
-		power_down_remote(me);
 		i2c_del_adapter(&me->dummy_adapter);
 		me->curstate = STATE_UNINITIALIZED;
 		mutex_unlock(&me->lock);
@@ -1779,80 +1591,6 @@ static void max927x_finish_probe(struct max927x *me)
 	return;
 }
 
-static void initial_training(struct work_struct *work)
-{
-	struct max927x *me = container_of(work, struct max927x, training_work);
-	unsigned int score[2];
-	int ret, logain;
-
-	mutex_lock(&me->lock);
-	me->training = 1;
-	smp_mb__before_atomic();
-	atomic_xchg(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
-
-	for (logain = 0; logain < 2; logain++) {
-		dev_notice(me->dev,
-			   "%s: testing with REV_AMP=%u mVolts, LOGAIN=%d\n",
-			   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp), logain);
-		me->current_logain = logain;
-		ret = ser_set_logain(me);
-		if (ret >= 0) {
-			mutex_unlock(&me->lock);
-			ret = link_test(me, 1);
-			mutex_lock(&me->lock);
-		}
-		if (ret < 0) {
-			dev_err(me->dev, "%s: link test failed, err=%d\n", __func__, ret);
-			if (ret == -ETIMEDOUT) {
-				score[0] = score[1] = -ret;
-				break;
-			}
-		}
-		score[logain] = ret;
-	}
-
-	me->training = 0;
-
-	if (score[0] < 0 && score[1] < 0) {
-		max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
-		dev_notice(me->dev, "%s: resetting control link with REV_AMP at %u mVolts\n",
-			   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp));
-		ret = me->ctrl_link_init(me);
-		if (ret < 0) {
-			dev_err(me->dev, "%s: could not establish control link, ret=%d\n",
-				__func__, ret);
-			power_down_remote(me);
-			i2c_del_adapter(&me->dummy_adapter);
-			me->curstate = STATE_UNINITIALIZED;
-			mutex_unlock(&me->lock);
-			return;
-		} else {
-			dev_notice(me->dev, "%s: leaving LOGAIN at %d after resetting control link\n",
-				   __func__, me->current_logain);
-			/*
-			 * Call finish_probe before switching to TRAINING_OFF, so we
-			 * don't end up recording spurious I2C retries during probe of the adapter
-			 * we add there.
-			 */
-			max927x_finish_probe(me);
-			return;
-		}
-	}
-	logain = (logain_score_bias + score[0] < score[1] ? 0 : 1);
-	dev_notice(me->dev, "%s: retry counts (%d, %d) (bias %d), selecting LOGAIN %d\n",
-		   __func__, score[0], score[1], logain_score_bias, logain);
-	me->current_logain = logain;
-	ret = ser_set_logain(me);
-	if (ret < 0) {
-		dev_err(me->dev, "could not update LOGAIN, ret=%d\n", ret);
-		power_down_remote(me);
-		i2c_del_adapter(&me->dummy_adapter);
-		mutex_unlock(&me->lock);
-	} else
-		max927x_finish_probe(me);
-
-}
-
 static int max927x_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
 {
@@ -1863,7 +1601,7 @@ static int max927x_probe(struct i2c_client *client,
 	struct max927x *me;
 	u32 remote_reg;
 	u8 chipid = 0;
-	int i, ret, skip_training = 0;
+	int i, ret;
 
 	ret = device_reset(dev);
 	if (ret == -ENODEV)
@@ -1901,13 +1639,13 @@ static int max927x_probe(struct i2c_client *client,
 	atomic_set(&me->i2c_error_count, 0);
 	for (i = 0; i < ARRAY_SIZE(me->i2c_retry_counts); i++)
 		atomic_set(&me->i2c_retry_counts[i], 0);
+	atomic_set(&me->i2c_mismatch_count, 0);
 	atomic_set(&me->ser_gpios_enabled, 0);
 	atomic_set(&me->ser_gpios_set, 0);
 	atomic_set(&me->remote_power_enabled, 0);
 	atomic_set(&me->i2c_test_in_progress, 0);
 	atomic_set(&me->i2c_xfer_flags, I2C_XFER_NOCOUNT);
 	mutex_init(&me->lock);
-	INIT_WORK(&me->training_work, initial_training);
 	me->curstate = STATE_UNINITIALIZED;
 
 	me->dev = dev;
@@ -1964,9 +1702,8 @@ static int max927x_probe(struct i2c_client *client,
 			return -EINVAL;
 		}
 	}
-
-	me->current_logain = 0;
-	max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
+	me->current_rev_amp = me->of_cfg_settings[CFG_REV_AMP];
+	me->current_logain = me->of_cfg_settings[CFG_REV_LOGAIN];
 
 	/*
 	 * Create a separate i2c_adapter just for addressing the
@@ -2003,18 +1740,39 @@ static int max927x_probe(struct i2c_client *client,
 
 	ret = me->ctrl_link_init(me);
 	if (ret < 0) {
-		if (me->local == me->des) {
-			max9272_millivolts_to_rev_amp(60, &me->current_rev_amp);
-			dev_notice(dev, "%s: setting REV_AMP to %u mVolts to retry link setup\n",
-				   __func__, max9272_rev_amp_to_millivolts(me->current_rev_amp));
+		u8 save_rev_amp = me->current_rev_amp;
+		unsigned int mv;
+		for (mv = 60; mv <= 100; mv += 20) {
+			u8 new_rev_amp;
+			max9272_millivolts_to_rev_amp(60, &new_rev_amp);
+
+			if (save_rev_amp == new_rev_amp)
+				continue;
+			dev_info(dev, "%s: retrying link init with REV_AMP at %u mVolts\n",
+				 __func__, mv);
+			me->current_rev_amp = new_rev_amp;
 			ret = me->ctrl_link_init(me);
-			if (ret == 0)
-				skip_training = 1;
+			if (ret >= 0) {
+				me->current_rev_amp = save_rev_amp;
+				ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
+				dev_info(dev, "%s: restoring REV_AMP to %u mVolts\n", __func__,
+					 max9272_rev_amp_to_millivolts(me->current_rev_amp));
+				// Now just try updating LOGAIN on the remote to see if
+				// we can talk to it at all with REV_AMP back at its normal
+				// setting
+				if (ret >= 0) {
+					ret = ser_update_nocheck(me, MAX9271_LOGAIN, me->current_logain);
+					if (ret < 0)
+						dev_err(dev, "%s: could not set LOGAIN on remote after resetting REV_AMP\n",
+							__func__);
+					else
+						break;
+				}
+			}
 		}
 	}
-
 	if (ret < 0) {
-		dev_err(dev, "control link initialization/training failed, ret=%d\n", ret);
+		dev_err(dev, "control link initialization failed, ret=%d\n", ret);
 		i2c_del_adapter(&me->dummy_adapter);
 		return -ENODEV;
 	}
@@ -2036,28 +1794,17 @@ static int max927x_probe(struct i2c_client *client,
 	if (ret < 0)
 		dev_err(me->dev, "could not create static sysfs group, err=%d\n", ret);
 
-	if (skip_training) {
-		dev_notice(dev, "%s: skipping initial training due to REV_AMP reset\n", __func__);
-		mutex_lock(&me->lock);
-		max927x_finish_probe(me);
-	} else
-		schedule_work(&me->training_work);
+	mutex_lock(&me->lock);
+	max927x_finish_probe(me);
 	return 0;
 }
 
 static int max927x_remove(struct i2c_client *client)
 {
 	struct max927x *me = to_max927x_from_v4l2_subdev(i2c_get_clientdata(client));
-	int i;
 
+	smp_mb__before_atomic();
 	mutex_lock(&me->lock);
-	for (i = 0; me->training && i < 30; i++) {
-		mutex_unlock(&me->lock);
-		dev_notice(me->dev, "%s: waiting for training to complete before removing\n", __func__);
-		msleep(1000);
-		mutex_lock(&me->lock);
-	}
-	cancel_work_sync(&me->training_work);
 	if (me->curstate >= STATE_READY) {
 		stream_control(&me->subdev, 0);
 		sysfs_remove_groups(&me->dev->kobj, attr_groups);

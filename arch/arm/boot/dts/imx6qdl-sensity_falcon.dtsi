@@ -535,7 +535,7 @@
 		/*Longer does not really help*/
 		slave-off-delay-ms = <2000>;
     /*REVTXAMP REV_TRF REV_DIG_FLT REV_LOGAIN REV_HIGAIN REV_HIBW REV_HIVTH I2C_SLVSH I2C_MSTBT CMLLVL PREEMP SPREAD*/
-    cfg-0 = <5 2 0 1 0 0 0 3 4 10 0 0>;
+    cfg-0 = <5 0 0 0 0 0 0 3 4 10 0 0>;
 
 		#address-cells = <1>;
 		#size-cells = <0>;
@@ -693,7 +693,7 @@
 		/*Longer does not really help*/
 		slave-off-delay-ms = <2000>;
     /*REVTXAMP REV_TRF REV_DIG_FLT REV_LOGAIN REV_HIGAIN REV_HIBW REV_HIVTH I2C_SLVSH I2C_MSTBT CMLLVL PREEMP SPREAD*/
-    cfg-0 = <5 2 0 1 0 0 0 3 4 10 0 0>;
+    cfg-0 = <5 0 0 0 0 0 0 3 4 10 0 0>;
 
 		#address-cells = <1>;
 		#size-cells = <0>;
