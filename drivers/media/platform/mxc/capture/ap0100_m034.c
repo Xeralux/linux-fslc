@@ -1881,10 +1881,8 @@ static ssize_t ap0100_show_min_temp(struct device *dev,
 	ret = _AM_read_reg(client, REG_CAM_TEMP_MIN, &val, 1, &data->error_count);
 	mutex_unlock(&data->lock);
 
-	if(ret < 0) {
-		dev_err(dev, "Bad read: %d", ret);
-		return 0;
-	}
+	if (ret < 0)
+		return ret;
 
 	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
@@ -1935,10 +1933,8 @@ static ssize_t ap0100_show_max_temp(struct device *dev,
 	ret = _AM_read_reg(client, REG_CAM_TEMP_MAX, &val, 1, &data->error_count);
 	mutex_unlock(&data->lock);
 
-	if(ret < 0) {
-		dev_err(dev, "Bad read: %d", ret);
-		return 0;
-	}
+	if (ret < 0)
+		return ret;
 
 	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
@@ -1956,10 +1952,8 @@ static ssize_t ap0100_show_cur_temp(struct device *dev,
 	ret = _AM_read_reg(client, REG_CAM_TEMP_CUR, &val, 1, &data->error_count);
 	mutex_unlock(&data->lock);
 
-	if(ret < 0) {
-		dev_err(dev, "Bad read: %d", ret);
-		return 0;
-	}
+	if (ret < 0)
+		return ret;
 
 	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
@@ -1986,8 +1980,8 @@ static ssize_t ap0100_show_fw_metadata(struct device *dev,
 	}
 out:
 	mutex_unlock(&data->lock);
-	if(ret < 0)
-		return 0;
+	if (ret < 0)
+		return ret;
 
 	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "header_const = 0x%x\n", header.header_const);
 	offset += scnprintf(&buf[offset],PAGE_SIZE-offset, "time = %u\n", header.time_stamp);
