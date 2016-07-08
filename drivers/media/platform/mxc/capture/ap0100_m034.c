@@ -180,6 +180,7 @@ typedef struct __attribute__((__packed__)) cam_param {
 struct ap0100_m034_data {
 	struct i2c_client *client;
 	struct device *dev;
+	atomic_t i2c_mismatch_count;
 	int ap0100_in_wdr_mode;
 	unsigned char mode_init_buf[INIT_BUF_MAX];
 	int mode_init_buf_count; // how many modes to do in sequence
@@ -363,6 +364,10 @@ static int _AM_read_data(struct i2c_client * client, u16 reg, u8* buf, int buf_l
 		ret = _AM_try_read_data(client, reg, buf, buf_len, !READ_IS_UNCHECKED);
 		if(ret >= 0)
 			return ret;
+		if (ret == -EAGAIN) {
+			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
+			atomic_inc(&data->i2c_mismatch_count);
+		}
 	}
 	dev_err(&client->dev, "%s: too many retries, got %d", __func__, ret);
 	if(error_count)
@@ -386,6 +391,10 @@ static int _AM_read_reg_maybe_unchecked(struct i2c_client * client, u16 reg, uns
 		ret = _AM_try_read_reg(client, reg, val, data_size, unchecked);
 		if(ret >= 0)
 			return ret;
+		if (ret == -EAGAIN) {
+			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
+			atomic_inc(&data->i2c_mismatch_count);
+		}
 	}
 	dev_err(&client->dev, "%s: too many retries, got %d", __func__, ret);
 	if(error_count)
@@ -425,7 +434,7 @@ static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf
 
 	if((err = _AM_read_data(client, reg, check, buf_len, NULL)) == 0 && memcmp(buf, check, buf_len)) {
 		dev_dbg(&client->dev,"%s: check mismatch reg:reg=%x\n", __func__, reg);
-		return -EIO;
+		return -EAGAIN;
 	}
 	return err;
 }
@@ -471,6 +480,10 @@ static int _AM_write_reg_maybe_unchecked(struct i2c_client * client, u16 reg, un
 		dev_dbg(&client->dev, "%s: reg=0x%x try=%d ret=%d\n", __func__, reg, i, ret);
 		if(ret >= 0)
 			return ret;
+		if (ret == -EAGAIN) {
+			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
+			atomic_inc(&data->i2c_mismatch_count);
+		}
 	}
 	dev_err(&client->dev, "%s: reg=0x%x too many retries, got %d", __func__, reg, ret);
 	if(error_count)
@@ -497,6 +510,10 @@ static int _AM_write_data_maybe_unchecked(struct i2c_client * client, u16 reg, c
 		ret = _AM_try_write_data(client, reg, buf, buf_len, unchecked);
 		if(ret >= 0)
 			return ret;
+		if (ret == -EAGAIN) {
+			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
+			atomic_inc(&data->i2c_mismatch_count);
+		}
 	}
 	dev_err(&client->dev, "%s: too many retries, got %d", __func__, ret);
 	if(error_count)
@@ -561,7 +578,7 @@ static int _ap0100_m034_cmd_status(struct i2c_client * client, unsigned *error_c
 	unsigned val;
 
 	for (i=0; i < RETRIES; i++) {
-		err = _AM_read_reg(client, REG_CMD, &val, 2, error_count);
+		err = _AM_read_reg_unchecked(client, REG_CMD, &val, 2, error_count);
 		if(err < 0)
 			return err;
 		if (val == 0)
@@ -1686,7 +1703,7 @@ static void _ap0100_m034_I2C_test(struct i2c_client * client, unsigned cycles)
 		}
 		if (ret < 0 || w_val != val) {
 			fail_cnt++;
-			dev_err(dev, "write failed: i = %d, write = 0x%x, w_retry_cnt=%d, r_retry_cnt=%d, check_cnt=%d\n",
+			dev_err(dev, "write failed: i = %d, write = 0x%x, w_retry_cnt=%d, r_retry_cnt=%d, mismatch_cnt=%d\n",
 					i, w_val, w_retry_cnt, r_retry_cnt, check_cnt);
 		} else if(j > max_retry_cnt) {
 			max_retry_cnt = j;
@@ -1697,7 +1714,7 @@ static void _ap0100_m034_I2C_test(struct i2c_client * client, unsigned cycles)
 	_AM_write_reg(client, reg, val, 2, NULL);
 
 	dev_err(dev, "ap0100 i2c test %s !, total test count = %d, fail_cnt=%d, w_retry_cnt = %d, "
-			"r_retry_cnt = %d, check_cnt = %d, max retries=%d, total transactions=%d\n",
+			"r_retry_cnt = %d, mismatch_cnt = %d, max retries=%d, total transactions=%d\n",
 				fail_cnt == 0 ? "passed" : "failed", cycles, fail_cnt, w_retry_cnt,
 						r_retry_cnt, check_cnt, max_retry_cnt,total_transactions);
 }
@@ -2431,6 +2448,23 @@ static ssize_t ap0100_m034_operational_show(struct device *dev,
 }
 static DEVICE_ATTR(operational, 0664, (void *)ap0100_m034_operational_show, (void *)ap0100_m034_operational_store);
 
+static ssize_t i2c_mismatches_clear(struct device *dev,
+				    struct device_attribute *attr,
+				    const char *buf, size_t count)
+{
+	struct ap0100_m034_data* data = to_ap0100_m034_from_dev(dev);
+	atomic_xchg(&data->i2c_mismatch_count, 0);
+	return count;
+}
+
+static ssize_t i2c_mismatches_show(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+       struct ap0100_m034_data* data = to_ap0100_m034_from_dev(dev);
+       return scnprintf(buf, PAGE_SIZE, "%d\n", atomic_read(&data->i2c_mismatch_count));
+}
+static DEVICE_ATTR(i2c_mismatch_count, 0664, i2c_mismatches_show, i2c_mismatches_clear);
+
 static ssize_t ap0100_m034_error_count_show(struct device *dev,
                                   struct device_attribute *attr, char *buf)
 {
@@ -2453,6 +2487,7 @@ static struct attribute *init_attributes[] = {
 	&dev_attr_max_temp.attr,
 	&dev_attr_cur_temp.attr,
 	&dev_attr_ap0100_m034_i2c_test.attr,
+	&dev_attr_i2c_mismatch_count.attr,
 	NULL,
 };
 
@@ -2507,6 +2542,7 @@ static int ap0100_m034_probe(struct i2c_client *client,
 		return -ENOMEM;
 
 	mutex_init(&data->lock);
+	atomic_set(&data->i2c_mismatch_count, 0);
 	data->ap0100_in_wdr_mode = 1;
 	data->client = client;
 	data->dev = dev;
