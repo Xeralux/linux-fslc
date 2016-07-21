@@ -729,7 +729,7 @@ static int des_control_init(struct max927x *me)
 			if (ret == 0 && val == 0x47)
 				break;
 			else {
-				dev_dbg(me->dev, "mismatch reading reg 4\n");
+				dev_warn(me->dev, "mismatch reading reg 4, val=0x%x\n", val);
 				ret = -EIO;
 			}
 		}
@@ -1315,38 +1315,6 @@ static ssize_t do_reset(struct device *dev, struct device_attribute *attr,
 	me->current_logain = me->of_cfg_settings[CFG_REV_LOGAIN];
 	ret = me->ctrl_link_init(me);
 	if (ret < 0) {
-		u8 save_rev_amp = me->current_rev_amp;
-		unsigned int mv;
-		for (mv = 60; mv <= 100; mv += 20) {
-			u8 new_rev_amp;
-			max9272_millivolts_to_rev_amp(mv, &new_rev_amp);
-			if (new_rev_amp == save_rev_amp)
-				continue;
-			dev_info(dev, "%s: retrying link init with REV_AMP at %u mVolts\n",
-				 __func__, mv);
-			me->current_rev_amp = new_rev_amp;
-			ret = me->ctrl_link_init(me);
-			if (ret >= 0) {
-				me->current_rev_amp = save_rev_amp;
-				ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
-				dev_info(dev, "%s: restoring REV_AMP to %u mVolts\n", __func__,
-					 max9272_rev_amp_to_millivolts(me->current_rev_amp));
-				// Now just try updating LOGAIN on the remote to see if
-				// we can talk to it at all with REV_AMP back at its normal
-				// setting
-				if (ret >= 0) {
-					ret = ser_update_nocheck(me, MAX9271_LOGAIN, me->current_logain);
-					if (ret < 0)
-						dev_err(dev, "%s: could not set LOGAIN on remote after resetting REV_AMP\n",
-							__func__);
-					else
-						break;
-				}
-			}
-		}
-	}
-
-	if (ret < 0) {
 		dev_err(dev, "%s: link initialization failed\n", __func__);
 		mutex_unlock(&me->lock);
 		return ret;
@@ -1678,6 +1646,7 @@ static int max927x_probe(struct i2c_client *client,
 	me->remote_power = devm_regulator_get(dev, "slave");
 	of_property_read_u32(np, "slave-on-delay-ms", &me->power_on_mdelay);
 	of_property_read_u32(np, "slave-off-delay-ms", &me->power_off_mdelay);
+	power_up_remote(me);
 
 	for_each_child_of_node(np, child) {
 		if (of_property_read_bool(child, "i2c")) {
@@ -1739,38 +1708,6 @@ static int max927x_probe(struct i2c_client *client,
 	}
 
 	ret = me->ctrl_link_init(me);
-	if (ret < 0) {
-		u8 save_rev_amp = me->current_rev_amp;
-		unsigned int mv;
-		for (mv = 60; mv <= 100; mv += 20) {
-			u8 new_rev_amp;
-			max9272_millivolts_to_rev_amp(60, &new_rev_amp);
-
-			if (save_rev_amp == new_rev_amp)
-				continue;
-			dev_info(dev, "%s: retrying link init with REV_AMP at %u mVolts\n",
-				 __func__, mv);
-			me->current_rev_amp = new_rev_amp;
-			ret = me->ctrl_link_init(me);
-			if (ret >= 0) {
-				me->current_rev_amp = save_rev_amp;
-				ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
-				dev_info(dev, "%s: restoring REV_AMP to %u mVolts\n", __func__,
-					 max9272_rev_amp_to_millivolts(me->current_rev_amp));
-				// Now just try updating LOGAIN on the remote to see if
-				// we can talk to it at all with REV_AMP back at its normal
-				// setting
-				if (ret >= 0) {
-					ret = ser_update_nocheck(me, MAX9271_LOGAIN, me->current_logain);
-					if (ret < 0)
-						dev_err(dev, "%s: could not set LOGAIN on remote after resetting REV_AMP\n",
-							__func__);
-					else
-						break;
-				}
-			}
-		}
-	}
 	if (ret < 0) {
 		dev_err(dev, "control link initialization failed, ret=%d\n", ret);
 		i2c_del_adapter(&me->dummy_adapter);
