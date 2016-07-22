@@ -426,14 +426,16 @@ static void power_up_remote(struct max927x *me)
 	int ret;
 	if (me->remote_power == NULL)
 		return;
+	smp_mb__before_atomic();
+	if (atomic_cmpxchg(&me->remote_power_enabled, 0, 1)) {
+		dev_dbg(me->dev, "remote already powered up\n");
+		return;
+	}
 	ret = regulator_enable(me->remote_power);
 	dev_dbg(me->dev, "powering up remote %s (%d), now waiting %u msec\n",
 		(ret < 0 ? "failed" : "succeeded"), ret, me->power_on_mdelay);
 	if (me->power_on_mdelay != 0)
 		msleep(me->power_on_mdelay);
-	smp_mb__before_atomic();
-	if (ret == 0)
-		atomic_xchg(&me->remote_power_enabled, 1);
 }
 
 static void power_down_remote(struct max927x *me)
@@ -444,8 +446,8 @@ static void power_down_remote(struct max927x *me)
 
 	if (atomic_cmpxchg(&me->remote_power_enabled, 1, 0)) {
 		ret = regulator_disable(me->remote_power);
-		if (ret < 0)
-			dev_dbg(me->dev, "powering down remote failed: %d\n", ret);
+		dev_dbg(me->dev, "powering down remote (ret=%d), post-delay %u msec\n",
+			ret, me->power_off_mdelay);
 		if (me->power_off_mdelay != 0)
 			msleep(me->power_off_mdelay);
 	}
@@ -523,6 +525,22 @@ static struct attribute_group properties_attr_group = {
 static const property_id_t ser_init_properties[] = {
 	CFG_REV_DIG_FLT, CFG_REV_LOGAIN, CFG_REV_HIGAIN, CFG_REV_HIBW, CFG_REV_HIVTH
 };
+
+static u8 ser_reg_from_properties(struct max927x *me, unsigned int regnum)
+{
+	u8 regval = 0, val, mask;
+	int i;
+	for (i = 0; i < ARRAY_SIZE(ser_init_properties); i++) {
+		property_id_t which = ser_init_properties[i];
+		const struct max927x_setting *s = &max9271_settings[properties[which].setting->idx];
+		if (s->reg != regnum)
+			continue;
+		val = (which == CFG_REV_LOGAIN ? me->current_logain : me->of_cfg_settings[which]);
+		mask = ~(~(0xFF << s->width) << s->pos);
+		regval = (regval & mask) | ((val << s->pos) & ~mask);
+	}
+	return regval;
+}
 
 /*
  * Control channel initialization when serializer is local and deserializer
@@ -674,6 +692,7 @@ static int ser_control_init(struct max927x *me)
 static int des_control_init(struct max927x *me)
 {
 	int i, ret;
+	u8 reg8val;
 	/*
 	 * Reset so we're starting from a known state
 	 */
@@ -715,26 +734,48 @@ static int des_control_init(struct max927x *me)
 	power_up_remote(me);
 
 	/*
-	 * Disable SEREN and enable CLINKEN on the serializer in a single register
-	 * write.  If we can read back the setting, we know the control channel is good.
-	 * Retry/delay loop here is just in case - it shouldn't really be needed.
+	 * Need to write regs 4 and 8 before checking whether we can read bac
+	 * values.
 	 */
-	for (i = 1; i <= 5; i++) {
+	reg8val = ser_reg_from_properties(me, 8);
+	dev_dbg(me->dev, "initial setting for max9271 reg 8: 0x%x\n", reg8val);
+	for (i = 1; i <= i2c_retries; i++) {
 		dev_dbg(me->dev, "setting up control link on serializer (attempt #%d)\n", i);
+		// Try a few writes, in case they don't take right away
 		ret = i2c_reg_write(me->ser, 0x04, 0x47);
+		if (ret == 0)
+			ret = i2c_reg_write(me->ser, 0x04, 0x47);
+		if (ret == 0)
+			ret = i2c_reg_write(me->ser, 0x04, 0x47);
+		if (ret == 0)
+			ret = i2c_reg_write(me->ser, 0x08, reg8val);
+		if (ret == 0)
+			ret = i2c_reg_write(me->ser, 0x08, reg8val);
+		if (ret == 0)
+			ret = i2c_reg_write(me->ser, 0x08, reg8val);
 		if (ret == 0) {
-			u8 val = 0;
-			msleep(10);
-			ret = i2c_reg_read(me->ser, 0x04, &val);
-			if (ret == 0 && val == 0x47)
+			u8 val4 = 0, val8 = 0;
+			int j;
+			for (j = 1; j <= i2c_retries; j++) {
+				msleep(1);
+				ret = i2c_reg_read(me->ser, 0x04, &val4);
+				if (ret == 0)
+					ret = i2c_reg_read(me->ser, 0x08, &val8);
+				if (ret == 0 && val4 == 0x47 && val8 == reg8val)
+					break;
+			}
+			if (ret == 0 && val4 == 0x47 && val8 == reg8val)
 				break;
 			else {
-				dev_warn(me->dev, "mismatch reading reg 4, val=0x%x\n", val);
+				dev_warn(me->dev, "mismatch reading regs 4 & 8, r4=0x%x, r8=0x%x\n",
+					 val4, val8);
 				ret = -EIO;
 			}
 		}
+		power_down_remote(me);
+		power_up_remote(me);
 	}
-	if (i > 5) {
+	if (i > i2c_retries) {
 		dev_err(me->dev, "could not initialize control link in serializer, ret=%d\n", ret);
 		return ret;
 	}
