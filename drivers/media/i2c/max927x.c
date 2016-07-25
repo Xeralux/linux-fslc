@@ -254,7 +254,7 @@ static int ser_read_internal(struct max927x *me, max9271_setting_t which, u8 *va
 static int ser_read(struct max927x *me, max9271_setting_t which, u8 *valp)
 {
 	int i, ret;
-	for (i = 0; i < 5; i++) {
+	for (i = 0; i < i2c_retries; i++) {
 		ret = ser_read_internal(me, which, valp, true);
 		if (ret != -EAGAIN)
 			break;
@@ -323,7 +323,7 @@ static int ser_update_nocheck(struct max927x *me, max9272_setting_t which, u8 ne
 static int ser_update(struct max927x *me, max9272_setting_t which, u8 newval)
 {
 	int i, ret;
-	for (i = 0; i < 5; i++) {
+	for (i = 0; i < i2c_retries; i++) {
 		ret = ser_update_internal(me, which, newval, true);
 		if (ret != -EAGAIN)
 			break;
