@@ -707,7 +707,14 @@ static int des_control_init(struct max927x *me)
 	 * These settings (which are not documented in the data sheet) need to be performed early,
 	 * as they affect the reverse communications channel between the deserializer and the
 	 * serializer.
+	 *
+	 * Init sequence:
+	 *    - REV_AMP at 80mV
+	 *    - write LOGAIN to serializer (unchecked)
+	 *    - REV_AMP change to configured value from device tree
+	 *    - complete serializer initialization
 	 */
+	max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
 	ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
 	if (ret == 0)
 		ret = des_update(me, MAX9272_REV_TRF, me->of_cfg_settings[CFG_REV_TRF]);
@@ -734,25 +741,23 @@ static int des_control_init(struct max927x *me)
 	power_up_remote(me);
 
 	/*
-	 * Need to write regs 4 and 8 before checking whether we can read bac
+	 * Need to write regs 4 and 8 before checking whether we can read back
 	 * values.
 	 */
 	reg8val = ser_reg_from_properties(me, 8);
 	dev_dbg(me->dev, "initial setting for max9271 reg 8: 0x%x\n", reg8val);
 	for (i = 1; i <= i2c_retries; i++) {
 		dev_dbg(me->dev, "setting up control link on serializer (attempt #%d)\n", i);
-		// Try a few writes, in case they don't take right away
-		ret = i2c_reg_write(me->ser, 0x04, 0x47);
-		if (ret == 0)
+		ret = i2c_reg_write(me->ser, 0x08, reg8val);
+		dev_dbg(me->dev, "status=%d writing 0x%x to serializer reg 8\n", ret, reg8val);
+		if (ret == 0) {
+			me->current_rev_amp = me->of_cfg_settings[CFG_REV_AMP];
+			ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
+		}
+		if (ret == 0) {
 			ret = i2c_reg_write(me->ser, 0x04, 0x47);
-		if (ret == 0)
-			ret = i2c_reg_write(me->ser, 0x04, 0x47);
-		if (ret == 0)
-			ret = i2c_reg_write(me->ser, 0x08, reg8val);
-		if (ret == 0)
-			ret = i2c_reg_write(me->ser, 0x08, reg8val);
-		if (ret == 0)
-			ret = i2c_reg_write(me->ser, 0x08, reg8val);
+			dev_dbg(me->dev, "status=%d writing 0x47 to serializer reg 4\n", ret);
+		}
 		if (ret == 0) {
 			u8 val4 = 0, val8 = 0;
 			int j;
@@ -761,11 +766,15 @@ static int des_control_init(struct max927x *me)
 				ret = i2c_reg_read(me->ser, 0x04, &val4);
 				if (ret == 0)
 					ret = i2c_reg_read(me->ser, 0x08, &val8);
+				dev_dbg(me->dev, "status=%d reading regs 4 (0x%x) & 8 (0x%x) (%d)\n",
+					ret, val4, val8, j);
 				if (ret == 0 && val4 == 0x47 && val8 == reg8val)
 					break;
 			}
 			if (ret == 0 && val4 == 0x47 && val8 == reg8val)
 				break;
+			else if (ret < 0)
+				dev_warn(me->dev, "error %d reading regs 4 & 8\n", ret);
 			else {
 				dev_warn(me->dev, "mismatch reading regs 4 & 8, r4=0x%x, r8=0x%x\n",
 					 val4, val8);
@@ -773,6 +782,8 @@ static int des_control_init(struct max927x *me)
 			}
 		}
 		power_down_remote(me);
+		max9272_millivolts_to_rev_amp(80, &me->current_rev_amp);
+		ret = des_update(me, MAX9272_REV_AMP, me->current_rev_amp);
 		power_up_remote(me);
 	}
 	if (i > i2c_retries) {
