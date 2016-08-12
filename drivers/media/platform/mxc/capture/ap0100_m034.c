@@ -415,7 +415,7 @@ static int _AM_read_reg_unchecked(struct i2c_client * client, u16 reg, unsigned 
 
 static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf, unsigned buf_len, bool unchecked)
 {
-	int err;
+	int err, i;
 	u8 write_buf[2 + buf_len];
 	u8 check[buf_len];
 
@@ -429,12 +429,20 @@ static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf
 			__func__, reg, err);
 		return err;
 	}
-	if(unchecked)
+	if (unchecked)
 		return err;
 
-	if((err = _AM_read_data(client, reg, check, buf_len, NULL)) == 0 && memcmp(buf, check, buf_len)) {
-		dev_dbg(&client->dev,"%s: check mismatch reg:reg=%x\n", __func__, reg);
-		return -EAGAIN;
+	/*
+	 * Implement our own check loop here, without affecting
+	 * the mismatch count, since there are cases where the
+	 * controller takes time to process the write.
+	 */
+	for (i = 0; i < i2c_retries; i++) {
+		err = _AM_try_read_data(client, reg, check, buf_len, true);
+		if (err >= 0)
+			err = memcmp(buf, check, buf_len) ? -EAGAIN : 0;
+		if (err >= 0)
+			break;
 	}
 	return err;
 }
@@ -477,12 +485,14 @@ static int _AM_write_reg_maybe_unchecked(struct i2c_client * client, u16 reg, un
 
 	for(i = 1; i <= i2c_retries; i++) {
 		ret = _AM_try_write_reg(client, reg, val, data_size, unchecked);
-		dev_dbg(&client->dev, "%s: reg=0x%x try=%d ret=%d\n", __func__, reg, i, ret);
+		dev_dbg(&client->dev, "%s: reg=0x%x try=%d unchecked=0x%x ret=%d\n", __func__,
+			reg, i, unchecked, ret);
 		if(ret >= 0)
 			return ret;
 		if (ret == -EAGAIN) {
 			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
 			atomic_inc(&data->i2c_mismatch_count);
+			dev_warn(&client->dev, "%s: mismatch reported\n", __func__);
 		}
 	}
 	dev_err(&client->dev, "%s: reg=0x%x too many retries, got %d", __func__, reg, ret);
@@ -1891,17 +1901,30 @@ static ssize_t ap0100_show_min_temp(struct device *dev,
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
 	struct i2c_client *client = data->client;
-	unsigned val;
-	int ret;
+	unsigned val1, val2;
+	int ret, i;
 
+	/*
+	 * Use unchecked reads so mismatches don't get counted, but read twice
+	 * and make sure the two values match.
+	 */
 	mutex_lock(&data->lock);
-	ret = _AM_read_reg(client, REG_CAM_TEMP_MIN, &val, 1, &data->error_count);
+	for (i = 0; i < i2c_retries; i++) {
+		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_MIN, &val1, 1, &data->error_count);
+		if (ret)
+			break;
+		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_MIN, &val2, 1, &data->error_count);
+		if (ret)
+			break;
+		if (val1 == val2)
+			break;
+	}
 	mutex_unlock(&data->lock);
 
 	if (ret < 0)
 		return ret;
 
-	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val1);
 }
 static DEVICE_ATTR(min_temp, 0444, (void *)ap0100_show_min_temp, NULL);
 
@@ -1943,17 +1966,26 @@ static ssize_t ap0100_show_max_temp(struct device *dev,
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
 	struct i2c_client *client = data->client;
-	unsigned val;
-	int ret;
+	unsigned val1, val2;
+	int ret, i;
 
 	mutex_lock(&data->lock);
-	ret = _AM_read_reg(client, REG_CAM_TEMP_MAX, &val, 1, &data->error_count);
+	for (i = 0; i < i2c_retries; i++) {
+		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_MAX, &val1, 1, &data->error_count);
+		if (ret)
+			break;
+		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_MAX, &val2, 1, &data->error_count);
+		if (ret)
+			break;
+		if (val1 == val2)
+			break;
+	}
 	mutex_unlock(&data->lock);
 
 	if (ret < 0)
 		return ret;
 
-	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val1);
 }
 static DEVICE_ATTR(max_temp, 0444, (void *)ap0100_show_max_temp, NULL);
 
@@ -1962,17 +1994,26 @@ static ssize_t ap0100_show_cur_temp(struct device *dev,
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
 	struct i2c_client *client = data->client;
-	unsigned val;
-	int ret;
+	unsigned val1, val2;
+	int ret, i;
 
 	mutex_lock(&data->lock);
-	ret = _AM_read_reg(client, REG_CAM_TEMP_CUR, &val, 1, &data->error_count);
+	for (i = 0; i < i2c_retries; i++) {
+		ret = _AM_read_reg(client, REG_CAM_TEMP_CUR, &val1, 1, &data->error_count);
+		if (ret)
+			break;
+		ret = _AM_read_reg(client, REG_CAM_TEMP_CUR, &val2, 1, &data->error_count);
+		if (ret)
+			break;
+		if (val1 == val2)
+			break;
+	}
 	mutex_unlock(&data->lock);
 
 	if (ret < 0)
 		return ret;
 
-	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val1);
 }
 static DEVICE_ATTR(cur_temp, 0444, (void *)ap0100_show_cur_temp, NULL);
 
