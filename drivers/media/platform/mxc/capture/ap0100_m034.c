@@ -367,6 +367,7 @@ static int _AM_read_data(struct i2c_client * client, u16 reg, u8* buf, int buf_l
 		if (ret == -EAGAIN) {
 			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
 			atomic_inc(&data->i2c_mismatch_count);
+			dev_warn(&client->dev, "%s: mismatch reported, reg=0x%x\n", __func__, reg);
 		}
 	}
 	dev_err(&client->dev, "%s: too many retries, got %d", __func__, ret);
@@ -394,6 +395,7 @@ static int _AM_read_reg_maybe_unchecked(struct i2c_client * client, u16 reg, uns
 		if (ret == -EAGAIN) {
 			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
 			atomic_inc(&data->i2c_mismatch_count);
+			dev_warn(&client->dev, "%s: mismatch reported, reg=0x%x\n", __func__, reg);
 		}
 	}
 	dev_err(&client->dev, "%s: too many retries, got %d", __func__, ret);
@@ -492,7 +494,7 @@ static int _AM_write_reg_maybe_unchecked(struct i2c_client * client, u16 reg, un
 		if (ret == -EAGAIN) {
 			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
 			atomic_inc(&data->i2c_mismatch_count);
-			dev_warn(&client->dev, "%s: mismatch reported\n", __func__);
+			dev_warn(&client->dev, "%s: mismatch reported, reg=0x%x\n", __func__, reg);
 		}
 	}
 	dev_err(&client->dev, "%s: reg=0x%x too many retries, got %d", __func__, reg, ret);
@@ -523,6 +525,7 @@ static int _AM_write_data_maybe_unchecked(struct i2c_client * client, u16 reg, c
 		if (ret == -EAGAIN) {
 			struct ap0100_m034_data *data = to_ap0100_m034_from_i2c(client);
 			atomic_inc(&data->i2c_mismatch_count);
+			dev_warn(&client->dev, "%s: mismatch reported, reg=0x%x\n", __func__, reg);
 		}
 	}
 	dev_err(&client->dev, "%s: too many retries, got %d", __func__, ret);
