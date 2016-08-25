@@ -2002,10 +2002,10 @@ static ssize_t ap0100_show_cur_temp(struct device *dev,
 
 	mutex_lock(&data->lock);
 	for (i = 0; i < i2c_retries; i++) {
-		ret = _AM_read_reg(client, REG_CAM_TEMP_CUR, &val1, 1, &data->error_count);
+		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_CUR, &val1, 1, &data->error_count);
 		if (ret)
 			break;
-		ret = _AM_read_reg(client, REG_CAM_TEMP_CUR, &val2, 1, &data->error_count);
+		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_CUR, &val2, 1, &data->error_count);
 		if (ret)
 			break;
 		if (val1 == val2)
