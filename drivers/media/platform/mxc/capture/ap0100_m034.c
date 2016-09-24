@@ -106,6 +106,21 @@ enum AP0100_REG {
   REG_CAM_AET_FLICKER_FREQ_HZ = 0xC8D1, //1, changes after change-config
   REG_CAM_PGA_PGA_CONTROL = 0xCA80, //bit 1 needs change-config, bit 0 needs vertical blanking
   REG_RULE_AE_WEIGHT_TABLE_0_0 = 0xA40A, //1, changes during vertical blanking
+  REG_CAM_LL_MODE = 0xBC02, // 16-bit value, all reserved except:
+                            // bit 3=enable FTB, bit 2=enable ADACD NR green pixel weights,
+                            // bit 0=enable auto NR (DC/AdaCD)
+  REG_CAM_LL_ALGO = 0xBC04, // 16-bit value, 0=disable, 0x3FF=enable
+  REG_CAM_LL_GAMMA = 0xBC07, // 8-bit value, 0=interpolate, 1=contrast gamma, 2=NR gamma
+  REG_CAM_LL_AVG_LUMA_FTB = 0xBC8E, // 16-bit value (RO):
+                                    // when FTB enabled, holds max avg luma gathered from AE zones
+                                    // otherwise holds cam_ll_bright_fade_to_black_luma value
+  REG_CAM_LL_GAMMA_CURVE_0 = 0xBC0A, // Start of array of 33 16-bit values holding the
+                                     // gamma contrast curve knee points starting at index 0
+                                     // and incrementing by 128 up to index 4096.
+  REG_CAM_LL_ALTM_DAMPING_FAST = 0xBCB4, // fast response damping value
+  REG_CAM_LL_ALTM_DAMPING_MED  = 0xBCB6, // med response damping value
+  REG_CAM_LL_ALTM_DAMPING_SLOW = 0xBCB8, // slow response damping value (normally used as default)
+                                         // tehse are unsigned fixed-point values w/6 fractional bits
   REG_CAM_TEMPMON_CTL = 0xCAA8,
   REG_CAM_TEMP_CUR = 0xCAAF,
   REG_CAM_TEMP_MIN = 0xCAB0,
@@ -413,6 +428,32 @@ static int _AM_read_reg(struct i2c_client * client, u16 reg, unsigned *val, int 
 static int _AM_read_reg_unchecked(struct i2c_client * client, u16 reg, unsigned *val, int data_size, unsigned *error_count)
 {
 	return _AM_read_reg_maybe_unchecked(client, reg, val, data_size, error_count, READ_IS_UNCHECKED);
+}
+
+/*
+ * Use unchecked reads so mismatches don't get counted, but read until
+ * the two values match.  For reading volatile registers without triggering
+ * mismatch errors.
+ */
+static int _AM_read_reg_unchecked_until_stable(struct i2c_client * client, u16 reg, unsigned *val, int data_size, unsigned *error_count)
+{
+	unsigned val1, val2;
+	int i, ret = -EIO;
+
+	val1 = val2 = 0;
+	for (i = 0; i < i2c_retries; i++) {
+		ret = _AM_read_reg_unchecked(client, reg, &val1, data_size, error_count);
+		if (ret)
+			break;
+		ret = _AM_read_reg_unchecked(client, reg, &val2, data_size, error_count);
+		if (ret)
+			break;
+		if (val1 == val2) {
+			*val = val1;
+			break;
+		}
+	}
+	return ret;
 }
 
 static int _AM_try_write_data(struct i2c_client * client, u16 reg, const u8* buf, unsigned buf_len, bool unchecked)
@@ -1904,30 +1945,17 @@ static ssize_t ap0100_show_min_temp(struct device *dev,
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
 	struct i2c_client *client = data->client;
-	unsigned val1, val2;
-	int ret, i;
+	unsigned val;
+	int ret;
 
-	/*
-	 * Use unchecked reads so mismatches don't get counted, but read twice
-	 * and make sure the two values match.
-	 */
 	mutex_lock(&data->lock);
-	for (i = 0; i < i2c_retries; i++) {
-		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_MIN, &val1, 1, &data->error_count);
-		if (ret)
-			break;
-		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_MIN, &val2, 1, &data->error_count);
-		if (ret)
-			break;
-		if (val1 == val2)
-			break;
-	}
+	ret = _AM_read_reg_unchecked_until_stable(client, REG_CAM_TEMP_MIN, &val, 1, &data->error_count);
 	mutex_unlock(&data->lock);
 
 	if (ret < 0)
 		return ret;
 
-	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val1);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
 static DEVICE_ATTR(min_temp, 0444, (void *)ap0100_show_min_temp, NULL);
 
@@ -1969,26 +1997,17 @@ static ssize_t ap0100_show_max_temp(struct device *dev,
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
 	struct i2c_client *client = data->client;
-	unsigned val1, val2;
-	int ret, i;
+	unsigned val;
+	int ret;
 
 	mutex_lock(&data->lock);
-	for (i = 0; i < i2c_retries; i++) {
-		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_MAX, &val1, 1, &data->error_count);
-		if (ret)
-			break;
-		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_MAX, &val2, 1, &data->error_count);
-		if (ret)
-			break;
-		if (val1 == val2)
-			break;
-	}
+	ret = _AM_read_reg_unchecked_until_stable(client, REG_CAM_TEMP_MAX, &val, 1, &data->error_count);
 	mutex_unlock(&data->lock);
 
 	if (ret < 0)
 		return ret;
 
-	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val1);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
 static DEVICE_ATTR(max_temp, 0444, (void *)ap0100_show_max_temp, NULL);
 
@@ -1997,26 +2016,17 @@ static ssize_t ap0100_show_cur_temp(struct device *dev,
 {
 	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
 	struct i2c_client *client = data->client;
-	unsigned val1, val2;
-	int ret, i;
+	unsigned val;
+	int ret;
 
 	mutex_lock(&data->lock);
-	for (i = 0; i < i2c_retries; i++) {
-		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_CUR, &val1, 1, &data->error_count);
-		if (ret)
-			break;
-		ret = _AM_read_reg_unchecked(client, REG_CAM_TEMP_CUR, &val2, 1, &data->error_count);
-		if (ret)
-			break;
-		if (val1 == val2)
-			break;
-	}
+	ret = _AM_read_reg_unchecked_until_stable(client, REG_CAM_TEMP_CUR, &val, 1, &data->error_count);
 	mutex_unlock(&data->lock);
 
 	if (ret < 0)
 		return ret;
 
-	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val1);
+	return scnprintf(buf, PAGE_SIZE,"%hhd\n",(s8)val);
 }
 static DEVICE_ATTR(cur_temp, 0444, (void *)ap0100_show_cur_temp, NULL);
 
@@ -2176,6 +2186,156 @@ out:
 }
 static DEVICE_ATTR(validate_flash, 0200, (void *)ap0100_show_fw_status, (void *)ap0100_validate_fw_in_flash);
 
+static ssize_t ap0100_show_ll_mode(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	ssize_t offset = 0;
+	unsigned val;
+	int ret;
+
+	mutex_lock(&data->lock);
+	ret = _AM_read_reg(client, REG_CAM_LL_MODE, &val, 2, &data->error_count);
+	mutex_unlock(&data->lock);
+
+	if (ret < 0)
+		return ret;
+
+	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Fade-to-Black mode:   %s\n",
+			    (val & (1<<3)) ? "ACTIVE" : "INACTIVE");
+	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Green pixel weights:  %s\n",
+			    (val & (1<<2)) ? "ENABLED" : "DISABLED");
+	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Auto noise reduction: %s\n",
+			    (val & (1<<0)) ? "ENABLED" : "DISABLED");
+	return offset;
+}
+static DEVICE_ATTR(ll_mode, 0444, (void *)ap0100_show_ll_mode, NULL);
+
+static ssize_t ap0100_show_ll_algo(struct device *dev,
+				   struct device_attribute *attr, char *buf)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	unsigned val;
+	int ret;
+
+	mutex_lock(&data->lock);
+	ret = _AM_read_reg(client, REG_CAM_LL_ALGO, &val, 2, &data->error_count);
+	mutex_unlock(&data->lock);
+
+	if (ret < 0)
+		return ret;
+
+	val &= ~(1<<10);
+	if (val != 0 && val != 0x3FF)
+		return scnprintf(buf, PAGE_SIZE, "Unknown algorithm (0x%x)\n", val);
+	return scnprintf(buf, PAGE_SIZE, "Low light adaptation algorithm: %s\n",
+			 val ? "ENABLED" : "DISABLED");
+}
+static DEVICE_ATTR(ll_algo, 0444, (void *)ap0100_show_ll_algo, NULL);
+
+static ssize_t ap0100_show_ll_gamma(struct device *dev,
+				    struct device_attribute *attr, char *buf)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	unsigned val;
+	int ret;
+	static const char *gamma_sel[3] = {"INTERPOLATE",
+					   "CONTRAST",
+					   "NOISE REDUCTION"};
+
+	mutex_lock(&data->lock);
+	ret = _AM_read_reg(client, REG_CAM_LL_GAMMA, &val, 1, &data->error_count);
+	mutex_unlock(&data->lock);
+
+	if (ret < 0)
+		return ret;
+
+	val &= 0xFF;
+	if (val > 2)
+		return scnprintf(buf, PAGE_SIZE, "Unknown gamma selection: 0x%x\n", val);
+	return scnprintf(buf, PAGE_SIZE, "Gamma selection: %s\n", gamma_sel[val]);
+}
+static DEVICE_ATTR(ll_gamma, 0444, (void *)ap0100_show_ll_gamma, NULL);
+
+static ssize_t ap0100_show_gamma_curve(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	ssize_t totlen, len;
+	u16 reg = REG_CAM_LL_GAMMA_CURVE_0;
+	unsigned val[34];
+	int ret, i;
+
+	ret = 0;
+	for (i = 0; i < 34 && ret >= 0; i++, reg += 2) {
+		mutex_lock(&data->lock);
+		ret = _AM_read_reg(client, reg, &val[i], 2, &data->error_count);
+		mutex_unlock(&data->lock);
+	}
+
+	if (ret < 0)
+		return ret;
+
+	totlen = scnprintf(buf, PAGE_SIZE, "Gamma contrast curve:\n");
+	for (i = 0; i < 34 && totlen < PAGE_SIZE; i++, totlen += len) {
+		len = scnprintf(&buf[totlen], PAGE_SIZE-totlen, "Index %4d: 0x%x\n",
+				(i * 128), val[i]);
+		if (len < 0)
+			return len;
+	}
+	return totlen;
+}
+static DEVICE_ATTR(gamma_curve, 0444, (void *)ap0100_show_gamma_curve, NULL);
+
+static ssize_t ap0100_show_ll_avg_luma(struct device *dev,
+				       struct device_attribute *attr, char *buf)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	unsigned val;
+	int ret;
+
+	mutex_lock(&data->lock);
+	ret = _AM_read_reg(client, REG_CAM_LL_AVG_LUMA_FTB, &val, 2, &data->error_count);
+	mutex_unlock(&data->lock);
+
+	if (ret < 0)
+		return ret;
+
+	return scnprintf(buf, PAGE_SIZE, "Max average luma: 0x%x\n", val);
+}
+static DEVICE_ATTR(ll_avg_luma, 0444, (void *)ap0100_show_ll_avg_luma, NULL);
+
+static ssize_t ap0100_show_ll_damping(struct device *dev,
+				      struct device_attribute *attr, char *buf)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	unsigned val[3];
+	int ret;
+
+	mutex_lock(&data->lock);
+	ret = _AM_read_reg(client, REG_CAM_LL_ALTM_DAMPING_FAST, &val[0], 2, &data->error_count);
+	if (ret == 0)
+		ret = _AM_read_reg(client, REG_CAM_LL_ALTM_DAMPING_MED, &val[1], 2, &data->error_count);
+	if (ret == 0)
+		ret = _AM_read_reg(client, REG_CAM_LL_ALTM_DAMPING_SLOW, &val[2], 2, &data->error_count);
+	mutex_unlock(&data->lock);
+
+	if (ret < 0)
+		return ret;
+
+	return scnprintf(buf, PAGE_SIZE, "Damping values:\n"
+			                 " Fast:   0x%x\n"
+			                 " Medium: 0x%x\n"
+			                 " Slow:   0x%x\n",
+			 val[0], val[1], val[2]);
+}
+static DEVICE_ATTR(ll_damping, 0444, (void *)ap0100_show_ll_damping, NULL);
 
 static struct attribute *attributes[] = {
 	&dev_attr_ap0100_param.attr,
@@ -2532,6 +2692,12 @@ static struct attribute *init_attributes[] = {
 	&dev_attr_cur_temp.attr,
 	&dev_attr_ap0100_m034_i2c_test.attr,
 	&dev_attr_i2c_mismatch_count.attr,
+	&dev_attr_ll_mode.attr,
+	&dev_attr_ll_algo.attr,
+	&dev_attr_ll_gamma.attr,
+	&dev_attr_gamma_curve.attr,
+	&dev_attr_ll_avg_luma.attr,
+	&dev_attr_ll_damping.attr,
 	NULL,
 };
 
