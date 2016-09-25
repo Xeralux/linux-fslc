@@ -2202,15 +2202,38 @@ static ssize_t ap0100_show_ll_mode(struct device *dev,
 	if (ret < 0)
 		return ret;
 
-	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Fade-to-Black mode:   %s\n",
-			    (val & (1<<3)) ? "ACTIVE" : "INACTIVE");
-	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Green pixel weights:  %s\n",
-			    (val & (1<<2)) ? "ENABLED" : "DISABLED");
-	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Auto noise reduction: %s\n",
-			    (val & (1<<0)) ? "ENABLED" : "DISABLED");
+	val &= 0x0D;
+	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Fade-to-Black mode:   %s (%d)\n",
+			    (val & (1<<3)) ? "ACTIVE" : "INACTIVE", (val & (1<<3)));
+	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Green pixel weights:  %s (%d)\n",
+			    (val & (1<<2)) ? "ENABLED" : "DISABLED", (val & (1<<2)));
+	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Auto noise reduction: %s (%d)\n",
+			    (val & (1<<0)) ? "ENABLED" : "DISABLED", (val & (1<<0)));
+	offset += scnprintf(&buf[offset], PAGE_SIZE-offset, "Mode setting value:   %d\n", val);
 	return offset;
 }
-static DEVICE_ATTR(ll_mode, 0444, (void *)ap0100_show_ll_mode, NULL);
+static ssize_t ap0100_set_ll_mode(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	unsigned val, setting, mask = 0xD;
+	int ret;
+
+	if (kstrtouint(buf, 10, &setting))
+		return -EINVAL;
+	setting &= mask;
+	mutex_lock(&data->lock);
+	ret = _AM_read_reg(client, REG_CAM_LL_MODE, &val, 2, &data->error_count);
+	if (!ret) {
+		val &= ~mask;
+		val |= setting;
+		ret = _AM_write_reg(client, REG_CAM_LL_MODE, val, 2, &data->error_count);
+	}
+	mutex_unlock(&data->lock);
+	return (ret < 0 ? ret : count);
+}
+static DEVICE_ATTR(ll_mode, 0664, ap0100_show_ll_mode, ap0100_set_ll_mode);
 
 static ssize_t ap0100_show_ll_algo(struct device *dev,
 				   struct device_attribute *attr, char *buf)
@@ -2233,7 +2256,32 @@ static ssize_t ap0100_show_ll_algo(struct device *dev,
 	return scnprintf(buf, PAGE_SIZE, "Low light adaptation algorithm: %s\n",
 			 val ? "ENABLED" : "DISABLED");
 }
-static DEVICE_ATTR(ll_algo, 0444, (void *)ap0100_show_ll_algo, NULL);
+
+static ssize_t ap0100_set_ll_algo(struct device *dev, struct device_attribute *attr,
+				  const char *buf, size_t count)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	unsigned val;
+	int ret, onoff;
+
+	if (kstrtoint(buf, 10, &onoff))
+		return -EINVAL;
+
+	mutex_lock(&data->lock);
+	ret = _AM_read_reg(client, REG_CAM_LL_ALGO, &val, 2, &data->error_count);
+	if (!ret) {
+		if (onoff)
+			val |= 0x3FF;
+		else
+			val &= ~0x3FF;
+		ret = _AM_write_reg(client, REG_CAM_LL_ALGO, val, 2, &data->error_count);
+	}
+	mutex_unlock(&data->lock);
+
+	return (ret < 0 ? ret : count);
+}
+static DEVICE_ATTR(ll_algo, 0664, ap0100_show_ll_algo, ap0100_set_ll_algo);
 
 static ssize_t ap0100_show_ll_gamma(struct device *dev,
 				    struct device_attribute *attr, char *buf)
@@ -2256,9 +2304,27 @@ static ssize_t ap0100_show_ll_gamma(struct device *dev,
 	val &= 0xFF;
 	if (val > 2)
 		return scnprintf(buf, PAGE_SIZE, "Unknown gamma selection: 0x%x\n", val);
-	return scnprintf(buf, PAGE_SIZE, "Gamma selection: %s\n", gamma_sel[val]);
+	return scnprintf(buf, PAGE_SIZE, "Gamma selection: %s (%d)\n", gamma_sel[val], val);
 }
-static DEVICE_ATTR(ll_gamma, 0444, (void *)ap0100_show_ll_gamma, NULL);
+
+static ssize_t ap0100_set_ll_gamma(struct device *dev, struct device_attribute *attr,
+				   const char *buf, size_t count)
+{
+	struct ap0100_m034_data *data = to_ap0100_m034_from_dev(dev);
+	struct i2c_client *client = data->client;
+	unsigned val;
+	int ret;
+
+	if (kstrtouint(buf, 10, &val) || val > 2)
+		return -EINVAL;
+
+	mutex_lock(&data->lock);
+	ret = _AM_write_reg(client, REG_CAM_LL_GAMMA, val, 1, &data->error_count);
+	mutex_unlock(&data->lock);
+	return (ret < 0 ? ret : count);
+}
+
+static DEVICE_ATTR(ll_gamma, 0664, ap0100_show_ll_gamma, ap0100_set_ll_gamma);
 
 static ssize_t ap0100_show_gamma_curve(struct device *dev,
 				       struct device_attribute *attr, char *buf)
