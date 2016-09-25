@@ -2267,11 +2267,11 @@ static ssize_t ap0100_show_gamma_curve(struct device *dev,
 	struct i2c_client *client = data->client;
 	ssize_t totlen, len;
 	u16 reg = REG_CAM_LL_GAMMA_CURVE_0;
-	unsigned val[34];
+	unsigned val[33];
 	int ret, i;
 
 	ret = 0;
-	for (i = 0; i < 34 && ret >= 0; i++, reg += 2) {
+	for (i = 0; i < 33 && ret >= 0; i++, reg += 2) {
 		mutex_lock(&data->lock);
 		ret = _AM_read_reg(client, reg, &val[i], 2, &data->error_count);
 		mutex_unlock(&data->lock);
@@ -2281,7 +2281,7 @@ static ssize_t ap0100_show_gamma_curve(struct device *dev,
 		return ret;
 
 	totlen = scnprintf(buf, PAGE_SIZE, "Gamma contrast curve:\n");
-	for (i = 0; i < 34 && totlen < PAGE_SIZE; i++, totlen += len) {
+	for (i = 0; i < 33 && totlen < PAGE_SIZE; i++, totlen += len) {
 		len = scnprintf(&buf[totlen], PAGE_SIZE-totlen, "Index %4d: 0x%x\n",
 				(i * 128), val[i]);
 		if (len < 0)
