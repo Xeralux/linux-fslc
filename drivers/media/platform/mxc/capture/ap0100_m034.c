@@ -443,10 +443,10 @@ static int _AM_read_reg_unchecked_until_stable(struct i2c_client * client, u16 r
 	val1 = val2 = 0;
 	for (i = 0; i < i2c_retries; i++) {
 		ret = _AM_read_reg_unchecked(client, reg, &val1, data_size, error_count);
-		if (ret)
+		if (ret < 0)
 			break;
 		ret = _AM_read_reg_unchecked(client, reg, &val2, data_size, error_count);
-		if (ret)
+		if (ret < 0)
 			break;
 		if (val1 == val2) {
 			*val = val1;
