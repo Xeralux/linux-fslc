@@ -128,6 +128,13 @@ module_param(i2c_retries, ulong, 0644);
 MODULE_PARM_DESC(i2c_retries, "Default number of times to retry I2C xfers");
 
 /*
+ * Maximum number of attempts at setting up the link to
+ * the remote end, before we give up
+ */
+static unsigned long link_setup_attempts = 5;
+module_param(link_setup_attempts, ulong, 0644);
+
+/*
  * Driver-private data structures
  */
 
@@ -746,7 +753,7 @@ static int des_control_init(struct max927x *me)
 	 */
 	reg8val = ser_reg_from_properties(me, 8);
 	dev_dbg(me->dev, "initial setting for max9271 reg 8: 0x%x\n", reg8val);
-	for (i = 1; i <= i2c_retries; i++) {
+	for (i = 1; i <= link_setup_attempts; i++) {
 		dev_dbg(me->dev, "setting up control link on serializer (attempt #%d)\n", i);
 		ret = i2c_reg_write(me->ser, 0x08, reg8val);
 		dev_dbg(me->dev, "status=%d writing 0x%x to serializer reg 8\n", ret, reg8val);
