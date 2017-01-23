@@ -3522,7 +3522,7 @@ static long mxc_ipu_ioctl(struct file *file,
 
 			mem->size = PAGE_ALIGN(size);
 
-			mem->cpu_addr = dma_alloc_coherent(ipu_dev, size,
+			mem->cpu_addr = dma_alloc_coherent(ipu_dev, mem->size,
 							   &mem->phy_addr,
 							   GFP_DMA | GFP_KERNEL);
 			if (mem->cpu_addr == NULL) {
