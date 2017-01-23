@@ -41,6 +41,7 @@
 
 
 #define FRAME_NUM 32
+#define MAX_FRAME_SIZE PAGE_ALIGN(4 * 1280 * 960)
 #define MXC_SENSOR_NUM 2
 
 enum imx_v4l2_devtype {
@@ -106,6 +107,11 @@ struct camera_sensor {
 /*!
  * common v4l2 driver structure.
  */
+struct mxc_v4l_capbuf {
+	u32 paddress;
+	void *vaddress;
+};
+
 typedef struct _cam_data {
 	struct device *dev;
 	struct video_device *video_dev;
@@ -113,6 +119,9 @@ typedef struct _cam_data {
 
 	/* semaphore guard against SMP multithreading */
 	struct semaphore busy_lock;
+
+	struct mxc_v4l_capbuf capbuf[FRAME_NUM];
+	int free_capbufs;
 
 	int open_count;
 

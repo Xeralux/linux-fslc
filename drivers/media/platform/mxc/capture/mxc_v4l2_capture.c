@@ -229,6 +229,26 @@ static struct v4l2_int_master mxc_v4l2_master = {
  * Functions for handling Frame buffers.
  **************************************************************************/
 
+static int get_capbuf(cam_data *cam, void **va, u32 *pa) {
+	int i;
+	if (cam->free_capbufs <= 0)
+		return -ENOBUFS;
+	i = --cam->free_capbufs;
+	*va = cam->capbuf[i].vaddress;
+	*pa = cam->capbuf[i].paddress;
+	return 0;
+}
+
+static void put_capbuf(cam_data *cam, void *va, u32 pa) {
+	if (cam->free_capbufs >= FRAME_NUM)
+		dev_warn(cam->dev, "%s: free capbufs list is full\n", __func__);
+	else {
+		int i = cam->free_capbufs++;
+		cam->capbuf[i].vaddress = va;
+		cam->capbuf[i].paddress = pa;
+	}
+}
+
 /*!
  * Free frame buffers
  *
@@ -244,9 +264,7 @@ static int mxc_free_frame_buf(cam_data *cam)
 
 	for (i = 0; i < FRAME_NUM; i++) {
 		if (cam->frame[i].vaddress != 0) {
-			dma_free_coherent(0, cam->frame[i].buffer.length,
-					  cam->frame[i].vaddress,
-					  cam->frame[i].paddress);
+			put_capbuf(cam, cam->frame[i].vaddress, cam->frame[i].paddress);
 			cam->frame[i].vaddress = 0;
 		}
 	}
@@ -269,14 +287,18 @@ static int mxc_allocate_frame_buf(cam_data *cam, int count)
 	dev_dbg(cam->dev, "mxc_allocate_frame_buf - size=%d\n",
 		  cam->v2f.fmt.pix.sizeimage);
 
+	if (cam->v2f.fmt.pix.sizeimage > MAX_FRAME_SIZE) {
+		dev_err(cam->dev, "%s: requested frame size too large\n", __func__);
+		return -ENOBUFS;
+	}
+
+	if (count > FRAME_NUM) {
+		dev_err(cam->dev, "%s: too many buffers requested\n", __func__);
+		return -ENOBUFS;
+	}
+
 	for (i = 0; i < count; i++) {
-		cam->frame[i].vaddress =
-		    dma_alloc_coherent(0,
-				       PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage),
-				       &cam->frame[i].paddress,
-				       GFP_DMA | GFP_KERNEL);
-		if (cam->frame[i].vaddress == 0) {
-			dev_err(cam->dev, "mxc_allocate_frame_buf failed.\n");
+		if (get_capbuf(cam, &cam->frame[i].vaddress, &cam->frame[i].paddress)) {
 			mxc_free_frame_buf(cam);
 			return -ENOBUFS;
 		}
@@ -1783,7 +1805,7 @@ static ssize_t mxc_v4l_read(struct file *file, char *buf, size_t count,
 			    loff_t *ppos)
 {
 	int err = 0;
-	u8 *v_address[2];
+	void *v_address[2] = {0, 0};
 	struct video_device *dev = video_devdata(file);
 	cam_data *cam = video_get_drvdata(dev);
 
@@ -1794,17 +1816,8 @@ static ssize_t mxc_v4l_read(struct file *file, char *buf, size_t count,
 	if (cam->overlay_on == true)
 		stop_preview(cam);
 
-	v_address[0] = dma_alloc_coherent(0,
-				       PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage),
-				       &cam->still_buf[0],
-				       GFP_DMA | GFP_KERNEL);
-
-	v_address[1] = dma_alloc_coherent(0,
-				       PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage),
-				       &cam->still_buf[1],
-				       GFP_DMA | GFP_KERNEL);
-
-	if (!v_address[0] || !v_address[1]) {
+	if (get_capbuf(cam, &v_address[0], &cam->still_buf[0]) ||
+	    get_capbuf(cam, &v_address[1], &cam->still_buf[1])) {
 		err = -ENOBUFS;
 		goto exit0;
 	}
@@ -1837,11 +1850,9 @@ exit1:
 
 exit0:
 	if (v_address[0] != 0)
-		dma_free_coherent(0, cam->v2f.fmt.pix.sizeimage, v_address[0],
-				  cam->still_buf[0]);
+		put_capbuf(cam, v_address[0], cam->still_buf[0]);
 	if (v_address[1] != 0)
-		dma_free_coherent(0, cam->v2f.fmt.pix.sizeimage, v_address[1],
-				  cam->still_buf[1]);
+		put_capbuf(cam, v_address[1], cam->still_buf[1]);
 
 	cam->still_buf[0] = cam->still_buf[1] = 0;
 
@@ -2610,7 +2621,7 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	int ipu_id, csi_id, mclk_source;
 	unsigned vdev;
-	int ret = 0;
+	int i, ret = 0;
 	struct v4l2_device *v4l2_dev;
 
 	dev_dbg(dev, "init_camera_struct\n");
@@ -2662,6 +2673,28 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 
 	init_MUTEX(&cam->param_lock);
 	init_MUTEX(&cam->busy_lock);
+
+	dev_info(dev, "allocating %d capture buffers of size %d\n",
+		 FRAME_NUM, MAX_FRAME_SIZE);
+
+	for (i = 0; i < FRAME_NUM; i++) {
+		cam->capbuf[i].vaddress =
+			dma_alloc_coherent(dev,
+					   MAX_FRAME_SIZE,
+					   &cam->capbuf[i].paddress,
+					   GFP_DMA | GFP_KERNEL);
+		if (cam->capbuf[i].vaddress == NULL)
+			break;
+	}
+	if (i < FRAME_NUM) {
+		dev_err(dev, "failure to allocate capbuf %d\n", i);
+		while (--i >= 0)
+			dma_free_coherent(dev, MAX_FRAME_SIZE,
+					  cam->capbuf[i].vaddress,
+					  cam->capbuf[i].paddress);
+		return -ENOBUFS;
+	}
+	cam->free_capbufs = FRAME_NUM;
 
 	cam->video_dev = video_device_alloc();
 	if (cam->video_dev == NULL)
@@ -2874,6 +2907,13 @@ static int mxc_v4l2_remove(struct platform_device *pdev)
 		video_unregister_device(cam->video_dev);
 
 		mxc_free_frame_buf(cam);
+		if (cam->free_capbufs != FRAME_NUM)
+			dev_warn(&pdev->dev, "%d capture buffers still in use\n",
+				 FRAME_NUM-cam->free_capbufs);
+		while (--cam->free_capbufs >= 0)
+			dma_free_coherent(cam->dev, MAX_FRAME_SIZE,
+					  cam->capbuf[cam->free_capbufs].vaddress,
+					  cam->capbuf[cam->free_capbufs].paddress);
 		kfree(cam);
 
 		v4l2_device_unregister(v4l2_dev);
