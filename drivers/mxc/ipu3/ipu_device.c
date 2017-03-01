@@ -344,9 +344,18 @@ struct ipu_alloc_list {
 	void *cpu_addr;
 	u32 size;
 	void *file_index;
+	struct list_head *freelist;
 };
 
 static LIST_HEAD(ipu_alloc_list);
+#define POOL_ALLOC_COUNT 8
+#define SMALL_SIZE 4096
+#define MEDIUM_SIZE (512*1024)
+#define LARGE_SIZE (3*512*1024)
+static LIST_HEAD(ipu_free_list_small);
+static LIST_HEAD(ipu_free_list_medium);
+static LIST_HEAD(ipu_free_list_large);
+static LIST_HEAD(ipu_bufpool_list);
 static DEFINE_MUTEX(ipu_alloc_lock);
 static struct ipu_channel_tabel	ipu_ch_tbl;
 static LIST_HEAD(ipu_task_list);
@@ -370,6 +379,122 @@ static struct timespec ts_frame_max;
 static u32 ts_frame_avg;
 static atomic_t frame_cnt;
 #endif
+
+static void ipu_extend_bufpool(struct list_head *freelist, u32 size) {
+
+	struct ipu_alloc_list *pool, *m;
+	int i;
+
+	pool = kzalloc(sizeof(*pool), GFP_KERNEL);
+	if (pool == NULL) {
+		dev_err(ipu_dev, "%s: could not allocate pool descriptor\n",
+			__func__);
+		return;
+	}
+	mutex_unlock(&ipu_alloc_lock);
+	pool->cpu_addr = dma_alloc_coherent(ipu_dev,
+					    size * POOL_ALLOC_COUNT,
+					    &pool->phy_addr,
+					    GFP_DMA | GFP_KERNEL);
+	mutex_lock(&ipu_alloc_lock);
+	if (pool->cpu_addr == NULL) {
+		kfree(pool);
+		dev_err(ipu_dev, "%s: could not allocate DMA pool buffer (size %d)\n",
+			__func__, size * POOL_ALLOC_COUNT);
+		return;
+	}
+	for (i = 0; i < POOL_ALLOC_COUNT; i++) {
+		m = kzalloc(sizeof(*m), GFP_KERNEL);
+		m->cpu_addr = pool->cpu_addr + (i * size);
+		m->phy_addr = pool->phy_addr + (i * size);
+		m->size = size;
+		m->freelist = freelist;
+		list_add(&m->list, freelist);
+	}
+	list_add_tail(&pool->list, &ipu_bufpool_list);
+	dev_dbg(ipu_dev, "%s: extended lookaside list for size %d\n",
+		 __func__, size);
+}
+
+static struct ipu_alloc_list *ipu_alloc_from_pool(struct list_head *freelist, u32 size)
+{
+	struct ipu_alloc_list *m;
+
+	mutex_lock(&ipu_alloc_lock);
+	if (list_empty(freelist))
+		ipu_extend_bufpool(freelist, size);
+	if (list_empty(freelist)) {
+		dev_err(ipu_dev, "%s: buffer pool empty after attempting to extend\n",
+			 __func__);
+		mutex_unlock(&ipu_alloc_lock);
+		return NULL;
+	}
+	m = list_first_entry(freelist, struct ipu_alloc_list, list);
+	list_move(&m->list, &ipu_alloc_list);
+	mutex_unlock(&ipu_alloc_lock);
+	dev_dbg(ipu_dev, "%s: allocated buffer (0x%08X, %d bytes) from lookaside list\n",
+		__func__, m->phy_addr, m->size);
+	return m;
+}
+
+static struct ipu_alloc_list *ipu_alloc_dma_buf(u32 reqsize)
+{
+	struct ipu_alloc_list *mem;
+	u32 size = PAGE_ALIGN(reqsize);
+
+	if (size <= SMALL_SIZE)
+		return ipu_alloc_from_pool(&ipu_free_list_small, SMALL_SIZE);
+	else if (size <= MEDIUM_SIZE)
+		return ipu_alloc_from_pool(&ipu_free_list_medium, MEDIUM_SIZE);
+	else if (size <= LARGE_SIZE)
+		return ipu_alloc_from_pool(&ipu_free_list_large, LARGE_SIZE);
+
+	mem = kzalloc(sizeof(*mem), GFP_KERNEL);
+	if (!mem) {
+		dev_err(ipu_dev, "%s: could not allocate mem descriptor\n",
+			__func__);
+		return NULL;
+	}
+	mem->cpu_addr = dma_alloc_coherent(ipu_dev, size,
+					   &mem->phy_addr,
+					   GFP_DMA | GFP_KERNEL);
+	if (mem->cpu_addr) {
+		mem->size = size;
+		mutex_lock(&ipu_alloc_lock);
+		list_add_tail(&mem->list, &ipu_alloc_list);
+		mutex_unlock(&ipu_alloc_lock);
+		dev_info(ipu_dev, "%s: directly allocating DMA buffer (0x%08X, %d bytes)\n",
+			 __func__, mem->phy_addr, mem->size);
+	} else {
+		dev_err(ipu_dev, "%s: error allocating DMA buffer (%d bytes)\n",
+			__func__, size);
+		kfree(mem);
+		mem = NULL;
+	}
+	return mem;
+}
+
+static void ipu_free_dma_buf(struct ipu_alloc_list *mem, int havelock)
+{
+	if (!havelock)
+		mutex_lock(&ipu_alloc_lock);
+	if (mem->freelist) {
+		list_move(&mem->list, mem->freelist);
+		if (!havelock)
+			mutex_unlock(&ipu_alloc_lock);
+		dev_dbg(ipu_dev, "%s: returned buf (0x%08X, %d bytes) to free list\n",
+			 __func__, mem->phy_addr, mem->size);
+		return;
+	}
+	list_del(&mem->list);
+	mutex_unlock(&ipu_alloc_lock);
+	dma_free_coherent(ipu_dev, mem->size, mem->cpu_addr, mem->phy_addr);
+	if (havelock)
+		mutex_lock(&ipu_alloc_lock);
+	dev_info(ipu_dev, "%s: directly freed buf (0x%08X, %d bytes)\n",
+		 __func__, mem->phy_addr, mem->size);
+	kfree(mem);
+}
 
 static bool deinterlace_3_field(struct ipu_task_entry *t)
 {
@@ -2806,7 +2931,8 @@ static void do_task(struct ipu_task_entry *t)
 			* fmt_to_bpp(t->set.r_fmt)/8);
 
 		if (r_size > ipu->rot_dma[rot_idx].size) {
-			dev_dbg(t->dev, "[0x%p]realloc rot buffer\n", (void *)t);
+			dev_warn(t->dev, "[0x%p]realloc rot buffer oldsize=%d, newsize=%d\n",
+				 (void *)t, ipu->rot_dma[rot_idx].size, r_size);
 
 			if (ipu->rot_dma[rot_idx].vaddr)
 				dma_free_coherent(t->dev,
@@ -3511,38 +3637,16 @@ static long mxc_ipu_ioctl(struct file *file,
 			int size;
 			struct ipu_alloc_list *mem;
 
-			mem = kzalloc(sizeof(*mem), GFP_KERNEL);
-			if (mem == NULL)
-				return -ENOMEM;
-
-			if (get_user(size, argp)) {
-				kfree(mem);
+			if (get_user(size, argp))
 				return -EFAULT;
-			}
 
-			mem->size = PAGE_ALIGN(size);
-
-			mem->cpu_addr = dma_alloc_coherent(ipu_dev, mem->size,
-							   &mem->phy_addr,
-							   GFP_DMA | GFP_KERNEL);
-			if (mem->cpu_addr == NULL) {
-				kfree(mem);
+			mem = ipu_alloc_dma_buf(size);
+			if (!mem)
 				return -ENOMEM;
-			}
 			mem->file_index = file->private_data;
-			mutex_lock(&ipu_alloc_lock);
-			list_add(&mem->list, &ipu_alloc_list);
-			mutex_unlock(&ipu_alloc_lock);
 
 			if (put_user(mem->phy_addr, argp)) {
-				mutex_lock(&ipu_alloc_lock);
-				list_del(&mem->list);
-				mutex_unlock(&ipu_alloc_lock);
-				dma_free_coherent(ipu_dev,
-						  mem->size,
-						  mem->cpu_addr,
-						  mem->phy_addr);
-				kfree(mem);
+				ipu_free_dma_buf(mem, 0);
 				return -EFAULT;
 			}
 
@@ -3562,22 +3666,15 @@ static long mxc_ipu_ioctl(struct file *file,
 			ret = -EINVAL;
 			mutex_lock(&ipu_alloc_lock);
 			list_for_each_entry(mem, &ipu_alloc_list, list) {
-				if (mem->phy_addr == offset) {
-					list_del(&mem->list);
+				if (mem->phy_addr == offset &&
+					mem->file_index == file->private_data) {
 					ret = 0;
 					break;
 				}
 			}
+			if (0 == ret)
+				ipu_free_dma_buf(mem, 1);
 			mutex_unlock(&ipu_alloc_lock);
-			if (0 == ret) {
-				dma_free_coherent(ipu_dev,
-						  mem->size,
-						  mem->cpu_addr,
-						  mem->phy_addr);
-				kfree(mem);
-				dev_dbg(ipu_dev, "free %d bytes @ 0x%08X\n",
-					mem->size, mem->phy_addr);
-			}
 
 			break;
 		}
@@ -3633,17 +3730,9 @@ static int mxc_ipu_release(struct inode *inode, struct file *file)
 			(file->private_data == mem->file_index))
 			list_move(&mem->list, &to_free);
 	}
+	list_for_each_entry_safe(mem, n, &to_free, list)
+		ipu_free_dma_buf(mem, 1);
 	mutex_unlock(&ipu_alloc_lock);
-	list_for_each_entry_safe(mem, n, &to_free, list) {
-		dma_free_coherent(ipu_dev,
-				  mem->size,
-				  mem->cpu_addr,
-				  mem->phy_addr);
-		dev_dbg(ipu_dev, "rel-free %d bytes @ 0x%08X\n",
-			mem->size, mem->phy_addr);
-		kfree(mem);
-	}
-	atomic_dec(&file_index);
 
 	return 0;
 }
@@ -3713,6 +3802,14 @@ int register_ipu_device(struct ipu_soc *ipu, int id)
 		goto kthread1_fail;
 	}
 
+	mutex_lock(&ipu_alloc_lock);
+	if (list_empty(&ipu_free_list_small))
+		ipu_extend_bufpool(&ipu_free_list_small, SMALL_SIZE);
+	if (list_empty(&ipu_free_list_medium))
+		ipu_extend_bufpool(&ipu_free_list_medium, MEDIUM_SIZE);
+	if (list_empty(&ipu_free_list_large))
+		ipu_extend_bufpool(&ipu_free_list_large, LARGE_SIZE);
+	mutex_unlock(&ipu_alloc_lock);
 
 	return ret;
 
