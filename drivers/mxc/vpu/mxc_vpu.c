@@ -78,17 +78,31 @@
 #define pgprot_noncachedxn(prot) \
 	__pgprot_modify(prot, L_PTE_MT_MASK, L_PTE_MT_UNCACHED | L_PTE_XN)
 
+static unsigned int bufpool_size[] = {
+	512 * 1024,
+	1 * 1024 * 1024,
+	1 * 1024 * 1024 + 512 * 1024,
+	2 * 1024 * 1024,
+};
+#define NUM_BUFPOOLS ARRAY_SIZE(bufpool_size)
+#define POOL_ALLOC_COUNT 8
+
 struct vpu_priv {
 	struct fasync_struct *async_queue;
 	struct work_struct work;
 	struct workqueue_struct *workqueue;
 	struct mutex lock;
+	struct list_head freelist[NUM_BUFPOOLS];
+	struct list_head bufpool_extents;
+	struct list_head alloc_list;
 };
 
 /* To track the allocated memory buffer */
 struct memalloc_record {
 	struct list_head list;
 	struct vpu_mem_desc mem;
+	struct list_head *freelist;
+	void *file_index;
 };
 
 struct iram_setting {
@@ -101,19 +115,17 @@ static struct gen_pool *iram_pool;
 static u32 iram_base;
 #endif
 
-static LIST_HEAD(head);
-
 static int vpu_major;
 static int vpu_clk_usercount;
 static struct class *vpu_class;
 static struct vpu_priv vpu_data;
 static u8 open_count;
 static struct clk *vpu_clk;
+static struct memalloc_record *bitwork_rec;
 static struct vpu_mem_desc bitwork_mem = { 0 };
-static struct vpu_mem_desc pic_para_mem = { 0 };
-static struct vpu_mem_desc user_data_mem = { 0 };
-static struct vpu_mem_desc share_mem = { 0 };
+static struct memalloc_record *share_mem;
 static struct vpu_mem_desc vshare_mem = { 0 };
+static atomic_t file_index = ATOMIC_INIT(1);
 
 static void __iomem *vpu_base;
 static int vpu_ipi_irq;
@@ -254,55 +266,146 @@ static int cpu_is_mx51(void)
 #define VM_RESERVED 0
 #endif
 
-/*!
- * Private function to alloc dma buffer
- * @return status  0 success.
- */
-static int vpu_alloc_dma_buffer(struct vpu_mem_desc *mem)
-{
-	mem->cpu_addr = (unsigned long)
-	    dma_alloc_coherent(NULL, PAGE_ALIGN(mem->size),
-			       (dma_addr_t *) (&mem->phy_addr),
-			       GFP_DMA | GFP_KERNEL);
-	dev_dbg(vpu_dev, "[ALLOC] mem alloc cpu_addr = 0x%x\n", mem->cpu_addr);
-	if ((void *)(mem->cpu_addr) == NULL) {
-		dev_err(vpu_dev, "Physical memory allocation error!\n");
-		return -1;
+static void vpu_extend_bufpool(struct list_head *freelist, unsigned int size) {
+	struct memalloc_record *pool, *m;
+	int i;
+	pool = kzalloc(sizeof(*pool), GFP_KERNEL);
+	if (pool == NULL) {
+		dev_err(vpu_dev, "%s: could not allocate pool descriptor\n",
+			__func__);
+		return;
 	}
-	return 0;
+	mutex_unlock(&vpu_data.lock);
+	pool->mem.cpu_addr = (unsigned long)
+		dma_alloc_coherent(vpu_dev,
+				   size * POOL_ALLOC_COUNT,
+				   (dma_addr_t *) &pool->mem.phy_addr,
+				   GFP_DMA | GFP_KERNEL);
+	mutex_lock(&vpu_data.lock);
+	if (!pool->mem.cpu_addr) {
+		kfree(pool);
+		dev_err(vpu_dev, "%s: could not allocate DMA pool buffer (size %d)\n",
+			__func__, size * POOL_ALLOC_COUNT);
+		return;
+	}
+	for (i = 0; i < POOL_ALLOC_COUNT; i++) {
+		m = kzalloc(sizeof(*m), GFP_KERNEL);
+		m->mem.cpu_addr = pool->mem.cpu_addr + (i * size);
+		m->mem.phy_addr = pool->mem.phy_addr + (i * size);
+		m->mem.size = size;
+		m->freelist = freelist;
+		list_add(&m->list, freelist);
+	}
+	list_add_tail(&pool->list, &vpu_data.bufpool_extents);
+	dev_dbg(vpu_dev, "%s: extended lookaside list for size %d\n",
+		 __func__, size);
 }
+
+static struct memalloc_record *vpu_alloc_from_pool(struct list_head *freelist,
+						   unsigned int size) {
+	struct memalloc_record *rec;
+
+	mutex_lock(&vpu_data.lock);
+	if (list_empty(freelist))
+		vpu_extend_bufpool(freelist, size);
+	if (list_empty(freelist)) {
+		dev_err(vpu_dev, "%s: buffer pool (size %d) empty after attempt to extend\n",
+			__func__, size);
+		mutex_unlock(&vpu_data.lock);
+		return NULL;
+	}
+	rec = list_first_entry(freelist, struct memalloc_record, list);
+	list_move(&rec->list, &vpu_data.alloc_list);
+	mutex_unlock(&vpu_data.lock);
+	dev_dbg(vpu_dev, "%s: allocated buffer (0x%08X, %d bytes) from lookaside list\n",
+		__func__, rec->mem.phy_addr, rec->mem.size);
+	return rec;
+}
+
+static struct memalloc_record *vpu_alloc_dma_buffer(unsigned int reqsize) {
+	struct memalloc_record *rec;
+	unsigned int size = PAGE_ALIGN(reqsize);
+	int i;
+
+	for (i = 0; i < NUM_BUFPOOLS; i++) {
+		if (size <= bufpool_size[i])
+			return vpu_alloc_from_pool(&vpu_data.freelist[i], bufpool_size[i]);
+	}
+
+	rec = kzalloc(sizeof(*rec), GFP_KERNEL);
+	if (!rec) {
+		dev_err(vpu_dev, "%s: could not allocate memalloc record\n",
+			__func__);
+		return NULL;
+	}
+	rec->mem.cpu_addr = (unsigned long)
+		dma_alloc_coherent(vpu_dev,
+				   size,
+				   (dma_addr_t *) &rec->mem.phy_addr,
+				   GFP_DMA | GFP_KERNEL);
+	if (rec->mem.cpu_addr) {
+		rec->mem.size = size;
+		mutex_lock(&vpu_data.lock);
+		list_add_tail(&rec->list, &vpu_data.alloc_list);
+		mutex_unlock(&vpu_data.lock);
+		dev_info(vpu_dev, "%s: directly allocating DMA buffer (0x%08X, %d bytes)\n",
+			 __func__, rec->mem.phy_addr, rec->mem.size);
+	} else {
+		dev_err(vpu_dev, "%s: error allocating DMA buffer (%d bytes)\n",
+			__func__, size);
+		kfree(rec);
+		rec = NULL;
+	}
+	return rec;
+}
+
 
 /*!
  * Private function to free dma buffer
  */
-static void vpu_free_dma_buffer(struct vpu_mem_desc *mem)
+static void vpu_free_dma_buffer(struct memalloc_record *rec, int havelock)
 {
-	if (mem->cpu_addr != 0) {
-		dma_free_coherent(0, PAGE_ALIGN(mem->size),
-				  (void *)mem->cpu_addr, mem->phy_addr);
+	if (!havelock)
+		mutex_lock(&vpu_data.lock);
+	if (rec->freelist) {
+		list_move(&rec->list, rec->freelist);
+		if (!havelock)
+			mutex_unlock(&vpu_data.lock);
+		dev_dbg(vpu_dev, "%s: returned buf (0x%08X, %d bytes) to free list\n",
+			__func__, rec->mem.phy_addr, rec->mem.size);
+		return;
 	}
+	list_del(&rec->list);
+	/*
+	 * lockdep: must unlock mutex before calling dma allocator functions
+	 */
+	mutex_unlock(&vpu_data.lock);
+	dma_free_coherent(vpu_dev, rec->mem.size, (void *)rec->mem.cpu_addr,
+			  rec->mem.phy_addr);
+	if (havelock)
+		mutex_lock(&vpu_data.lock);
+	dev_info(vpu_dev, "%s: directly freed buf (0x%08X, %d bytes)\n",
+		 __func__, rec->mem.phy_addr, rec->mem.size);
+	kfree(rec);
 }
 
 /*!
  * Private function to free buffers
+ * Must be called with lock held
  * @return status  0 success.
  */
-static int vpu_free_buffers(void)
+static int vpu_free_buffers(struct file *filp)
 {
 	struct memalloc_record *rec, *n;
-	struct vpu_mem_desc mem;
+	LIST_HEAD(to_free);
 
-	list_for_each_entry_safe(rec, n, &head, list) {
-		mem = rec->mem;
-		if (mem.cpu_addr != 0) {
-			vpu_free_dma_buffer(&mem);
-			dev_dbg(vpu_dev, "[FREE] freed paddr=0x%08X\n", mem.phy_addr);
-			/* delete from list */
-			list_del(&rec->list);
-			kfree(rec);
-		}
+	list_for_each_entry_safe(rec, n, &vpu_data.alloc_list, list) {
+		if (rec->mem.cpu_addr != 0 &&
+		    filp->private_data == rec->file_index)
+			list_move(&rec->list, &to_free);
 	}
-
+	list_for_each_entry_safe(rec, n, &to_free, list)
+		vpu_free_dma_buffer(rec, 1);
 	return 0;
 }
 
@@ -402,8 +505,8 @@ static int vpu_open(struct inode *inode, struct file *filp)
 #endif
 	}
 
-	filp->private_data = (void *)(&vpu_data);
 	mutex_unlock(&vpu_data.lock);
+	filp->private_data = (void *)atomic_inc_return(&file_index);
 	return 0;
 }
 
@@ -420,42 +523,25 @@ static long vpu_ioctl(struct file *filp, u_int cmd,
 	switch (cmd) {
 	case VPU_IOC_PHYMEM_ALLOC:
 		{
+			struct vpu_mem_desc req;
 			struct memalloc_record *rec;
 
-			rec = kzalloc(sizeof(*rec), GFP_KERNEL);
-			if (!rec)
-				return -ENOMEM;
-
-			ret = copy_from_user(&(rec->mem),
+			ret = copy_from_user(&req,
 					     (struct vpu_mem_desc *)arg,
 					     sizeof(struct vpu_mem_desc));
-			if (ret) {
-				kfree(rec);
+			if (ret)
+				return -EFAULT;
+
+			rec = vpu_alloc_dma_buffer(req.size);
+			if (!rec)
+				return -ENOMEM;
+			rec->file_index = filp->private_data;
+
+			if (copy_to_user((void __user *)arg, &(rec->mem),
+					 sizeof(struct vpu_mem_desc))) {
+				vpu_free_dma_buffer(rec, 0);
 				return -EFAULT;
 			}
-
-			dev_dbg(vpu_dev, "[ALLOC] mem alloc size = 0x%x\n",
-				 rec->mem.size);
-
-			ret = vpu_alloc_dma_buffer(&(rec->mem));
-			if (ret == -1) {
-				kfree(rec);
-				dev_err(vpu_dev,
-					"Physical memory allocation error!\n");
-				break;
-			}
-			ret = copy_to_user((void __user *)arg, &(rec->mem),
-					   sizeof(struct vpu_mem_desc));
-			if (ret) {
-				kfree(rec);
-				ret = -EFAULT;
-				break;
-			}
-
-			mutex_lock(&vpu_data.lock);
-			list_add(&rec->list, &head);
-			mutex_unlock(&vpu_data.lock);
-
 			break;
 		}
 	case VPU_IOC_PHYMEM_FREE:
@@ -469,20 +555,17 @@ static long vpu_ioctl(struct file *filp, u_int cmd,
 			if (ret)
 				return -EACCES;
 
-			dev_dbg(vpu_dev, "[FREE] mem freed cpu_addr = 0x%x\n",
-				 vpu_mem.cpu_addr);
-			if ((void *)vpu_mem.cpu_addr != NULL)
-				vpu_free_dma_buffer(&vpu_mem);
-
+			ret = -EINVAL;
 			mutex_lock(&vpu_data.lock);
-			list_for_each_entry_safe(rec, n, &head, list) {
-				if (rec->mem.cpu_addr == vpu_mem.cpu_addr) {
-					/* delete from list */
-					list_del(&rec->list);
-					kfree(rec);
+			list_for_each_entry_safe(rec, n, &vpu_data.alloc_list, list) {
+				if (rec->mem.cpu_addr == vpu_mem.cpu_addr &&
+				    rec->file_index == filp->private_data) {
+					ret = 0;
 					break;
 				}
 			}
+			if (0 == ret)
+				vpu_free_dma_buffer(rec, 1);
 			mutex_unlock(&vpu_data.lock);
 
 			break;
@@ -533,29 +616,9 @@ static long vpu_ioctl(struct file *filp, u_int cmd,
 	case VPU_IOC_GET_SHARE_MEM:
 		{
 			mutex_lock(&vpu_data.lock);
-			if (share_mem.cpu_addr != 0) {
-				ret = copy_to_user((void __user *)arg,
-						   &share_mem,
-						   sizeof(struct vpu_mem_desc));
-				mutex_unlock(&vpu_data.lock);
-				break;
-			} else {
-				if (copy_from_user(&share_mem,
-						   (struct vpu_mem_desc *)arg,
-						 sizeof(struct vpu_mem_desc))) {
-					mutex_unlock(&vpu_data.lock);
-					return -EFAULT;
-				}
-				if (vpu_alloc_dma_buffer(&share_mem) == -1)
-					ret = -EFAULT;
-				else {
-					if (copy_to_user((void __user *)arg,
-							 &share_mem,
-							 sizeof(struct
-								vpu_mem_desc)))
-						ret = -EFAULT;
-				}
-			}
+			ret = copy_to_user((void __user *)arg,
+					   &share_mem->mem,
+					   sizeof(struct vpu_mem_desc));
 			mutex_unlock(&vpu_data.lock);
 			break;
 		}
@@ -602,13 +665,15 @@ static long vpu_ioctl(struct file *filp, u_int cmd,
 						   (struct vpu_mem_desc *)arg,
 						   sizeof(struct vpu_mem_desc)))
 					return -EFAULT;
-
-				if (vpu_alloc_dma_buffer(&bitwork_mem) == -1)
+				bitwork_rec = vpu_alloc_dma_buffer(bitwork_mem.size);
+				if (bitwork_rec == NULL)
 					ret = -EFAULT;
-				else if (copy_to_user((void __user *)arg,
-						      &bitwork_mem,
-						      sizeof(struct
-							     vpu_mem_desc)))
+				else
+					bitwork_mem = bitwork_rec->mem;
+				if (copy_to_user((void __user *)arg,
+						 &bitwork_mem,
+						 sizeof(struct
+							vpu_mem_desc)))
 					ret = -EFAULT;
 			}
 			break;
@@ -627,6 +692,11 @@ static long vpu_ioctl(struct file *filp, u_int cmd,
 		}
 	case VPU_IOC_SET_BITWORK_MEM:
 		{
+			if (bitwork_rec) {
+				vpu_free_dma_buffer(bitwork_rec, 0);
+				memset(&bitwork_mem, 0, sizeof(bitwork_mem));
+				bitwork_rec = NULL;
+			}
 			if (copy_from_user(&bitwork_mem,
 					   (struct vpu_mem_desc *)arg,
 					   sizeof(struct vpu_mem_desc)))
@@ -702,6 +772,8 @@ static int vpu_release(struct inode *inode, struct file *filp)
 
 	mutex_lock(&vpu_data.lock);
 
+	vpu_free_buffers(filp);
+
 	if (open_count > 0 && !(--open_count)) {
 
 		/* Wait for vpu go to idle state */
@@ -765,11 +837,7 @@ static int vpu_release(struct inode *inode, struct file *filp)
 		clk_disable(vpu_clk);
 		clk_unprepare(vpu_clk);
 
-		vpu_free_buffers();
-
 		/* Free shared memory when vpu device is idle */
-		vpu_free_dma_buffer(&share_mem);
-		share_mem.cpu_addr = 0;
 		vfree((void *)vshare_mem.cpu_addr);
 		vshare_mem.cpu_addr = 0;
 
@@ -793,8 +861,7 @@ static int vpu_release(struct inode *inode, struct file *filp)
  */
 static int vpu_fasync(int fd, struct file *filp, int mode)
 {
-	struct vpu_priv *dev = (struct vpu_priv *)filp->private_data;
-	return fasync_helper(fd, filp, mode, &dev->async_queue);
+	return fasync_helper(fd, filp, mode, &vpu_data.async_queue);
 }
 
 /*!
@@ -888,7 +955,7 @@ const struct file_operations vpu_fops = {
  */
 static int vpu_dev_probe(struct platform_device *pdev)
 {
-	int err = 0;
+	int i, err = 0;
 	struct device *temp_class;
 	struct resource *res;
 	unsigned long addr = 0;
@@ -1018,6 +1085,19 @@ static int vpu_dev_probe(struct platform_device *pdev)
 	vpu_data.workqueue = create_workqueue("vpu_wq");
 	INIT_WORK(&vpu_data.work, vpu_worker_callback);
 	mutex_init(&vpu_data.lock);
+	mutex_lock(&vpu_data.lock);
+	INIT_LIST_HEAD(&vpu_data.bufpool_extents);
+	INIT_LIST_HEAD(&vpu_data.alloc_list);
+	for (i = 0; i < NUM_BUFPOOLS; i++) {
+		INIT_LIST_HEAD(&vpu_data.freelist[i]);
+		vpu_extend_bufpool(&vpu_data.freelist[i], bufpool_size[i]);
+	}
+	mutex_unlock(&vpu_data.lock);
+	share_mem = vpu_alloc_dma_buffer(bufpool_size[NUM_BUFPOOLS-1]);
+	if (!share_mem) {
+		err = -ENOMEM;
+		goto err_out_class;
+	}
 	dev_info(vpu_dev, "VPU initialized\n");
 	goto out;
 
@@ -1321,9 +1401,8 @@ static void __exit vpu_exit(void)
 		vpu_major = 0;
 	}
 
-	vpu_free_dma_buffer(&bitwork_mem);
-	vpu_free_dma_buffer(&pic_para_mem);
-	vpu_free_dma_buffer(&user_data_mem);
+	if (bitwork_rec)
+		vpu_free_dma_buffer(bitwork_rec, 0);
 
 	/* reset VPU state */
 	vpu_power_up(true);
