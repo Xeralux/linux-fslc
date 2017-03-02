@@ -2674,6 +2674,66 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 	init_MUTEX(&cam->param_lock);
 	init_MUTEX(&cam->busy_lock);
 
+	cam->dummy_frame.vaddress = dma_alloc_coherent(dev,
+						       MAX_FRAME_SIZE,
+						       &cam->dummy_frame.paddress,
+						       GFP_DMA | GFP_KERNEL);
+	if (cam->dummy_frame.vaddress == 0) {
+		dev_err(dev, "could not allocate dummy frame\n");
+		return -ENOBUFS;
+	}
+
+	for (i = 0; i < 2; i++) {
+		cam->rot_enc_bufs_vaddr[i] = (void *)dma_alloc_coherent(dev,
+									MAX_FRAME_SIZE,
+									&cam->rot_enc_bufs[i],
+									GFP_DMA | GFP_KERNEL);
+		if (cam->rot_enc_bufs_vaddr[i] == 0)
+			break;
+	}
+	if (i < 2) {
+		dev_err(dev, "could not allocate rotation buffer\n");
+		while (--i >= 0)
+			dma_free_coherent(dev, MAX_FRAME_SIZE,
+					  cam->rot_enc_bufs_vaddr[i],
+					  cam->rot_enc_bufs[i]);
+		goto err_free_dummy;
+	}
+
+	for (i = 0; i < 2; i++) {
+		cam->vf_bufs_vaddr[i] = (void *)dma_alloc_coherent(dev,
+								   MAX_FRAME_SIZE,
+								   &cam->vf_bufs[i],
+								   GFP_DMA | GFP_KERNEL);
+		if (cam->vf_bufs_vaddr[i] == 0)
+			break;
+	}
+	if (i < 2) {
+		dev_err(dev, "could not allocate overlay buffer\n");
+		while (--i >= 0)
+			dma_free_coherent(dev, MAX_FRAME_SIZE,
+					  cam->vf_bufs_vaddr[i],
+					  cam->vf_bufs[i]);
+		goto err_free_rot_bufs;
+	}
+
+	for (i = 0; i < 2; i++) {
+		cam->rot_vf_bufs_vaddr[i] = (void *)dma_alloc_coherent(dev,
+								       MAX_FRAME_SIZE,
+								       &cam->rot_vf_bufs[i],
+								       GFP_DMA | GFP_KERNEL);
+		if (cam->rot_vf_bufs_vaddr[i] == 0)
+			break;
+	}
+	if (i < 2) {
+		dev_err(dev, "could not allocate overlay rotation buffer\n");
+		while (--i >= 0)
+			dma_free_coherent(dev, MAX_FRAME_SIZE,
+					  cam->rot_vf_bufs_vaddr[i],
+					  cam->rot_vf_bufs[i]);
+		goto err_free_vf_bufs;
+	}
+
 	dev_info(dev, "allocating %d capture buffers of size %d\n",
 		 FRAME_NUM, MAX_FRAME_SIZE);
 
@@ -2692,8 +2752,29 @@ static int init_camera_struct(cam_data *cam, struct platform_device *pdev)
 			dma_free_coherent(dev, MAX_FRAME_SIZE,
 					  cam->capbuf[i].vaddress,
 					  cam->capbuf[i].paddress);
-		return -ENOBUFS;
-	}
+	} else
+		goto buffers_allocated;
+
+	for (i = 0; i < 2; i++)
+		dma_free_coherent(dev, MAX_FRAME_SIZE,
+				  cam->rot_vf_bufs_vaddr[i],
+				  cam->rot_vf_bufs[i]);
+err_free_vf_bufs:
+	for (i = 0; i < 2; i++)
+		dma_free_coherent(dev, MAX_FRAME_SIZE,
+				  cam->vf_bufs_vaddr[i],
+				  cam->vf_bufs[i]);
+err_free_rot_bufs:
+	for (i = 0; i < 2; i++)
+		dma_free_coherent(dev, MAX_FRAME_SIZE,
+				  cam->rot_enc_bufs_vaddr[i],
+				  cam->rot_enc_bufs[i]);
+err_free_dummy:
+	dma_free_coherent(dev, MAX_FRAME_SIZE,
+			  cam->dummy_frame.vaddress,
+			  cam->dummy_frame.paddress);
+	return -ENOBUFS;
+buffers_allocated:
 	cam->free_capbufs = FRAME_NUM;
 
 	cam->video_dev = video_device_alloc();
@@ -2890,6 +2971,8 @@ static int mxc_v4l2_probe(struct platform_device *pdev)
 static int mxc_v4l2_remove(struct platform_device *pdev)
 {
 	cam_data *cam = (cam_data *)platform_get_drvdata(pdev);
+	int i;
+
 	if (cam->open_count) {
 		dev_err(&pdev->dev, "camera open -- setting ops to NULL\n");
 		return -EBUSY;
@@ -2914,6 +2997,21 @@ static int mxc_v4l2_remove(struct platform_device *pdev)
 			dma_free_coherent(cam->dev, MAX_FRAME_SIZE,
 					  cam->capbuf[cam->free_capbufs].vaddress,
 					  cam->capbuf[cam->free_capbufs].paddress);
+		for (i = 0; i < 2; i++)
+			dma_free_coherent(cam->dev, MAX_FRAME_SIZE,
+					  cam->rot_vf_bufs_vaddr[i],
+					  cam->rot_vf_bufs[i]);
+		for (i = 0; i < 2; i++)
+			dma_free_coherent(cam->dev, MAX_FRAME_SIZE,
+					  cam->vf_bufs_vaddr[i],
+					  cam->vf_bufs[i]);
+		for (i = 0; i < 2; i++)
+			dma_free_coherent(cam->dev, MAX_FRAME_SIZE,
+					  cam->rot_enc_bufs_vaddr[i],
+					  cam->rot_enc_bufs[i]);
+		dma_free_coherent(cam->dev, MAX_FRAME_SIZE,
+				  cam->dummy_frame.vaddress,
+				  cam->dummy_frame.paddress);
 		kfree(cam);
 
 		v4l2_device_unregister(v4l2_dev);

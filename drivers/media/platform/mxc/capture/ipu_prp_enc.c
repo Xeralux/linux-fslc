@@ -174,41 +174,10 @@ static int prp_enc_setup(cam_data *cam)
 
 	grotation = cam->rotation;
 	if (cam->rotation >= IPU_ROTATE_90_RIGHT) {
-		if (cam->rot_enc_bufs_vaddr[0]) {
-			dma_free_coherent(0, cam->rot_enc_buf_size[0],
-					  cam->rot_enc_bufs_vaddr[0],
-					  cam->rot_enc_bufs[0]);
-		}
-		if (cam->rot_enc_bufs_vaddr[1]) {
-			dma_free_coherent(0, cam->rot_enc_buf_size[1],
-					  cam->rot_enc_bufs_vaddr[1],
-					  cam->rot_enc_bufs[1]);
-		}
 		cam->rot_enc_buf_size[0] =
 		    PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage);
-		cam->rot_enc_bufs_vaddr[0] =
-		    (void *)dma_alloc_coherent(0, cam->rot_enc_buf_size[0],
-					       &cam->rot_enc_bufs[0],
-					       GFP_DMA | GFP_KERNEL);
-		if (!cam->rot_enc_bufs_vaddr[0]) {
-			printk(KERN_ERR "alloc enc_bufs0\n");
-			return -ENOMEM;
-		}
 		cam->rot_enc_buf_size[1] =
 		    PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage);
-		cam->rot_enc_bufs_vaddr[1] =
-		    (void *)dma_alloc_coherent(0, cam->rot_enc_buf_size[1],
-					       &cam->rot_enc_bufs[1],
-					       GFP_DMA | GFP_KERNEL);
-		if (!cam->rot_enc_bufs_vaddr[1]) {
-			dma_free_coherent(0, cam->rot_enc_buf_size[0],
-					  cam->rot_enc_bufs_vaddr[0],
-					  cam->rot_enc_bufs[0]);
-			cam->rot_enc_bufs_vaddr[0] = NULL;
-			cam->rot_enc_bufs[0] = 0;
-			printk(KERN_ERR "alloc enc_bufs1\n");
-			return -ENOMEM;
-		}
 
 		err = ipu_init_channel_buffer(cam->ipu, CSI_PRP_ENC_MEM,
 					      IPU_OUTPUT_BUFFER,
@@ -388,15 +357,6 @@ static int prp_enc_enabling_tasks(void *private)
 	int err = 0;
 	CAMERA_TRACE("IPU:In prp_enc_enabling_tasks\n");
 
-	cam->dummy_frame.vaddress = dma_alloc_coherent(0,
-			       PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage),
-			       &cam->dummy_frame.paddress,
-			       GFP_DMA | GFP_KERNEL);
-	if (cam->dummy_frame.vaddress == 0) {
-		pr_err("ERROR: v4l2 capture: Allocate dummy frame "
-		       "failed.\n");
-		return -ENOBUFS;
-	}
 	cam->dummy_frame.buffer.type = V4L2_BUF_TYPE_PRIVATE;
 	cam->dummy_frame.buffer.length =
 	    PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage);
@@ -451,13 +411,6 @@ static int prp_enc_disabling_tasks(void *private)
 	ipu_uninit_channel(cam->ipu, CSI_PRP_ENC_MEM);
 	if (cam->rotation >= IPU_ROTATE_90_RIGHT)
 		ipu_uninit_channel(cam->ipu, MEM_ROT_ENC_MEM);
-
-	if (cam->dummy_frame.vaddress != 0) {
-		dma_free_coherent(0, cam->dummy_frame.buffer.length,
-				  cam->dummy_frame.vaddress,
-				  cam->dummy_frame.paddress);
-		cam->dummy_frame.vaddress = 0;
-	}
 
 #ifdef CONFIG_MXC_MIPI_CSI2
 	mipi_csi2_info = mipi_csi2_get_info();
@@ -555,20 +508,6 @@ int prp_enc_deselect(void *private)
 		cam->enc_disable = NULL;
 		cam->enc_enable_csi = NULL;
 		cam->enc_disable_csi = NULL;
-		if (cam->rot_enc_bufs_vaddr[0]) {
-			dma_free_coherent(0, cam->rot_enc_buf_size[0],
-					  cam->rot_enc_bufs_vaddr[0],
-					  cam->rot_enc_bufs[0]);
-			cam->rot_enc_bufs_vaddr[0] = NULL;
-			cam->rot_enc_bufs[0] = 0;
-		}
-		if (cam->rot_enc_bufs_vaddr[1]) {
-			dma_free_coherent(0, cam->rot_enc_buf_size[1],
-					  cam->rot_enc_bufs_vaddr[1],
-					  cam->rot_enc_bufs[1]);
-			cam->rot_enc_bufs_vaddr[1] = NULL;
-			cam->rot_enc_bufs[1] = 0;
-		}
 	}
 
 	return err;

@@ -203,43 +203,10 @@ static int prpvf_start(void *private)
 
 	err = ipu_init_channel(cam->ipu, CSI_PRP_VF_MEM, &vf);
 	if (err != 0)
-		goto out_5;
-
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0],
-				  (dma_addr_t) cam->vf_bufs[0]);
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1],
-				  (dma_addr_t) cam->vf_bufs[1]);
-	}
-	cam->vf_bufs_size[0] = PAGE_ALIGN(size);
-	cam->vf_bufs_vaddr[0] = (void *)dma_alloc_coherent(0,
-							   cam->vf_bufs_size[0],
-							   (dma_addr_t *) &
-							   cam->vf_bufs[0],
-							   GFP_DMA |
-							   GFP_KERNEL);
-	if (cam->vf_bufs_vaddr[0] == NULL) {
-		printk(KERN_ERR "Error to allocate vf buffer\n");
-		err = -ENOMEM;
 		goto out_4;
-	}
+
+	cam->vf_bufs_size[0] = PAGE_ALIGN(size);
 	cam->vf_bufs_size[1] = PAGE_ALIGN(size);
-	cam->vf_bufs_vaddr[1] = (void *)dma_alloc_coherent(0,
-							   cam->vf_bufs_size[1],
-							   (dma_addr_t *) &
-							   cam->vf_bufs[1],
-							   GFP_DMA |
-							   GFP_KERNEL);
-	if (cam->vf_bufs_vaddr[1] == NULL) {
-		printk(KERN_ERR "Error to allocate vf buffer\n");
-		err = -ENOMEM;
-		goto out_3;
-	}
-	pr_debug("vf_bufs %x %x\n", cam->vf_bufs[0], cam->vf_bufs[1]);
 
 	if (cam->vf_rotation >= IPU_ROTATE_VERT_FLIP) {
 		err = ipu_init_channel_buffer(cam->ipu, CSI_PRP_VF_MEM,
@@ -338,7 +305,7 @@ static int prpvf_start(void *private)
 					      fbi->fix.smem_start, 0, 0, 0);
 		if (err != 0) {
 			printk(KERN_ERR "Error initializing CSI_PRP_VF_MEM\n");
-			goto out_4;
+			goto out_3;
 		}
 		ipu_clear_irq(cam->ipu, IPU_IRQ_PRP_VF_OUT_EOF);
 		err = ipu_request_irq(cam->ipu, IPU_IRQ_PRP_VF_OUT_EOF,
@@ -346,7 +313,7 @@ static int prpvf_start(void *private)
 			      0, "Mxc Camera", cam);
 		if (err < 0) {
 			printk(KERN_ERR "Error request irq:IPU_IRQ_PRP_VF_OUT_EOF\n");
-			goto out_4;
+			goto out_3;
 		}
 
 		ipu_enable_channel(cam->ipu, CSI_PRP_VF_MEM);
@@ -364,23 +331,8 @@ out_2:
 	if (cam->vf_rotation >= IPU_ROTATE_VERT_FLIP)
 		ipu_uninit_channel(cam->ipu, MEM_ROT_VF_MEM);
 out_3:
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0],
-				  (dma_addr_t) cam->vf_bufs[0]);
-		cam->vf_bufs_vaddr[0] = NULL;
-		cam->vf_bufs[0] = 0;
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1],
-				  (dma_addr_t) cam->vf_bufs[1]);
-		cam->vf_bufs_vaddr[1] = NULL;
-		cam->vf_bufs[1] = 0;
-	}
-out_4:
 	ipu_uninit_channel(cam->ipu, CSI_PRP_VF_MEM);
-out_5:
+out_4:
 	return err;
 }
 
@@ -460,21 +412,6 @@ static int prpvf_stop(void *private)
 		}
 	}
 #endif
-
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0],
-				  (dma_addr_t) cam->vf_bufs[0]);
-		cam->vf_bufs_vaddr[0] = NULL;
-		cam->vf_bufs[0] = 0;
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1],
-				  (dma_addr_t) cam->vf_bufs[1]);
-		cam->vf_bufs_vaddr[1] = NULL;
-		cam->vf_bufs[1] = 0;
-	}
 
 	cam->overlay_active = false;
 	return err;

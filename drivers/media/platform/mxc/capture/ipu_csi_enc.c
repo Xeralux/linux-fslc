@@ -246,13 +246,8 @@ static int csi_enc_enabling_tasks(void *private)
 
 	CAMERA_TRACE("IPU:In csi_enc_enabling_tasks\n");
 
-	cam->dummy_frame.vaddress = dma_alloc_coherent(0,
-			       PAGE_ALIGN(cam->v2f.fmt.pix.sizeimage),
-			       &cam->dummy_frame.paddress,
-			       GFP_DMA | GFP_KERNEL);
 	if (cam->dummy_frame.vaddress == 0) {
-		pr_err("ERROR: v4l2 capture: Allocate dummy frame "
-		       "failed.\n");
+		pr_err("ERROR: v4l2 capture: dummy frame not present\n");
 		return -ENOBUFS;
 	}
 	cam->dummy_frame.buffer.type = V4L2_BUF_TYPE_PRIVATE;
@@ -297,13 +292,6 @@ static int csi_enc_disabling_tasks(void *private)
 	err = ipu_disable_channel(cam->ipu, chan, true);
 
 	ipu_uninit_channel(cam->ipu, chan);
-
-	if (cam->dummy_frame.vaddress != 0) {
-		dma_free_coherent(0, cam->dummy_frame.buffer.length,
-				  cam->dummy_frame.vaddress,
-				  cam->dummy_frame.paddress);
-		cam->dummy_frame.vaddress = 0;
-	}
 
 #ifdef CONFIG_MXC_MIPI_CSI2
 	mipi_csi2_info = mipi_csi2_get_info();

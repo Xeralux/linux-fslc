@@ -190,37 +190,8 @@ static int prpvf_start(void *private)
 	if (err != 0)
 		goto out_4;
 
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0], cam->vf_bufs[0]);
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1], cam->vf_bufs[1]);
-	}
 	cam->vf_bufs_size[0] = PAGE_ALIGN(size);
-	cam->vf_bufs_vaddr[0] = (void *)dma_alloc_coherent(0,
-							   cam->vf_bufs_size[0],
-							   &cam->vf_bufs[0],
-							   GFP_DMA |
-							   GFP_KERNEL);
-	if (cam->vf_bufs_vaddr[0] == NULL) {
-		printk(KERN_ERR "Error to allocate vf buffer\n");
-		err = -ENOMEM;
-		goto out_3;
-	}
 	cam->vf_bufs_size[1] = PAGE_ALIGN(size);
-	cam->vf_bufs_vaddr[1] = (void *)dma_alloc_coherent(0,
-							   cam->vf_bufs_size[1],
-							   &cam->vf_bufs[1],
-							   GFP_DMA |
-							   GFP_KERNEL);
-	if (cam->vf_bufs_vaddr[1] == NULL) {
-		printk(KERN_ERR "Error to allocate vf buffer\n");
-		err = -ENOMEM;
-		goto out_3;
-	}
-
 	err = ipu_init_channel_buffer(cam->ipu, CSI_PRP_VF_MEM,
 				      IPU_OUTPUT_BUFFER,
 				      format, vf.csi_prp_vf_mem.out_width,
@@ -319,32 +290,6 @@ out_2:
 out_3:
 	ipu_uninit_channel(cam->ipu, CSI_PRP_VF_MEM);
 out_4:
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0], cam->vf_bufs[0]);
-		cam->vf_bufs_vaddr[0] = NULL;
-		cam->vf_bufs[0] = 0;
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1], cam->vf_bufs[1]);
-		cam->vf_bufs_vaddr[1] = NULL;
-		cam->vf_bufs[1] = 0;
-	}
-	if (cam->rot_vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->rot_vf_buf_size[0],
-				  cam->rot_vf_bufs_vaddr[0],
-				  cam->rot_vf_bufs[0]);
-		cam->rot_vf_bufs_vaddr[0] = NULL;
-		cam->rot_vf_bufs[0] = 0;
-	}
-	if (cam->rot_vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->rot_vf_buf_size[1],
-				  cam->rot_vf_bufs_vaddr[1],
-				  cam->rot_vf_bufs[1]);
-		cam->rot_vf_bufs_vaddr[1] = NULL;
-		cam->rot_vf_bufs[1] = 0;
-	}
 	return err;
 }
 
@@ -389,34 +334,6 @@ static int prpvf_stop(void *private)
 		}
 	}
 #endif
-
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0], cam->vf_bufs[0]);
-		cam->vf_bufs_vaddr[0] = NULL;
-		cam->vf_bufs[0] = 0;
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1], cam->vf_bufs[1]);
-		cam->vf_bufs_vaddr[1] = NULL;
-		cam->vf_bufs[1] = 0;
-	}
-	if (cam->rot_vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->rot_vf_buf_size[0],
-				  cam->rot_vf_bufs_vaddr[0],
-				  cam->rot_vf_bufs[0]);
-		cam->rot_vf_bufs_vaddr[0] = NULL;
-		cam->rot_vf_bufs[0] = 0;
-	}
-	if (cam->rot_vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->rot_vf_buf_size[1],
-				  cam->rot_vf_bufs_vaddr[1],
-				  cam->rot_vf_bufs[1]);
-		cam->rot_vf_bufs_vaddr[1] = NULL;
-		cam->rot_vf_bufs[1] = 0;
-	}
-
 	buffer_num = 0;
 	buffer_ready = 0;
 	cam->overlay_active = false;

@@ -205,43 +205,10 @@ static int csi_enc_setup(cam_data *cam)
 	}
 #endif
 
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0],
-				  (dma_addr_t) cam->vf_bufs[0]);
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1],
-				  (dma_addr_t) cam->vf_bufs[1]);
-	}
 	csi_mem_bufsize = cam->crop_current.width *
 			  cam->crop_current.height * 3/2;
 	cam->vf_bufs_size[0] = PAGE_ALIGN(csi_mem_bufsize);
-	cam->vf_bufs_vaddr[0] = (void *)dma_alloc_coherent(0,
-							   cam->vf_bufs_size[0],
-							   (dma_addr_t *) &
-							   cam->vf_bufs[0],
-							   GFP_DMA |
-							   GFP_KERNEL);
-	if (cam->vf_bufs_vaddr[0] == NULL) {
-		printk(KERN_ERR "Error to allocate vf buffer\n");
-		err = -ENOMEM;
-		goto out_2;
-	}
 	cam->vf_bufs_size[1] = PAGE_ALIGN(csi_mem_bufsize);
-	cam->vf_bufs_vaddr[1] = (void *)dma_alloc_coherent(0,
-							   cam->vf_bufs_size[1],
-							   (dma_addr_t *) &
-							   cam->vf_bufs[1],
-							   GFP_DMA |
-							   GFP_KERNEL);
-	if (cam->vf_bufs_vaddr[1] == NULL) {
-		printk(KERN_ERR "Error to allocate vf buffer\n");
-		err = -ENOMEM;
-		goto out_1;
-	}
-	pr_debug("vf_bufs %x %x\n", cam->vf_bufs[0], cam->vf_bufs[1]);
 
 	err = ipu_init_channel(cam->ipu, chan, &params);
 	if (err != 0) {
@@ -287,21 +254,6 @@ static int csi_enc_setup(cam_data *cam)
 	ipu_select_buffer(cam->ipu, chan, IPU_OUTPUT_BUFFER, 1);
 	return err;
 out_1:
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0],
-				  (dma_addr_t) cam->vf_bufs[0]);
-		cam->vf_bufs_vaddr[0] = NULL;
-		cam->vf_bufs[0] = 0;
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1],
-				  (dma_addr_t) cam->vf_bufs[1]);
-		cam->vf_bufs_vaddr[1] = NULL;
-		cam->vf_bufs[1] = 0;
-	}
-out_2:
 	return err;
 }
 
@@ -517,21 +469,6 @@ static int foreground_stop(void *private)
 
 	flush_work(&cam->csi_work_struct);
 	cancel_work_sync(&cam->csi_work_struct);
-
-	if (cam->vf_bufs_vaddr[0]) {
-		dma_free_coherent(0, cam->vf_bufs_size[0],
-				  cam->vf_bufs_vaddr[0],
-				  (dma_addr_t) cam->vf_bufs[0]);
-		cam->vf_bufs_vaddr[0] = NULL;
-		cam->vf_bufs[0] = 0;
-	}
-	if (cam->vf_bufs_vaddr[1]) {
-		dma_free_coherent(0, cam->vf_bufs_size[1],
-				  cam->vf_bufs_vaddr[1],
-				  (dma_addr_t) cam->vf_bufs[1]);
-		cam->vf_bufs_vaddr[1] = NULL;
-		cam->vf_bufs[1] = 0;
-	}
 
 	cam->overlay_active = false;
 	return err;
