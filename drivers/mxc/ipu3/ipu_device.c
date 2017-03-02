@@ -348,7 +348,6 @@ struct ipu_alloc_list {
 };
 
 static LIST_HEAD(ipu_alloc_list);
-#define POOL_ALLOC_COUNT 8
 #define SMALL_SIZE 4096
 #define MEDIUM_SIZE (512*1024)
 #define LARGE_SIZE (3*512*1024)
@@ -380,7 +379,7 @@ static u32 ts_frame_avg;
 static atomic_t frame_cnt;
 #endif
 
-static void ipu_extend_bufpool(struct list_head *freelist, u32 size) {
+static void ipu_allocate_bufpool(struct list_head *freelist, u32 size, int count) {
 
 	struct ipu_alloc_list *pool, *m;
 	int i;
@@ -393,17 +392,17 @@ static void ipu_extend_bufpool(struct list_head *freelist, u32 size) {
 	}
 	mutex_unlock(&ipu_alloc_lock);
 	pool->cpu_addr = dma_alloc_coherent(ipu_dev,
-					    size * POOL_ALLOC_COUNT,
+					    size * count,
 					    &pool->phy_addr,
 					    GFP_DMA | GFP_KERNEL);
 	mutex_lock(&ipu_alloc_lock);
 	if (pool->cpu_addr == NULL) {
 		kfree(pool);
 		dev_err(ipu_dev, "%s: could not allocate DMA pool buffer (size %d)\n",
-			__func__, size * POOL_ALLOC_COUNT);
+			__func__, size * count);
 		return;
 	}
-	for (i = 0; i < POOL_ALLOC_COUNT; i++) {
+	for (i = 0; i < count; i++) {
 		m = kzalloc(sizeof(*m), GFP_KERNEL);
 		m->cpu_addr = pool->cpu_addr + (i * size);
 		m->phy_addr = pool->phy_addr + (i * size);
@@ -412,8 +411,8 @@ static void ipu_extend_bufpool(struct list_head *freelist, u32 size) {
 		list_add(&m->list, freelist);
 	}
 	list_add_tail(&pool->list, &ipu_bufpool_list);
-	dev_dbg(ipu_dev, "%s: extended lookaside list for size %d\n",
-		 __func__, size);
+	dev_dbg(ipu_dev, "%s: allocated buffer pool for size %d with %d entries\n",
+		__func__, size, count);
 }
 
 static struct ipu_alloc_list *ipu_alloc_from_pool(struct list_head *freelist, u32 size)
@@ -421,11 +420,9 @@ static struct ipu_alloc_list *ipu_alloc_from_pool(struct list_head *freelist, u3
 	struct ipu_alloc_list *m;
 
 	mutex_lock(&ipu_alloc_lock);
-	if (list_empty(freelist))
-		ipu_extend_bufpool(freelist, size);
 	if (list_empty(freelist)) {
-		dev_err(ipu_dev, "%s: buffer pool empty after attempting to extend\n",
-			 __func__);
+		dev_err(ipu_dev, "%s: buffer pool empty for size %d\n",
+			__func__, size);
 		mutex_unlock(&ipu_alloc_lock);
 		return NULL;
 	}
@@ -439,15 +436,18 @@ static struct ipu_alloc_list *ipu_alloc_from_pool(struct list_head *freelist, u3
 
 static struct ipu_alloc_list *ipu_alloc_dma_buf(u32 reqsize)
 {
-	struct ipu_alloc_list *mem;
+	struct ipu_alloc_list *mem = NULL;
 	u32 size = PAGE_ALIGN(reqsize);
 
 	if (size <= SMALL_SIZE)
-		return ipu_alloc_from_pool(&ipu_free_list_small, SMALL_SIZE);
+		mem = ipu_alloc_from_pool(&ipu_free_list_small, SMALL_SIZE);
 	else if (size <= MEDIUM_SIZE)
-		return ipu_alloc_from_pool(&ipu_free_list_medium, MEDIUM_SIZE);
+		mem = ipu_alloc_from_pool(&ipu_free_list_medium, MEDIUM_SIZE);
 	else if (size <= LARGE_SIZE)
-		return ipu_alloc_from_pool(&ipu_free_list_large, LARGE_SIZE);
+		mem = ipu_alloc_from_pool(&ipu_free_list_large, LARGE_SIZE);
+
+	if (mem)
+		return mem;
 
 	mem = kzalloc(sizeof(*mem), GFP_KERNEL);
 	if (!mem) {
@@ -3727,7 +3727,7 @@ static int mxc_ipu_release(struct inode *inode, struct file *file)
 	mutex_lock(&ipu_alloc_lock);
 	list_for_each_entry_safe(mem, n, &ipu_alloc_list, list) {
 		if ((mem->cpu_addr != 0) &&
-			(file->private_data == mem->file_index))
+		    (file->private_data == mem->file_index))
 			list_move(&mem->list, &to_free);
 	}
 	list_for_each_entry_safe(mem, n, &to_free, list)
@@ -3804,11 +3804,11 @@ int register_ipu_device(struct ipu_soc *ipu, int id)
 
 	mutex_lock(&ipu_alloc_lock);
 	if (list_empty(&ipu_free_list_small))
-		ipu_extend_bufpool(&ipu_free_list_small, SMALL_SIZE);
+		ipu_allocate_bufpool(&ipu_free_list_small, SMALL_SIZE, 16);
 	if (list_empty(&ipu_free_list_medium))
-		ipu_extend_bufpool(&ipu_free_list_medium, MEDIUM_SIZE);
+		ipu_allocate_bufpool(&ipu_free_list_medium, MEDIUM_SIZE, 16);
 	if (list_empty(&ipu_free_list_large))
-		ipu_extend_bufpool(&ipu_free_list_large, LARGE_SIZE);
+		ipu_allocate_bufpool(&ipu_free_list_large, LARGE_SIZE, 32);
 	mutex_unlock(&ipu_alloc_lock);
 
 	return ret;
