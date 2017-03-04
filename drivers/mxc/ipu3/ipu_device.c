@@ -348,13 +348,33 @@ struct ipu_alloc_list {
 };
 
 static LIST_HEAD(ipu_alloc_list);
-#define SMALL_SIZE 4096
-#define MEDIUM_SIZE (512*1024)
-#define LARGE_SIZE (3*512*1024)
-static LIST_HEAD(ipu_free_list_small);
-static LIST_HEAD(ipu_free_list_medium);
-static LIST_HEAD(ipu_free_list_large);
-static LIST_HEAD(ipu_bufpool_list);
+
+static struct bufpool {
+	unsigned int bufsize;
+	unsigned int alloc_count;
+	dma_addr_t phy_addr;
+	void *cpu_addr;
+	struct list_head freelist;
+} bufpool[] = {
+	/* 4 KiB */
+	{ .bufsize = 4 * 1024,
+	  .alloc_count = 16,
+	},
+	/* 512 KiB */
+	{ .bufsize = 512 * 1024,
+	  .alloc_count = 16,
+	},
+	/* 1.5 MiB */
+	{ .bufsize = 3 * 512 * 1024,
+	  .alloc_count = 40,
+	},
+	/* 2.0 MiB */
+	{ .bufsize = 2 * 1024 * 1024,
+	  .alloc_count = 8,
+	},
+};
+#define NUM_BUFPOOLS ARRAY_SIZE(bufpool)
+static atomic_t bufpools_allocated = ATOMIC_INIT(0);
 static DEFINE_MUTEX(ipu_alloc_lock);
 static struct ipu_channel_tabel	ipu_ch_tbl;
 static LIST_HEAD(ipu_task_list);
@@ -379,40 +399,32 @@ static u32 ts_frame_avg;
 static atomic_t frame_cnt;
 #endif
 
-static void ipu_allocate_bufpool(struct list_head *freelist, u32 size, int count) {
+static void ipu_allocate_bufpool(struct bufpool *pool) {
 
-	struct ipu_alloc_list *pool, *m;
+	struct ipu_alloc_list *m;
 	int i;
 
-	pool = kzalloc(sizeof(*pool), GFP_KERNEL);
-	if (pool == NULL) {
-		dev_err(ipu_dev, "%s: could not allocate pool descriptor\n",
-			__func__);
-		return;
-	}
-	mutex_unlock(&ipu_alloc_lock);
+	INIT_LIST_HEAD(&pool->freelist);
 	pool->cpu_addr = dma_alloc_coherent(ipu_dev,
-					    size * count,
+					    pool->bufsize * pool->alloc_count,
 					    &pool->phy_addr,
 					    GFP_DMA | GFP_KERNEL);
-	mutex_lock(&ipu_alloc_lock);
 	if (pool->cpu_addr == NULL) {
-		kfree(pool);
 		dev_err(ipu_dev, "%s: could not allocate DMA pool buffer (size %d)\n",
-			__func__, size * count);
+			__func__, pool->bufsize * pool->alloc_count);
 		return;
 	}
-	for (i = 0; i < count; i++) {
-		m = kzalloc(sizeof(*m), GFP_KERNEL);
+	for (i = 0; i < pool->alloc_count; i++) {
+		unsigned int size = pool->bufsize;
+		m = devm_kzalloc(ipu_dev, sizeof(*m), GFP_KERNEL);
 		m->cpu_addr = pool->cpu_addr + (i * size);
 		m->phy_addr = pool->phy_addr + (i * size);
 		m->size = size;
-		m->freelist = freelist;
-		list_add(&m->list, freelist);
+		m->freelist = &pool->freelist;
+		list_add(&m->list, &pool->freelist);
 	}
-	list_add_tail(&pool->list, &ipu_bufpool_list);
 	dev_dbg(ipu_dev, "%s: allocated buffer pool for size %d with %d entries\n",
-		__func__, size, count);
+		__func__, pool->bufsize, pool->alloc_count);
 }
 
 static struct ipu_alloc_list *ipu_alloc_from_pool(struct list_head *freelist, u32 size)
@@ -438,18 +450,18 @@ static struct ipu_alloc_list *ipu_alloc_dma_buf(u32 reqsize)
 {
 	struct ipu_alloc_list *mem = NULL;
 	u32 size = PAGE_ALIGN(reqsize);
+	int i;
 
-	if (size <= SMALL_SIZE)
-		mem = ipu_alloc_from_pool(&ipu_free_list_small, SMALL_SIZE);
-	else if (size <= MEDIUM_SIZE)
-		mem = ipu_alloc_from_pool(&ipu_free_list_medium, MEDIUM_SIZE);
-	else if (size <= LARGE_SIZE)
-		mem = ipu_alloc_from_pool(&ipu_free_list_large, LARGE_SIZE);
+	for (i = 0; i < ARRAY_SIZE(bufpool); i++)
+		if (size <= bufpool[i].bufsize) {
+			mem = ipu_alloc_from_pool(&bufpool[i].freelist, bufpool[i].bufsize);
+			break;
+		}
 
 	if (mem)
 		return mem;
 
-	mem = kzalloc(sizeof(*mem), GFP_KERNEL);
+	mem = devm_kzalloc(ipu_dev, sizeof(*mem), GFP_KERNEL);
 	if (!mem) {
 		dev_err(ipu_dev, "%s: could not allocate mem descriptor\n",
 			__func__);
@@ -468,7 +480,7 @@ static struct ipu_alloc_list *ipu_alloc_dma_buf(u32 reqsize)
 	} else {
 		dev_err(ipu_dev, "%s: error allocating DMA buffer (%d bytes)\n",
 			__func__, size);
-		kfree(mem);
+		devm_kfree(ipu_dev, mem);
 		mem = NULL;
 	}
 	return mem;
@@ -493,7 +505,7 @@ static void ipu_free_dma_buf(struct ipu_alloc_list *mem, int havelock)
 		mutex_lock(&ipu_alloc_lock);
 	dev_info(ipu_dev, "%s: directly freed buf (0x%08X, %d bytes)\n",
 		 __func__, mem->phy_addr, mem->size);
-	kfree(mem);
+	devm_kfree(ipu_dev, mem);
 }
 
 static bool deinterlace_3_field(struct ipu_task_entry *t)
@@ -3802,15 +3814,11 @@ int register_ipu_device(struct ipu_soc *ipu, int id)
 		goto kthread1_fail;
 	}
 
-	mutex_lock(&ipu_alloc_lock);
-	if (list_empty(&ipu_free_list_small))
-		ipu_allocate_bufpool(&ipu_free_list_small, SMALL_SIZE, 16);
-	if (list_empty(&ipu_free_list_medium))
-		ipu_allocate_bufpool(&ipu_free_list_medium, MEDIUM_SIZE, 16);
-	if (list_empty(&ipu_free_list_large))
-		ipu_allocate_bufpool(&ipu_free_list_large, LARGE_SIZE, 32);
-	mutex_unlock(&ipu_alloc_lock);
-
+	if (!atomic_cmpxchg(&bufpools_allocated, 0, 1)) {
+		int i;
+		for (i = NUM_BUFPOOLS-1; i >= 0; i--)
+			ipu_allocate_bufpool(&bufpool[i]);
+	}
 	return ret;
 
 kthread1_fail:
@@ -3842,6 +3850,12 @@ void unregister_ipu_device(struct ipu_soc *ipu, int id)
 				ipu->rot_dma[i].vaddr,
 				ipu->rot_dma[i].paddr);
 	}
+	if (atomic_cmpxchg(&bufpools_allocated, 1, 0))
+		for (i = 0; i < NUM_BUFPOOLS; i++)
+			dma_free_coherent(ipu_dev,
+					  bufpool[i].bufsize * bufpool[i].alloc_count,
+					  bufpool[i].cpu_addr,
+					  bufpool[i].phy_addr);
 
 	if (major) {
 		device_destroy(ipu_class, MKDEV(major, 0));
