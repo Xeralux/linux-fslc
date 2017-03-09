@@ -366,7 +366,7 @@ static struct bufpool {
 	},
 	/* 1.5 MiB */
 	{ .bufsize = 3 * 512 * 1024,
-	  .alloc_count = 40,
+	  .alloc_count = 96,
 	},
 	/* 2.0 MiB */
 	{ .bufsize = 2 * 1024 * 1024,
