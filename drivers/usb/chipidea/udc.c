@@ -1591,6 +1591,13 @@ static int ci_udc_vbus_session(struct usb_gadget *_gadget, int is_active)
 	/* Charger Detection */
 	ci_usb_charger_connect(ci, is_active);
 
+	if (ci->usb_phy) {
+		if (is_active)
+			usb_phy_set_event(ci->usb_phy, USB_EVENT_VBUS);
+		else
+			usb_phy_set_event(ci->usb_phy, USB_EVENT_NONE);
+	}
+
 	if (gadget_ready)
 		ci_hdrc_gadget_connect(_gadget, is_active);
 
@@ -1874,6 +1881,9 @@ static irqreturn_t udc_irq(struct ci_hdrc *ci)
 		if (USBi_PCI & intr) {
 			ci->gadget.speed = hw_port_is_high_speed(ci) ?
 				USB_SPEED_HIGH : USB_SPEED_FULL;
+			if (ci->usb_phy)
+				usb_phy_set_event(ci->usb_phy,
+					USB_EVENT_ENUMERATED);
 			if (ci->suspended && ci->driver->resume) {
 				spin_unlock(&ci->lock);
 				ci->driver->resume(&ci->gadget);
@@ -2122,6 +2132,7 @@ static void udc_resume(struct ci_hdrc *ci, bool power_lost)
 int ci_hdrc_gadget_init(struct ci_hdrc *ci)
 {
 	struct ci_role_driver *rdrv;
+	int ret;
 
 	if (!hw_read(ci, CAP_DCCPARAMS, DCCPARAMS_DC))
 		return -ENXIO;
@@ -2136,7 +2147,10 @@ int ci_hdrc_gadget_init(struct ci_hdrc *ci)
 	rdrv->suspend	= udc_suspend;
 	rdrv->resume	= udc_resume;
 	rdrv->name	= "gadget";
-	ci->roles[CI_ROLE_GADGET] = rdrv;
 
-	return udc_start(ci);
+	ret = udc_start(ci);
+	if (!ret)
+		ci->roles[CI_ROLE_GADGET] = rdrv;
+
+	return ret;
 }
